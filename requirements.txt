@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Der Eine Ring - Abhängigkeiten
 
 # Kern-Bibliotheken
@@ -10,3 +11,21 @@ opencv-python>=4.8.0
 noise>=1.2.2
 imageio>=2.31.0
 scipy>=1.11.0
+=======
+# Der Eine Ring - VTT System
+# Abhängigkeiten
+
+# Kern-Bibliotheken
+Pillow>=10.0.0         # Textur-Rendering, Bildbearbeitung
+numpy>=1.24.0          # Array-Operationen, Mathematik
+opencv-python>=4.8.0   # Webcam-Tracking, Bildverarbeitung
+
+# Optional: Für erweiterte Features
+pygame>=2.5.0          # Sound-Effekte (optional)
+noise>=1.2.2           # Perlin-Noise für organische Texturen (optional)
+imageio>=2.31.0        # GIF-Animation Export (optional)
+scipy>=1.11.0          # Erweiterte Mathematik (optional)
+
+# HINWEIS: tkinter ist standardmäßig in Python enthalten
+# Falls tkinter fehlt: sudo apt-get install python3-tk (Linux)
+>>>>>>> 1b8b352 (Initial commit: Der Eine Ring VTT System)
