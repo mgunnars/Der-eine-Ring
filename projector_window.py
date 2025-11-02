@@ -36,6 +36,11 @@ class ProjectorWindow(tk.Toplevel):
             self.svg_static_cache = None  # Gecachte statische Tiles
             self.svg_cache_size = None    # (width, height, zoom) für Invalidierung
             self.svg_animated_materials = set()  # Set von Material-Namen die animiert sind
+            
+            # SVG-Viewport (für Zoom/Pan)
+            self.svg_viewport_x = 0  # Viewport X-Offset in SVG-Koordinaten
+            self.svg_viewport_y = 0  # Viewport Y-Offset in SVG-Koordinaten
+            self.svg_base_scale = 1.0  # Basis-Skalierung um ganze Map zu zeigen
         
         # NICHT im Vollbild starten - User kann mit F11 wechseln
         self.attributes('-fullscreen', False)
@@ -437,12 +442,19 @@ class ProjectorWindow(tk.Toplevel):
         self.pan_start_y = event.y
     
     def pan(self, event):
-        """Karte verschieben"""
+        """Karte/Viewport verschieben"""
         dx = event.x - self.pan_start_x
         dy = event.y - self.pan_start_y
         
-        self.canvas.scan_mark(self.pan_start_x, self.pan_start_y)
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        if self.is_svg_mode:
+            # SVG: Verschiebe Viewport (negativ weil wir View bewegen, nicht Bild)
+            self.svg_viewport_x -= dx
+            self.svg_viewport_y -= dy
+            self.render_map()
+        else:
+            # JSON: Normale Scan-Methode
+            self.canvas.scan_mark(self.pan_start_x, self.pan_start_y)
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
         
         self.pan_start_x = event.x
         self.pan_start_y = event.y
@@ -454,7 +466,7 @@ class ProjectorWindow(tk.Toplevel):
         else:
             self.zoom_level *= 0.9
         
-        self.zoom_level = max(0.5, min(3.0, self.zoom_level))
+        self.zoom_level = max(0.5, min(5.0, self.zoom_level))  # Max 5x Zoom
         self.render_map()
     
     def toggle_fullscreen(self):
@@ -660,7 +672,7 @@ class ProjectorWindow(tk.Toplevel):
         return img.convert('RGB')
     
     def render_svg_map(self):
-        """Rendert SVG-Map mit Zoom/Pan Support und Animation"""
+        """Rendert SVG-Map mit Viewport-basiertem Zoom/Pan (wie Kamera)"""
         try:
             # Canvas-Größe ermitteln
             self.canvas.update_idletasks()
@@ -669,111 +681,162 @@ class ProjectorWindow(tk.Toplevel):
         except:
             return
         
-        # SVG Original-Größe holen (aus Parser)
+        # SVG Original-Größe holen
         root = ET.fromstring(self.svg_renderer.svg_data)
         svg_width = int(root.get('width', '1000').replace('px', ''))
         svg_height = int(root.get('height', '1000').replace('px', ''))
         
-        # Aspect Ratio beibehalten!
-        aspect_ratio = svg_width / svg_height
+        # Berechne Basis-Scale um ganze Map zu zeigen (nur einmal beim Start)
+        if self.svg_base_scale == 1.0:
+            scale_w = canvas_width / svg_width
+            scale_h = canvas_height / svg_height
+            self.svg_base_scale = min(scale_w, scale_h)
         
-        # Berechne Ziel-Größe mit korrektem Aspect Ratio
-        if canvas_width / canvas_height > aspect_ratio:
-            # Canvas breiter als SVG - height begrenzt
-            target_height = int(canvas_height * self.zoom_level)
-            target_width = int(target_height * aspect_ratio)
-        else:
-            # Canvas höher als SVG - width begrenzt
-            target_width = int(canvas_width * self.zoom_level)
-            target_height = int(target_width / aspect_ratio)
+        # Aktuelle Skalierung = Basis * Zoom
+        current_scale = self.svg_base_scale * self.zoom_level
         
-        # Cache-Key für Invalidierung
-        cache_key = (target_width, target_height, self.zoom_level)
+        # FULL SVG rendern mit aktueller Skalierung
+        full_width = int(svg_width * current_scale)
+        full_height = int(svg_height * current_scale)
+        
+        # Cache-Key
+        cache_key = (full_width, full_height)
         cache_invalid = self.svg_static_cache is None or self.svg_cache_size != cache_key
         
-        # STATISCHE MAP CACHEN (ohne Animation)
-        if cache_invalid or not self.has_animated_tiles:
-            # Rendere komplettes SVG (alle Tiles statisch)
-            rendered_img = self.svg_renderer.render_to_size(target_width, target_height, cache=False)
+        # STATISCHES RENDERING (nur bei Größenänderung)
+        if cache_invalid:
+            print(f"🎨 Rendere SVG-Base: {full_width}×{full_height}px (Scale: {current_scale:.2f})")
+            rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
             
-            if rendered_img is None:
+            if rendered_full is None:
                 return
             
-            # Cache speichern
-            self.svg_static_cache = rendered_img.copy()
+            self.svg_static_cache = rendered_full.copy()
             self.svg_cache_size = cache_key
         
-        # Kopiere statischen Cache als Basis
-        rendered_img = self.svg_static_cache.copy()
+        # Kopiere statischen Cache
+        rendered_full = self.svg_static_cache.copy()
         
         # ANIMIERTE TILES übermalen (wenn Animation läuft)
         if self.is_animating and self.has_animated_tiles:
-            # Hole Texture-Manager für animierte Tiles
             if not hasattr(self, 'texture_manager'):
                 from texture_manager import TextureManager
                 self.texture_manager = TextureManager()
             
-            # Parse SVG für animierte Tile-Positionen
             namespaces = {'svg': 'http://www.w3.org/2000/svg'}
-            tile_size = svg_width / self.fog.width  # Original tile size im SVG
-            scale_factor = target_width / svg_width  # Skalierungsfaktor
             
             for img_elem in root.findall('.//svg:image[@data-material]', namespaces):
                 material = img_elem.get('data-material')
                 
-                # Nur animierte Materialien neu rendern
                 if material in self.svg_animated_materials:
                     x = float(img_elem.get('x', 0))
                     y = float(img_elem.get('y', 0))
-                    width = float(img_elem.get('width', tile_size))
+                    width = float(img_elem.get('width', 64))
                     
-                    # Skalierte Position und Größe
-                    scaled_x = int(x * scale_factor)
-                    scaled_y = int(y * scale_factor)
-                    scaled_size = int(width * scale_factor)
+                    # Skalierte Position
+                    scaled_x = int(x * current_scale)
+                    scaled_y = int(y * current_scale)
+                    scaled_size = int(width * current_scale)
                     
-                    # Rendere animiertes Tile mit aktuellem Frame
-                    if hasattr(self.texture_manager, 'advanced_renderer') and self.texture_manager.advanced_renderer:
+                    # Rendere animiertes Tile
+                    if hasattr(self.texture_manager, 'advanced_renderer'):
                         animated_tile = self.texture_manager.advanced_renderer.get_texture(
                             material, scaled_size, self.animation_frame
                         )
                         
                         if animated_tile:
-                            # Village-Special: größeres Bild (3x)
                             if material == 'village' and animated_tile.size[0] > scaled_size:
                                 if animated_tile.mode == 'RGBA':
                                     offset_y = scaled_y - int(scaled_size * 2)
-                                    rendered_img.paste(animated_tile, (scaled_x, offset_y), animated_tile)
-                                else:
-                                    animated_tile = animated_tile.convert('RGB')
-                                    rendered_img.paste(animated_tile, (scaled_x, scaled_y))
+                                    rendered_full.paste(animated_tile, (scaled_x, offset_y), animated_tile)
                             else:
                                 if animated_tile.mode != 'RGB':
                                     animated_tile = animated_tile.convert('RGB')
-                                rendered_img.paste(animated_tile, (scaled_x, scaled_y))
+                                rendered_full.paste(animated_tile, (scaled_x, scaled_y))
         
-        # Pan-Offset anwenden (Zentrierung)
-        final_img = Image.new('RGB', (canvas_width, canvas_height), (10, 10, 10))
+        # VIEWPORT-CROP: Schneide sichtbaren Bereich aus
+        # Viewport-Position (in Full-Image-Koordinaten)
+        view_x = int(self.svg_viewport_x)
+        view_y = int(self.svg_viewport_y)
         
-        # Zentrieren mit Pan-Offset
-        offset_x = (canvas_width - rendered_img.width) // 2 + int(self.pan_offset_x)
-        offset_y = (canvas_height - rendered_img.height) // 2 + int(self.pan_offset_y)
+        # Begrenze Viewport
+        view_x = max(0, min(view_x, full_width - canvas_width))
+        view_y = max(0, min(view_y, full_height - canvas_height))
         
-        final_img.paste(rendered_img, (offset_x, offset_y))
+        # Wenn Bild kleiner als Canvas, zentrieren
+        if full_width <= canvas_width:
+            view_x = -(canvas_width - full_width) // 2
+        if full_height <= canvas_height:
+            view_y = -(canvas_height - full_height) // 2
         
-        # Fog-of-War anwenden (falls aktiviert)
+        # Crop auf Canvas-Größe
+        if view_x >= 0 and view_y >= 0:
+            viewport_img = rendered_full.crop((
+                view_x,
+                view_y,
+                min(view_x + canvas_width, full_width),
+                min(view_y + canvas_height, full_height)
+            ))
+        else:
+            # Zentrieren wenn Bild kleiner als Canvas
+            viewport_img = Image.new('RGB', (canvas_width, canvas_height), (10, 10, 10))
+            paste_x = max(0, -view_x)
+            paste_y = max(0, -view_y)
+            crop_x = max(0, view_x)
+            crop_y = max(0, view_y)
+            cropped = rendered_full.crop((crop_x, crop_y, full_width, full_height))
+            viewport_img.paste(cropped, (paste_x, paste_y))
+        
+        # Fog-of-War anwenden (auf ORIGINALER Tile-Grid-Basis)
         if self.fog_enabled and self.fog:
-            final_img = self.apply_fog_to_image(final_img)
+            # Berechne welche Tiles im Viewport sichtbar sind
+            tile_width = svg_width / self.fog.width
+            tile_height = svg_height / self.fog.height
+            
+            # In Viewport-Koordinaten
+            start_tile_x = int((view_x / current_scale) / tile_width)
+            start_tile_y = int((view_y / current_scale) / tile_height)
+            end_tile_x = int(((view_x + canvas_width) / current_scale) / tile_width) + 1
+            end_tile_y = int(((view_y + canvas_height) / current_scale) / tile_height) + 1
+            
+            # Fog-Layer erstellen
+            if viewport_img.mode != 'RGBA':
+                viewport_img = viewport_img.convert('RGBA')
+            
+            fog_layer = Image.new('RGBA', viewport_img.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(fog_layer)
+            
+            for ty in range(max(0, start_tile_y), min(self.fog.height, end_tile_y)):
+                for tx in range(max(0, start_tile_x), min(self.fog.width, end_tile_x)):
+                    if not self.fog.is_revealed(tx, ty):
+                        # Tile-Position im Full-Image
+                        tile_x = tx * tile_width * current_scale
+                        tile_y = ty * tile_height * current_scale
+                        tile_w = tile_width * current_scale
+                        tile_h = tile_height * current_scale
+                        
+                        # Relativ zum Viewport
+                        x1 = int(tile_x - view_x)
+                        y1 = int(tile_y - view_y)
+                        x2 = int(x1 + tile_w)
+                        y2 = int(y1 + tile_h)
+                        
+                        # Nur zeichnen wenn im sichtbaren Bereich
+                        if x2 > 0 and y2 > 0 and x1 < canvas_width and y1 < canvas_height:
+                            draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 220))
+            
+            viewport_img = Image.alpha_composite(viewport_img, fog_layer)
+            viewport_img = viewport_img.convert('RGB')
         
         # Auf Canvas anzeigen
-        photo = ImageTk.PhotoImage(final_img)
+        photo = ImageTk.PhotoImage(viewport_img)
         
         if self.canvas_image_id:
             self.canvas.itemconfig(self.canvas_image_id, image=photo)
         else:
             self.canvas_image_id = self.canvas.create_image(
-                canvas_width // 2, canvas_height // 2, 
-                image=photo, anchor=tk.CENTER
+                0, 0,
+                image=photo, anchor=tk.NW
             )
         
         self.canvas.photo = photo
