@@ -5,10 +5,10 @@ echo ===================================
 echo   Der Eine Ring - Kartenprojektor
 echo ===================================
 echo.
-echo Starte Anwendung...
+echo Starte Anwendung mit SVG-Support...
 echo.
 
-py enhanced_main.py
+py start_with_svg.py
 
 if errorlevel 1 (
     echo.
