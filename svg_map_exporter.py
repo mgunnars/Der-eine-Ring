@@ -23,7 +23,7 @@ class SVGMapExporter:
         self.tile_size = tile_size
         
     def export_map_to_svg(self, map_data, materials, renderer, output_path, 
-                         embed_images=True, render_resolution="high"):
+                         embed_images=True, render_resolution="high", max_dimension=2048):
         """
         Exportiert die komplette Karte als SVG
         
@@ -34,6 +34,7 @@ class SVGMapExporter:
             output_path: Pfad zur SVG-Ausgabedatei
             embed_images: Wenn True, werden Bilder als base64 eingebettet
             render_resolution: "low" (256), "high" (512), "ultra" (1024)
+            max_dimension: Maximale Pixel pro Dimension (Standard: 2048)
         """
         # Finde Kartengrenzen
         if not map_data:
@@ -56,13 +57,26 @@ class SVGMapExporter:
         }
         render_size = resolutions.get(render_resolution, self.tile_size * 2)
         
-        # SVG Dimensionen
+        # SVG Dimensionen BERECHNEN
         svg_width = width_tiles * render_size
         svg_height = height_tiles * render_size
         
+        # LIMIT: Max-Dimension prüfen und anpassen
+        if svg_width > max_dimension or svg_height > max_dimension:
+            scale = min(max_dimension / svg_width, max_dimension / svg_height)
+            old_size = render_size
+            render_size = int(render_size * scale)
+            svg_width = width_tiles * render_size
+            svg_height = height_tiles * render_size
+            
+            print(f"⚠️ AUFLÖSUNGS-LIMIT erreicht!")
+            print(f"   Reduziere Tile-Größe: {old_size}px → {render_size}px")
+            print(f"   Max-Dimension: {max_dimension}px")
+        
         print(f"🎨 Exportiere Karte als SVG...")
-        print(f"   Größe: {width_tiles}×{height_tiles} Tiles")
+        print(f"   Größe: {width_tiles}×{height_tiles} Tiles ({len(map_data)} Tiles)")
         print(f"   Auflösung: {svg_width}×{svg_height}px ({render_resolution})")
+        print(f"   Tile-Größe: {render_size}px")
         print(f"   Eingebettete Bilder: {embed_images}")
         
         # SVG Root erstellen
@@ -80,7 +94,7 @@ class SVGMapExporter:
         ET.SubElement(metadata, 'title').text = "Der Eine Ring - VTT Map"
         ET.SubElement(metadata, 'description').text = f"Exported map: {width_tiles}x{height_tiles} tiles"
         
-        # Definitions für wiederverwendbare Elemente
+        # Definitions für wiederverwendbare Elemente (DEDUPLIZIERUNG!)
         defs = ET.SubElement(svg, 'defs')
         
         # Hintergrund
@@ -98,58 +112,69 @@ class SVGMapExporter:
             'data-layer': 'base'
         })
         
-        # Cache für Material-Bilder
+        # Cache für Material-Bilder + Symbol-Definitionen
         material_cache = {}
+        material_symbols = {}  # {material_name: symbol_id}
         
-        # Tiles durchgehen und rendern
+        # PHASE 1: Alle einzigartigen Materialien in <defs> speichern
+        unique_materials = set(map_data.values())
+        print(f"   Deduplizierung: {len(map_data)} Tiles → {len(unique_materials)} einzigartige Materialien")
+        
+        for material_name in unique_materials:
+            tile_data = self._render_material_for_svg(
+                material_name, materials, renderer, render_size
+            )
+            
+            if tile_data:
+                material_cache[material_name] = tile_data
+                
+                # Symbol in <defs> erstellen für Wiederverwendung
+                symbol_id = f"mat_{material_name.replace(' ', '_')}"
+                material_symbols[material_name] = symbol_id
+                
+                # Symbol-Definition
+                symbol = ET.SubElement(defs, 'symbol', {
+                    'id': symbol_id,
+                    'viewBox': f"0 0 {tile_data['size']} {tile_data['size']}"
+                })
+                
+                if embed_images:
+                    ET.SubElement(symbol, 'image', {
+                        'width': str(tile_data['size']),
+                        'height': str(tile_data['size']),
+                        'xlink:href': tile_data['data_uri']
+                    })
+        
+        # PHASE 2: Tiles als <use>-Referenzen platzieren (statt volle Bilder!)
         tile_count = 0
         for (grid_x, grid_y), material_name in sorted(map_data.items()):
             # Position im SVG berechnen
             svg_x = (grid_x - min_x) * render_size
             svg_y = (grid_y - min_y) * render_size
             
-            # Material-Textur holen oder rendern
-            if material_name not in material_cache:
-                material_cache[material_name] = self._render_material_for_svg(
-                    material_name, materials, renderer, render_size
-                )
+            tile_data = material_cache.get(material_name)
             
-            tile_data = material_cache[material_name]
-            
-            if tile_data:
-                # SPECIAL: Village braucht größere Platzierung (3x) für Rauch
-                tile_render_size = tile_data['size']  # Kann 1x oder 3x sein
+            if tile_data and material_name in material_symbols:
+                tile_render_size = tile_data['size']
                 
                 # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
                 if material_name == 'village':
-                    offset_y = svg_y - (render_size * 2)  # 2 Tiles höher
+                    offset_y = svg_y - (render_size * 2)
                     offset_x = svg_x
                 else:
                     offset_y = svg_y
                     offset_x = svg_x
                 
-                if embed_images:
-                    # Bild als base64 einbetten
-                    image_elem = ET.SubElement(map_group, 'image', {
-                        'x': str(offset_x),
-                        'y': str(offset_y),
-                        'width': str(tile_render_size),
-                        'height': str(tile_render_size),
-                        'xlink:href': tile_data['data_uri'],
-                        'data-material': material_name,
-                        'data-grid': f"{grid_x},{grid_y}"
-                    })
-                else:
-                    # Referenz zu externer Datei
-                    image_elem = ET.SubElement(map_group, 'image', {
-                        'x': str(offset_x),
-                        'y': str(offset_y),
-                        'width': str(tile_render_size),
-                        'height': str(tile_render_size),
-                        'xlink:href': tile_data['file_path'],
-                        'data-material': material_name,
-                        'data-grid': f"{grid_x},{grid_y}"
-                    })
+                # REFERENZ zum Symbol (statt volles Bild!)
+                ET.SubElement(map_group, 'use', {
+                    'xlink:href': f"#{material_symbols[material_name]}",
+                    'x': str(offset_x),
+                    'y': str(offset_y),
+                    'width': str(tile_render_size),
+                    'height': str(tile_render_size),
+                    'data-material': material_name,
+                    'data-grid': f"{grid_x},{grid_y}"
+                })
             
             tile_count += 1
             if tile_count % 50 == 0:
@@ -239,9 +264,15 @@ class SVGMapExporter:
             if img.size != (actual_size, actual_size):
                 img = img.resize((actual_size, actual_size), Image.LANCZOS)
             
-            # Als base64 data URI konvertieren
+            # PNG OPTIMIERUNG für kleinere Datei
             buffer = BytesIO()
-            img.save(buffer, format='PNG', optimize=True)
+            
+            # Konvertiere zu RGB wenn RGBA (spart Speicher bei opaken Bildern)
+            if img.mode == 'RGBA' and not self._has_transparency(img):
+                img = img.convert('RGB')
+            
+            # Speichere mit maximaler Kompression
+            img.save(buffer, format='PNG', optimize=True, compress_level=9)
             img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
             data_uri = f"data:image/png;base64,{img_base64}"
             
@@ -254,6 +285,14 @@ class SVGMapExporter:
         except Exception as e:
             print(f"⚠️ Fehler beim Rendern von {material_name}: {e}")
             return None
+    
+    def _has_transparency(self, img):
+        """Prüft ob Bild echte Transparenz hat"""
+        if img.mode != 'RGBA':
+            return False
+        
+        alpha = img.getchannel('A')
+        return alpha.getextrema()[0] < 255  # Mindestens ein Pixel nicht voll opak
     
     def _save_svg(self, svg_element, output_path):
         """Speichert SVG mit schöner Formatierung"""

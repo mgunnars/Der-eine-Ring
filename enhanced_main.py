@@ -406,6 +406,30 @@ class DerEineRingProApp(tk.Tk):
                 bg="#2a2a2a", fg="white",
                 font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=2)
         
+        # AUTOMATISCHE EMPFEHLUNG basierend auf PNG-Größe
+        max_dimension = max(img_w, img_h)
+        recommended_tile_size = 64  # Default
+        
+        if max_dimension > 4000:
+            recommended_tile_size = 256
+            recommendation = "🔥 Sehr groß! Empfehlung: 256px Tiles"
+            rec_color = "#ff6666"
+        elif max_dimension > 3000:
+            recommended_tile_size = 192
+            recommendation = "⚠️ Groß! Empfehlung: 192px Tiles"
+            rec_color = "#ffaa00"
+        elif max_dimension > 2000:
+            recommended_tile_size = 128
+            recommendation = "⚠️ Mittel-groß! Empfehlung: 128px Tiles"
+            rec_color = "#ffcc00"
+        else:
+            recommendation = "✅ Normale Größe - 64px Tiles OK"
+            rec_color = "#44ff44"
+        
+        tk.Label(info_frame, text=recommendation,
+                bg="#2a2a2a", fg=rec_color,
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=2)
+        
         # Import-Optionen
         options_frame = tk.LabelFrame(scrollable_frame, text="Import-Optionen",
                                      bg="#2a2a2a", fg="white",
@@ -445,19 +469,47 @@ class DerEineRingProApp(tk.Tk):
                 bg="#2a2a2a", fg="white",
                 font=("Arial", 10, "bold")).pack(anchor=tk.W)
         
-        tile_size_var = tk.IntVar(value=64)
+        # Nutze empfohlene Tile-Größe als Default
+        tile_size_var = tk.IntVar(value=recommended_tile_size)
         
         tile_size_frame = tk.Frame(tile_frame, bg="#2a2a2a")
         tile_size_frame.pack(fill=tk.X, padx=20, pady=5)
         
-        tk.Scale(tile_size_frame, from_=32, to=256, orient=tk.HORIZONTAL,
+        # Verbesserter Slider mit Markierungen
+        slider = tk.Scale(tile_size_frame, from_=32, to=256, orient=tk.HORIZONTAL,
                 variable=tile_size_var, bg="#2a2a2a", fg="white",
-                font=("Arial", 9), length=300).pack(side=tk.LEFT)
+                font=("Arial", 9), length=300,
+                tickinterval=32,  # Zeigt 32, 64, 96, 128, 160, 192, 224, 256
+                resolution=8,  # Schritte von 8px
+                troughcolor="#1a1a1a",
+                highlightthickness=0)
+        slider.pack(side=tk.LEFT)
         
-        tile_info_label = tk.Label(tile_size_frame, text=f"64px → {img_w//64}x{img_h//64} Tiles",
-                                   bg="#2a2a2a", fg="#aaaaaa",
-                                   font=("Arial", 9))
-        tile_info_label.pack(side=tk.LEFT, padx=10)
+        # Live-Info-Label (größer und besser sichtbar)
+        tile_info_label = tk.Label(tile_size_frame, text=f"{recommended_tile_size}px → {img_w//recommended_tile_size}×{img_h//recommended_tile_size}",
+                                   bg="#2a2a2a", fg="#66ff66",
+                                   font=("Arial", 11, "bold"))
+        tile_info_label.pack(side=tk.LEFT, padx=15)
+        
+        # Quick-Select Buttons für gängige Größen
+        quick_frame = tk.Frame(tile_frame, bg="#2a2a2a")
+        quick_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(quick_frame, text="Schnellwahl:",
+                bg="#2a2a2a", fg="#888",
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
+        
+        for size in [32, 64, 96, 128, 160, 192, 256]:
+            btn = tk.Button(quick_frame, text=f"{size}px",
+                          bg="#3a3a3a", fg="white",
+                          font=("Arial", 7),
+                          padx=5, pady=2,
+                          command=lambda s=size: tile_size_var.set(s))
+            btn.pack(side=tk.LEFT, padx=2)
+            
+            # Empfohlenen Button hervorheben
+            if size == recommended_tile_size:
+                btn.config(bg="#2a7d2a", font=("Arial", 7, "bold"))
         
         def update_tile_info(*args):
             ts = tile_size_var.get()
@@ -465,21 +517,24 @@ class DerEineRingProApp(tk.Tk):
             grid_h = img_h // ts
             total_tiles = grid_w * grid_h
             
-            # Warnung bei zu vielen Tiles
+            # Größe und Grid-Info
+            base_text = f"{ts}px → {grid_w}×{grid_h} = {total_tiles} Tiles"
+            
+            # Warnung bei zu vielen Tiles mit Emoji
             if total_tiles > 2500:
                 tile_info_label.config(
-                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ⚠️ ZU VIEL!",
-                    fg="#ff6666"
+                    text=f"{base_text} ❌",
+                    fg="#ff3333"
                 )
             elif total_tiles > 1500:
                 tile_info_label.config(
-                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ⚠️ LANGSAM",
-                    fg="#ffaa66"
+                    text=f"{base_text} ⚠️",
+                    fg="#ffaa00"
                 )
             else:
                 tile_info_label.config(
-                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ✅",
-                    fg="#66ff66"
+                    text=f"{base_text} ✅",
+                    fg="#44ff44"
                 )
         
         tile_size_var.trace('w', update_tile_info)

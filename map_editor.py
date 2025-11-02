@@ -422,10 +422,30 @@ class MapEditor(tk.Frame):
     
     def export_as_svg(self):
         """Map als SVG exportieren mit Qualitäts-Dialog"""
+        # WARNUNG bei großen Maps
+        total_tiles = self.width * self.height
+        non_empty_tiles = sum(1 for row in self.map for tile in row if tile and tile != "empty")
+        
+        if total_tiles > 2000 or non_empty_tiles > 1500:
+            warning_msg = (
+                f"⚠️ GROSSE MAP ERKANNT!\n\n"
+                f"Map-Größe: {self.width}×{self.height} = {total_tiles} Tiles\n"
+                f"Befüllte Tiles: {non_empty_tiles}\n\n"
+                f"SVG-Export kann sehr lange dauern und große Dateien erzeugen!\n\n"
+                f"Empfehlungen:\n"
+                f"• Nutze 'Low' Qualität für schnelleren Export\n"
+                f"• Datei kann 50-500 MB groß werden\n"
+                f"• Projektor-Rendering kann langsam sein\n\n"
+                f"Trotzdem fortfahren?"
+            )
+            
+            if not messagebox.askyesno("Warnung - Große Map", warning_msg):
+                return
+        
         # Dialog für Qualität
         quality_dialog = tk.Toplevel(self)
         quality_dialog.title("SVG Export")
-        quality_dialog.geometry("400x300")
+        quality_dialog.geometry("450x380")
         quality_dialog.configure(bg="#1a1a1a")
         quality_dialog.transient(self)
         quality_dialog.grab_set()
@@ -434,16 +454,21 @@ class MapEditor(tk.Frame):
                 font=("Arial", 14, "bold"),
                 bg="#1a1a1a", fg="#d4af37").pack(pady=20)
         
+        # Info über Map-Größe
+        tk.Label(quality_dialog, text=f"Map: {self.width}×{self.height} ({non_empty_tiles} Tiles)",
+                bg="#1a1a1a", fg="#888",
+                font=("Arial", 9)).pack(pady=5)
+        
         tk.Label(quality_dialog, text="Wähle die Export-Qualität:",
                 bg="#1a1a1a", fg="white",
                 font=("Arial", 10)).pack(pady=10)
         
-        quality_var = tk.StringVar(value="high")
+        quality_var = tk.StringVar(value="low" if non_empty_tiles > 1000 else "high")
         
         qualities = [
-            ("Low (256px) - Klein, schnell", "low"),
+            ("Low (256px) - Klein, schnell ⚡", "low"),
             ("High (512px) - Empfohlen ⭐", "high"),
-            ("Ultra (1024px) - Maximale Qualität", "ultra")
+            ("Ultra (1024px) - Maximale Qualität 🐌", "ultra")
         ]
         
         for text, value in qualities:
@@ -452,6 +477,13 @@ class MapEditor(tk.Frame):
                           bg="#1a1a1a", fg="white",
                           selectcolor="#2a2a2a",
                           font=("Arial", 9)).pack(anchor=tk.W, padx=40, pady=5)
+        
+        # Geschätzte Dateigröße
+        estimated_mb = (non_empty_tiles * 2) / 1000  # Grobe Schätzung
+        tk.Label(quality_dialog, 
+                text=f"Geschätzte Dateigröße: ~{estimated_mb:.0f}-{estimated_mb*2:.0f} MB",
+                bg="#1a1a1a", fg="#ff8800",
+                font=("Arial", 8, "italic")).pack(pady=10)
         
         def do_export():
             quality = quality_var.get()
@@ -502,22 +534,34 @@ class MapEditor(tk.Frame):
                     
                     exporter = SVGMapExporter(tile_size=base_tile_size)
                     
-                    # 4. Exportiere mit korrekter API
+                    # 4. Exportiere mit korrekter API + LIMITS
+                    max_dimension = 2048  # Max 2048px pro Seite
+                    
                     success = exporter.export_map_to_svg(
                         map_data=map_dict,
                         materials=materials,
                         renderer=self.texture_renderer,
                         output_path=filename,
                         embed_images=True,
-                        render_resolution=quality
+                        render_resolution=quality,
+                        max_dimension=max_dimension
                     )
                     
                     if success:
-                        messagebox.showinfo("Erfolg", 
-                                           f"SVG exportiert!\n\n"
-                                           f"Datei: {filename}\n"
-                                           f"Qualität: {quality.upper()}\n"
-                                           f"Base Tile-Größe: {base_tile_size}px")
+                        # Dateigröße prüfen
+                        import os
+                        file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+                        
+                        msg = (f"SVG exportiert!\n\n"
+                               f"Datei: {filename}\n"
+                               f"Qualität: {quality.upper()}\n"
+                               f"Dateigröße: {file_size_mb:.1f} MB\n"
+                               f"Base Tile-Größe: {base_tile_size}px")
+                        
+                        if file_size_mb > 100:
+                            msg += f"\n\n⚠️ Große Datei! Projektor kann langsam sein."
+                        
+                        messagebox.showinfo("Erfolg", msg)
                     else:
                         messagebox.showerror("Fehler", "SVG Export fehlgeschlagen!")
                 
