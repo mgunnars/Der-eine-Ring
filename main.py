@@ -5,6 +5,8 @@ from texture_manager import TextureManager
 from map_system import MapSystem
 from advanced_texture_renderer import AdvancedTextureRenderer
 from material_manager import MaterialBar, MaterialManagerWindow
+from svg_map_exporter import SVGMapExporter
+from svg_projector import SVGProjectorWindow
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
@@ -89,9 +91,18 @@ class MapEditor(tk.Frame):
                  font=("Arial", 10), padx=10, pady=5,
                  command=self.load_map).pack(side=tk.LEFT, padx=5)
         
-        tk.Button(file_frame, text="� Material-Manager", bg="#5d2a7d", fg="white",
+        tk.Button(file_frame, text="🎨 Material-Manager", bg="#5d2a7d", fg="white",
                  font=("Arial", 10), padx=10, pady=5,
                  command=self.open_material_manager).pack(side=tk.LEFT, padx=5)
+        
+        # SVG Export & Projektor
+        tk.Button(file_frame, text="📐 Als SVG", bg="#7d5d2a", fg="white",
+                 font=("Arial", 10), padx=10, pady=5,
+                 command=self.export_as_svg).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(file_frame, text="🎬 SVG Projektor", bg="#2a7d7d", fg="white",
+                 font=("Arial", 10), padx=10, pady=5,
+                 command=self.open_svg_projector).pack(side=tk.LEFT, padx=5)
         
         # River Direction Controls
         river_frame = tk.Frame(toolbar, bg="#1a1a1a")
@@ -220,6 +231,118 @@ class MapEditor(tk.Frame):
     def open_material_manager(self):
         """Öffnet den Material-Manager"""
         MaterialManagerWindow(self, self.texture_renderer)
+    
+    def export_as_svg(self):
+        """Exportiert die aktuelle Karte als SVG"""
+        # Datei-Dialog
+        filename = filedialog.asksaveasfilename(
+            title="Karte als SVG speichern",
+            defaultextension=".svg",
+            filetypes=[("SVG Dateien", "*.svg"), ("Alle Dateien", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        # Auflösungs-Dialog
+        resolution = tk.StringVar(value="high")
+        dialog = tk.Toplevel(self)
+        dialog.title("SVG Export Einstellungen")
+        dialog.geometry("400x250")
+        dialog.configure(bg="#2a2a2a")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="🎨 SVG Export Einstellungen", 
+                bg="#2a2a2a", fg="white", font=("Arial", 14, "bold")).pack(pady=15)
+        
+        tk.Label(dialog, text="Render-Qualität:", bg="#2a2a2a", fg="white",
+                font=("Arial", 10)).pack(pady=5)
+        
+        tk.Radiobutton(dialog, text="🟢 Low (256px) - Schnell, kleine Datei", 
+                      variable=resolution, value="low",
+                      bg="#2a2a2a", fg="white", selectcolor="#333",
+                      font=("Arial", 10)).pack(anchor=tk.W, padx=30)
+        
+        tk.Radiobutton(dialog, text="🟡 High (512px) - Empfohlen für Projektor", 
+                      variable=resolution, value="high",
+                      bg="#2a2a2a", fg="white", selectcolor="#333",
+                      font=("Arial", 10)).pack(anchor=tk.W, padx=30)
+        
+        tk.Radiobutton(dialog, text="🔴 Ultra (1024px) - Maximale Qualität (langsam)", 
+                      variable=resolution, value="ultra",
+                      bg="#2a2a2a", fg="white", selectcolor="#333",
+                      font=("Arial", 10)).pack(anchor=tk.W, padx=30)
+        
+        embed_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(dialog, text="Bilder einbetten (größere Datei, aber portabel)",
+                      variable=embed_var, bg="#2a2a2a", fg="white",
+                      selectcolor="#333", font=("Arial", 9)).pack(pady=10)
+        
+        def do_export():
+            dialog.destroy()
+            
+            # Map-Daten konvertieren
+            map_data = {}
+            for y in range(self.height):
+                for x in range(self.width):
+                    terrain = self.map[y][x]
+                    if terrain != "empty":
+                        map_data[(x, y)] = terrain
+            
+            # Materials sammeln (für Renderer)
+            materials = self.texture_renderer.registered_materials
+            
+            # SVG Exporter
+            exporter = SVGMapExporter(tile_size=self.tile_size)
+            
+            try:
+                success = exporter.export_map_to_svg(
+                    map_data,
+                    materials,
+                    self.texture_renderer,
+                    filename,
+                    embed_images=embed_var.get(),
+                    render_resolution=resolution.get()
+                )
+                
+                if success:
+                    messagebox.showinfo("Erfolg", 
+                        f"✅ Karte erfolgreich als SVG exportiert!\n\n"
+                        f"Datei: {filename}\n"
+                        f"Qualität: {resolution.get()}\n\n"
+                        f"Öffne mit 'SVG Projektor' für beste Darstellung!")
+            except Exception as e:
+                messagebox.showerror("Fehler", f"Export fehlgeschlagen:\n{e}")
+        
+        tk.Button(dialog, text="📐 Exportieren", bg="#2a7d2a", fg="white",
+                 font=("Arial", 11, "bold"), padx=30, pady=8,
+                 command=do_export).pack(pady=15)
+    
+    def open_svg_projector(self):
+        """Öffnet den SVG-Projektor"""
+        # SVG-Datei auswählen
+        filename = filedialog.askopenfilename(
+            title="SVG-Karte für Projektor laden",
+            filetypes=[("SVG Dateien", "*.svg"), ("Alle Dateien", "*.*")]
+        )
+        
+        if not filename:
+            return
+        
+        try:
+            # SVG Projektor Fenster öffnen
+            projector = SVGProjectorWindow(filename, fullscreen=False)
+            messagebox.showinfo("SVG Projektor", 
+                "🎬 SVG Projektor geöffnet!\n\n"
+                "Steuerung:\n"
+                "• F11: Vollbild\n"
+                "• +/-: Zoom\n"
+                "• R: Ansicht zurücksetzen\n"
+                "• G: Grid ein/aus\n"
+                "• ESC: Schließen")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Konnte SVG nicht laden:\n{e}")
     
     def select_terrain(self, terrain):
         """Terrain auswählen"""

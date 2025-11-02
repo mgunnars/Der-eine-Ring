@@ -1,0 +1,358 @@
+"""
+SVG Projector Renderer - High-Quality Rendering für Projektor-Modus
+
+Vorteile gegenüber PNG-Tiles:
+- Verlustfreie Skalierung
+- Bessere Qualität bei Zoom/Pan
+- Geringerer Speicherverbrauch
+- Native Auflösungsanpassung
+"""
+
+import tkinter as tk
+from PIL import Image, ImageTk
+import cairosvg
+from io import BytesIO
+import os
+import time
+
+
+class SVGProjectorRenderer:
+    """Rendert SVG-Karten für Projektor mit optimaler Qualität"""
+    
+    def __init__(self, svg_path):
+        self.svg_path = svg_path
+        self.svg_data = None
+        self.cached_render = None
+        self.cached_size = None
+        self.render_time = 0
+        
+        # SVG laden
+        self.load_svg()
+    
+    def load_svg(self):
+        """Lädt SVG-Datei"""
+        try:
+            with open(self.svg_path, 'r', encoding='utf-8') as f:
+                self.svg_data = f.read()
+            print(f"✅ SVG geladen: {self.svg_path}")
+            return True
+        except Exception as e:
+            print(f"❌ Fehler beim Laden der SVG: {e}")
+            return False
+    
+    def render_to_size(self, width, height, cache=True):
+        """
+        Rendert SVG zu spezifischer Größe
+        
+        Args:
+            width: Zielbreite in Pixeln
+            height: Zielhöhe in Pixeln
+            cache: Wenn True, wird Rendering gecacht
+            
+        Returns:
+            PIL Image
+        """
+        # Cache prüfen
+        if cache and self.cached_render and self.cached_size == (width, height):
+            print(f"📦 Verwende gecachtes Rendering ({width}×{height})")
+            return self.cached_render
+        
+        if not self.svg_data:
+            print("⚠️ Keine SVG-Daten geladen!")
+            return None
+        
+        print(f"🎨 Rendere SVG zu {width}×{height}px...")
+        start_time = time.time()
+        
+        try:
+            # SVG zu PNG rendern mit cairosvg
+            png_data = cairosvg.svg2png(
+                bytestring=self.svg_data.encode('utf-8'),
+                output_width=width,
+                output_height=height,
+                dpi=300  # Hohe DPI für beste Qualität
+            )
+            
+            # PNG zu PIL Image
+            image = Image.open(BytesIO(png_data))
+            
+            self.render_time = time.time() - start_time
+            print(f"✅ Rendering abgeschlossen in {self.render_time:.2f}s")
+            
+            # Cache speichern
+            if cache:
+                self.cached_render = image
+                self.cached_size = (width, height)
+            
+            return image
+            
+        except Exception as e:
+            print(f"❌ Fehler beim Rendern: {e}")
+            return None
+    
+    def render_to_canvas(self, canvas, scale=1.0, offset_x=0, offset_y=0):
+        """
+        Rendert SVG direkt auf ein Tkinter Canvas
+        
+        Args:
+            canvas: Tkinter Canvas Widget
+            scale: Zoom-Faktor
+            offset_x, offset_y: Pan-Offset in Pixeln
+        """
+        # Canvas-Größe
+        canvas_width = canvas.winfo_width()
+        canvas_height = canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            print("⚠️ Canvas noch nicht initialisiert")
+            return False
+        
+        # Render-Größe mit Zoom berechnen
+        render_width = int(canvas_width * scale)
+        render_height = int(canvas_height * scale)
+        
+        # Bild rendern
+        image = self.render_to_size(render_width, render_height, cache=True)
+        
+        if not image:
+            return False
+        
+        # Für Tkinter konvertieren
+        photo = ImageTk.PhotoImage(image)
+        
+        # Auf Canvas zeichnen
+        canvas.delete("all")
+        canvas.create_image(
+            offset_x,
+            offset_y,
+            image=photo,
+            anchor=tk.NW,
+            tags="svg_map"
+        )
+        
+        # Referenz behalten (wichtig für Tkinter!)
+        canvas.image = photo
+        
+        return True
+    
+    def get_svg_dimensions(self):
+        """Liest die nativen SVG-Dimensionen aus"""
+        import xml.etree.ElementTree as ET
+        
+        try:
+            root = ET.fromstring(self.svg_data)
+            width = root.get('width')
+            height = root.get('height')
+            
+            # Px entfernen falls vorhanden
+            if width and 'px' in width:
+                width = width.replace('px', '')
+            if height and 'px' in height:
+                height = height.replace('px', '')
+            
+            return int(width), int(height)
+            
+        except Exception as e:
+            print(f"⚠️ Fehler beim Auslesen der SVG-Dimensionen: {e}")
+            return None, None
+    
+    def clear_cache(self):
+        """Löscht den Render-Cache"""
+        self.cached_render = None
+        self.cached_size = None
+        print("🗑️ Render-Cache geleert")
+    
+    def update_fog(self, fog_data):
+        """
+        Aktualisiert Fog of War in der SVG
+        
+        Args:
+            fog_data: Dictionary {(x,y): visible}
+        """
+        import xml.etree.ElementTree as ET
+        
+        try:
+            root = ET.fromstring(self.svg_data)
+            
+            # Finde fog-of-war Gruppe
+            ns = {'svg': 'http://www.w3.org/2000/svg'}
+            fog_group = root.find(".//*[@id='fog-of-war']", ns)
+            
+            if fog_group is None:
+                print("⚠️ Keine fog-of-war Gruppe gefunden")
+                return False
+            
+            # Alle existierenden Nebel-Elemente löschen
+            for child in list(fog_group):
+                fog_group.remove(child)
+            
+            # Neue Nebel-Rechtecke hinzufügen
+            for (x, y), visible in fog_data.items():
+                if not visible:
+                    fog_rect = ET.SubElement(fog_group, 'rect', {
+                        'x': str(x * 256),  # TODO: Tile-Size aus SVG lesen
+                        'y': str(y * 256),
+                        'width': '256',
+                        'height': '256',
+                        'fill': '#000000',
+                        'data-fog': 'true',
+                        'data-grid': f"{x},{y}"
+                    })
+            
+            # SVG-Daten aktualisieren
+            self.svg_data = ET.tostring(root, encoding='unicode')
+            
+            # Cache invalidieren
+            self.clear_cache()
+            
+            print(f"✅ Nebel aktualisiert ({len([v for v in fog_data.values() if not v])} verdeckte Tiles)")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Fehler beim Aktualisieren des Nebels: {e}")
+            return False
+    
+    def toggle_layer(self, layer_id, visible):
+        """
+        Schaltet Layer sichtbar/unsichtbar
+        
+        Args:
+            layer_id: ID des Layers ('grid-overlay', 'fog-of-war', etc.)
+            visible: True = sichtbar, False = versteckt
+        """
+        import xml.etree.ElementTree as ET
+        
+        try:
+            root = ET.fromstring(self.svg_data)
+            layer = root.find(f".//*[@id='{layer_id}']")
+            
+            if layer is not None:
+                layer.set('visibility', 'visible' if visible else 'hidden')
+                self.svg_data = ET.tostring(root, encoding='unicode')
+                self.clear_cache()
+                print(f"✅ Layer '{layer_id}' {'eingeblendet' if visible else 'ausgeblendet'}")
+                return True
+            else:
+                print(f"⚠️ Layer '{layer_id}' nicht gefunden")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Fehler beim Toggle Layer: {e}")
+            return False
+
+
+class SVGProjectorWindow:
+    """Projektor-Fenster mit SVG-Rendering"""
+    
+    def __init__(self, svg_path, fullscreen=False):
+        self.svg_path = svg_path
+        self.window = tk.Toplevel()
+        self.window.title("SVG Projektor - Der Eine Ring")
+        
+        if fullscreen:
+            self.window.attributes('-fullscreen', True)
+            self.window.configure(bg='black')
+        
+        # SVG Renderer
+        self.renderer = SVGProjectorRenderer(svg_path)
+        
+        # Canvas
+        self.canvas = tk.Canvas(
+            self.window,
+            bg='black',
+            highlightthickness=0
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Zoom/Pan State
+        self.scale = 1.0
+        self.offset_x = 0
+        self.offset_y = 0
+        
+        # Controls
+        self.setup_controls()
+        
+        # Initial render
+        self.window.after(100, self.render)
+    
+    def setup_controls(self):
+        """Tastatur-Steuerung"""
+        self.window.bind('<Escape>', lambda e: self.window.destroy())
+        self.window.bind('<F11>', lambda e: self.toggle_fullscreen())
+        self.window.bind('<plus>', lambda e: self.zoom_in())
+        self.window.bind('<minus>', lambda e: self.zoom_out())
+        self.window.bind('<r>', lambda e: self.reset_view())
+        
+        # Grid toggle
+        self.window.bind('<g>', lambda e: self.toggle_grid())
+        self.window.bind('<f>', lambda e: self.toggle_fog())
+    
+    def render(self):
+        """Rendert die Karte"""
+        self.renderer.render_to_canvas(
+            self.canvas,
+            scale=self.scale,
+            offset_x=self.offset_x,
+            offset_y=self.offset_y
+        )
+    
+    def zoom_in(self):
+        """Zoom rein"""
+        self.scale *= 1.2
+        self.renderer.clear_cache()
+        self.render()
+    
+    def zoom_out(self):
+        """Zoom raus"""
+        self.scale /= 1.2
+        self.renderer.clear_cache()
+        self.render()
+    
+    def reset_view(self):
+        """Setzt Ansicht zurück"""
+        self.scale = 1.0
+        self.offset_x = 0
+        self.offset_y = 0
+        self.renderer.clear_cache()
+        self.render()
+    
+    def toggle_fullscreen(self):
+        """Vollbild an/aus"""
+        current = self.window.attributes('-fullscreen')
+        self.window.attributes('-fullscreen', not current)
+    
+    def toggle_grid(self):
+        """Grid ein/ausblenden"""
+        # TODO: State tracking
+        self.renderer.toggle_layer('grid-overlay', True)
+        self.render()
+    
+    def toggle_fog(self):
+        """Nebel ein/ausblenden"""
+        self.renderer.toggle_layer('fog-of-war', True)
+        self.render()
+
+
+def test_svg_projector():
+    """Test des SVG-Projektors"""
+    import sys
+    
+    if len(sys.argv) > 1:
+        svg_path = sys.argv[1]
+    else:
+        svg_path = "test_map.svg"
+    
+    if not os.path.exists(svg_path):
+        print(f"❌ SVG nicht gefunden: {svg_path}")
+        return
+    
+    root = tk.Tk()
+    root.withdraw()  # Hauptfenster verstecken
+    
+    projector = SVGProjectorWindow(svg_path, fullscreen=False)
+    
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    test_svg_projector()

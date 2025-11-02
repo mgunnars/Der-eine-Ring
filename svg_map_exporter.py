@@ -1,0 +1,349 @@
+"""
+SVG Map Exporter - Exportiert Tile-Grid als hochauflösende SVG-Datei
+
+Vorteile:
+- Verlustfreie Skalierung für Projektor
+- Gesamte Karte als EINE Datei
+- Unterstützt Animationen
+- Kleinere Dateigröße als viele PNGs
+"""
+
+import xml.etree.ElementTree as ET
+from xml.dom import minidom
+import base64
+from io import BytesIO
+from PIL import Image
+import os
+
+
+class SVGMapExporter:
+    """Exportiert eine Karte als SVG mit eingebetteten Tiles"""
+    
+    def __init__(self, tile_size=256):
+        self.tile_size = tile_size
+        
+    def export_map_to_svg(self, map_data, materials, renderer, output_path, 
+                         embed_images=True, render_resolution="high"):
+        """
+        Exportiert die komplette Karte als SVG
+        
+        Args:
+            map_data: Dictionary mit Tile-Informationen {(x,y): material_name}
+            materials: Dictionary mit Material-Daten
+            renderer: AdvancedTextureRenderer Instanz
+            output_path: Pfad zur SVG-Ausgabedatei
+            embed_images: Wenn True, werden Bilder als base64 eingebettet
+            render_resolution: "low" (256), "high" (512), "ultra" (1024)
+        """
+        # Finde Kartengrenzen
+        if not map_data:
+            print("Keine Tiles zum Exportieren!")
+            return False
+            
+        min_x = min(x for x, y in map_data.keys())
+        max_x = max(x for x, y in map_data.keys())
+        min_y = min(y for x, y in map_data.keys())
+        max_y = max(y for x, y in map_data.keys())
+        
+        width_tiles = max_x - min_x + 1
+        height_tiles = max_y - min_y + 1
+        
+        # Auflösungen
+        resolutions = {
+            "low": self.tile_size,
+            "high": self.tile_size * 2,
+            "ultra": self.tile_size * 4
+        }
+        render_size = resolutions.get(render_resolution, self.tile_size * 2)
+        
+        # SVG Dimensionen
+        svg_width = width_tiles * render_size
+        svg_height = height_tiles * render_size
+        
+        print(f"🎨 Exportiere Karte als SVG...")
+        print(f"   Größe: {width_tiles}×{height_tiles} Tiles")
+        print(f"   Auflösung: {svg_width}×{svg_height}px ({render_resolution})")
+        print(f"   Eingebettete Bilder: {embed_images}")
+        
+        # SVG Root erstellen
+        svg = ET.Element('svg', {
+            'xmlns': 'http://www.w3.org/2000/svg',
+            'xmlns:xlink': 'http://www.w3.org/1999/xlink',
+            'width': str(svg_width),
+            'height': str(svg_height),
+            'viewBox': f'0 0 {svg_width} {svg_height}',
+            'version': '1.1'
+        })
+        
+        # Metadata
+        metadata = ET.SubElement(svg, 'metadata')
+        ET.SubElement(metadata, 'title').text = "Der Eine Ring - VTT Map"
+        ET.SubElement(metadata, 'description').text = f"Exported map: {width_tiles}x{height_tiles} tiles"
+        
+        # Definitions für wiederverwendbare Elemente
+        defs = ET.SubElement(svg, 'defs')
+        
+        # Hintergrund
+        bg_rect = ET.SubElement(svg, 'rect', {
+            'x': '0',
+            'y': '0',
+            'width': str(svg_width),
+            'height': str(svg_height),
+            'fill': '#1a1a1a'
+        })
+        
+        # Haupt-Gruppe für alle Tiles
+        map_group = ET.SubElement(svg, 'g', {
+            'id': 'map-tiles',
+            'data-layer': 'base'
+        })
+        
+        # Cache für Material-Bilder
+        material_cache = {}
+        
+        # Tiles durchgehen und rendern
+        tile_count = 0
+        for (grid_x, grid_y), material_name in sorted(map_data.items()):
+            # Position im SVG berechnen
+            svg_x = (grid_x - min_x) * render_size
+            svg_y = (grid_y - min_y) * render_size
+            
+            # Material-Textur holen oder rendern
+            if material_name not in material_cache:
+                material_cache[material_name] = self._render_material_for_svg(
+                    material_name, materials, renderer, render_size
+                )
+            
+            tile_data = material_cache[material_name]
+            
+            if tile_data:
+                if embed_images:
+                    # Bild als base64 einbetten
+                    image_elem = ET.SubElement(map_group, 'image', {
+                        'x': str(svg_x),
+                        'y': str(svg_y),
+                        'width': str(render_size),
+                        'height': str(render_size),
+                        'xlink:href': tile_data['data_uri'],
+                        'data-material': material_name,
+                        'data-grid': f"{grid_x},{grid_y}"
+                    })
+                else:
+                    # Referenz zu externer Datei
+                    image_elem = ET.SubElement(map_group, 'image', {
+                        'x': str(svg_x),
+                        'y': str(svg_y),
+                        'width': str(render_size),
+                        'height': str(render_size),
+                        'xlink:href': tile_data['file_path'],
+                        'data-material': material_name,
+                        'data-grid': f"{grid_x},{grid_y}"
+                    })
+            
+            tile_count += 1
+            if tile_count % 50 == 0:
+                print(f"   Verarbeitet: {tile_count}/{len(map_data)} Tiles...")
+        
+        # Animation-Gruppe (für animierte Tiles)
+        anim_group = ET.SubElement(svg, 'g', {
+            'id': 'animations',
+            'data-layer': 'animation'
+        })
+        
+        # Grid-Overlay-Gruppe (optional, kann ein/ausgeschaltet werden)
+        grid_group = ET.SubElement(svg, 'g', {
+            'id': 'grid-overlay',
+            'data-layer': 'grid',
+            'opacity': '0.3',
+            'visibility': 'hidden'
+        })
+        
+        # Grid-Linien zeichnen
+        for i in range(width_tiles + 1):
+            x = i * render_size
+            ET.SubElement(grid_group, 'line', {
+                'x1': str(x),
+                'y1': '0',
+                'x2': str(x),
+                'y2': str(svg_height),
+                'stroke': '#888888',
+                'stroke-width': '1',
+                'vector-effect': 'non-scaling-stroke'
+            })
+        
+        for i in range(height_tiles + 1):
+            y = i * render_size
+            ET.SubElement(grid_group, 'line', {
+                'x1': '0',
+                'y1': str(y),
+                'x2': str(svg_width),
+                'y2': str(y),
+                'stroke': '#888888',
+                'stroke-width': '1',
+                'vector-effect': 'non-scaling-stroke'
+            })
+        
+        # Fog of War Gruppe (wird separat verwaltet)
+        fog_group = ET.SubElement(svg, 'g', {
+            'id': 'fog-of-war',
+            'data-layer': 'fog',
+            'opacity': '0.9'
+        })
+        
+        # SVG formatieren und speichern
+        self._save_svg(svg, output_path)
+        
+        print(f"✅ SVG erfolgreich exportiert: {output_path}")
+        print(f"   Dateigröße: {os.path.getsize(output_path) / 1024:.1f} KB")
+        
+        return True
+    
+    def _render_material_for_svg(self, material_name, materials, renderer, size):
+        """Rendert ein Material in der gewünschten Auflösung"""
+        try:
+            # Material aus Dateisystem laden oder mit Renderer erzeugen
+            material_path = f"materials/{material_name}.png"
+            
+            if os.path.exists(material_path):
+                # Lade existierende Textur
+                img = Image.open(material_path)
+            else:
+                # Rendere mit AdvancedTextureRenderer
+                if material_name in materials:
+                    mat_data = materials[material_name]
+                    img = renderer.render_texture(
+                        material_name,
+                        mat_data.get('type', 'basic'),
+                        size
+                    )
+                else:
+                    # Fallback: Einfarbiges Tile
+                    img = Image.new('RGB', (size, size), (50, 50, 50))
+            
+            # Auf Zielgröße skalieren
+            if img.size != (size, size):
+                img = img.resize((size, size), Image.LANCZOS)
+            
+            # Als base64 data URI konvertieren
+            buffer = BytesIO()
+            img.save(buffer, format='PNG', optimize=True)
+            img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            data_uri = f"data:image/png;base64,{img_base64}"
+            
+            return {
+                'data_uri': data_uri,
+                'file_path': material_path,
+                'size': size
+            }
+            
+        except Exception as e:
+            print(f"⚠️ Fehler beim Rendern von {material_name}: {e}")
+            return None
+    
+    def _save_svg(self, svg_element, output_path):
+        """Speichert SVG mit schöner Formatierung"""
+        # XML-String erstellen
+        xml_string = ET.tostring(svg_element, encoding='unicode')
+        
+        # Schön formatieren
+        dom = minidom.parseString(xml_string)
+        pretty_xml = dom.toprettyxml(indent='  ')
+        
+        # XML-Deklaration nur einmal
+        pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') 
+                               if line.strip() and not line.strip().startswith('<?xml')])
+        
+        # Header hinzufügen
+        final_xml = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' + pretty_xml
+        
+        # Speichern
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(final_xml)
+    
+    def export_map_with_fog(self, map_data, materials, renderer, fog_data, output_path):
+        """Exportiert Karte MIT Nebel-Overlay"""
+        # Erst Basis-Karte exportieren
+        success = self.export_map_to_svg(map_data, materials, renderer, output_path)
+        
+        if success and fog_data:
+            # SVG wieder laden und Nebel hinzufügen
+            self._add_fog_to_svg(output_path, fog_data)
+        
+        return success
+    
+    def _add_fog_to_svg(self, svg_path, fog_data):
+        """Fügt Nebel-Layer zur SVG hinzu"""
+        try:
+            tree = ET.parse(svg_path)
+            root = tree.getroot()
+            
+            # Finde fog-of-war Gruppe
+            fog_group = root.find(".//*[@id='fog-of-war']")
+            
+            if fog_group is not None:
+                # Nebel als Rechtecke hinzufügen
+                for (x, y), visible in fog_data.items():
+                    if not visible:
+                        # Tile ist im Nebel
+                        fog_rect = ET.SubElement(fog_group, 'rect', {
+                            'x': str(x * self.tile_size),
+                            'y': str(y * self.tile_size),
+                            'width': str(self.tile_size),
+                            'height': str(self.tile_size),
+                            'fill': '#000000',
+                            'data-fog': 'true',
+                            'data-grid': f"{x},{y}"
+                        })
+                
+                # SVG speichern
+                tree.write(svg_path, encoding='utf-8', xml_declaration=True)
+                print(f"✅ Nebel-Layer hinzugefügt")
+        
+        except Exception as e:
+            print(f"⚠️ Fehler beim Hinzufügen von Nebel: {e}")
+
+
+def test_svg_export():
+    """Test-Funktion für SVG-Export"""
+    print("🧪 SVG Export Test")
+    
+    # Beispiel Map-Daten
+    test_map = {
+        (0, 0): "gras",
+        (1, 0): "wald",
+        (0, 1): "wasser",
+        (1, 1): "stein"
+    }
+    
+    exporter = SVGMapExporter(tile_size=256)
+    
+    # Mock-Daten
+    materials = {}
+    
+    # Einfacher Mock-Renderer
+    class MockRenderer:
+        def render_texture(self, name, typ, size):
+            colors = {
+                "gras": (100, 180, 100),
+                "wald": (50, 100, 50),
+                "wasser": (50, 100, 200),
+                "stein": (150, 150, 150)
+            }
+            color = colors.get(name, (100, 100, 100))
+            return Image.new('RGB', (size, size), color)
+    
+    renderer = MockRenderer()
+    
+    # Export durchführen
+    exporter.export_map_to_svg(
+        test_map,
+        materials,
+        renderer,
+        "test_map.svg",
+        embed_images=True,
+        render_resolution="high"
+    )
+
+
+if __name__ == "__main__":
+    test_svg_export()
