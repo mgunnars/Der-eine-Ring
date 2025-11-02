@@ -33,6 +33,25 @@ class MapEditor(tk.Frame):
         # Advanced Texture Renderer
         self.texture_renderer = AdvancedTextureRenderer()
         
+        # WICHTIG: Custom Materials laden (z.B. von PNG-Import)
+        if map_data and "custom_materials" in map_data:
+            custom_materials = map_data["custom_materials"]
+            print(f"📦 Lade {len(custom_materials)} Custom-Materialien...")
+            
+            for mat_id, mat_info in custom_materials.items():
+                # Registriere Material im Renderer
+                self.texture_renderer.custom_textures[mat_id] = mat_info
+                
+                # Importiere Textur-Datei
+                if 'texture_path' in mat_info:
+                    try:
+                        self.texture_renderer.import_texture(mat_id, mat_info['texture_path'])
+                        print(f"  ✅ {mat_id}")
+                    except Exception as e:
+                        print(f"  ⚠️ Fehler bei {mat_id}: {e}")
+            
+            print(f"✅ Custom-Materialien geladen!")
+        
         # Texture Manager für Kompatibilität
         self.texture_manager = TextureManager()
         
@@ -54,6 +73,16 @@ class MapEditor(tk.Frame):
         self.tile_size = int(min(tile_width, tile_height))
         self.tile_size = max(self.tile_size, 16)
         self.tile_size = min(self.tile_size, 64)
+        
+        # Performance-Mode bei großen Maps (>1000 Tiles)
+        self.total_tiles = self.width * self.height
+        self.performance_mode = self.total_tiles > 1000
+        
+        if self.performance_mode:
+            print(f"⚡ Performance-Mode aktiviert ({self.total_tiles} Tiles)")
+            print(f"   - Kleinere Tile-Größe (max 32px)")
+            print(f"   - Koordinaten standardmäßig aus")
+            self.tile_size = min(self.tile_size, 32)  # Noch kleiner bei großen Maps
         
         self.setup_ui()
 
@@ -123,7 +152,10 @@ class MapEditor(tk.Frame):
         self.canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
         
         self.selected_terrain = "grass"
-        self.show_coordinates = tk.BooleanVar(value=True)
+        
+        # Koordinaten standardmäßig AUS bei Performance-Mode
+        default_coords = not self.performance_mode
+        self.show_coordinates = tk.BooleanVar(value=default_coords)
         
         # Koordinaten-Toggle
         coord_check = tk.Checkbutton(toolbar, text="📍 Koordinaten", 
@@ -135,6 +167,19 @@ class MapEditor(tk.Frame):
         coord_check.pack(side=tk.RIGHT, padx=10)
         
         self.draw_grid()
+        
+        # Info bei Performance-Mode
+        if self.performance_mode:
+            info_msg = (
+                f"⚡ Performance-Mode aktiviert!\n\n"
+                f"Diese Map ist groß ({self.width}×{self.height} = {self.total_tiles} Tiles).\n\n"
+                f"Optimierungen:\n"
+                f"• Tile-Größe reduziert auf {self.tile_size}px\n"
+                f"• Koordinaten standardmäßig aus\n"
+                f"• Rendering optimiert\n\n"
+                f"Tipp: Zoome im Canvas für Details!"
+            )
+            messagebox.showinfo("Performance-Mode", info_msg)
         
         # Maus-Events
         self.canvas.bind("<Button-1>", self.on_canvas_click)

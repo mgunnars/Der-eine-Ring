@@ -562,6 +562,11 @@ class DerEineRingProApp(tk.Tk):
                 main_canvas.unbind_all("<MouseWheel>")
                 dialog.destroy()
                 
+                # OPTIONAL: Frage ob Editor direkt öffnen
+                if messagebox.askyesno("Editor öffnen?", 
+                                      "Möchtest du die importierte Map jetzt im Editor öffnen?"):
+                    self.start_editor()
+                
             except Exception as e:
                 messagebox.showerror("Fehler", f"Import fehlgeschlagen:\n{e}")
         
