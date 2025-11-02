@@ -109,6 +109,8 @@ class ProjectorWindow(tk.Toplevel):
         self.tile_size = max(self.tile_size, 16)  # Minimum 16px
         
         self.zoom_level = 1.0
+        self.pan_offset_x = 0
+        self.pan_offset_y = 0
         
         # Texturen laden
         from texture_manager import TextureManager
@@ -580,6 +582,39 @@ class ProjectorWindow(tk.Toplevel):
         
         # Nächster Frame nach 33ms (~30 FPS Animation, 15 FPS Rendering)
         self.animation_id = self.after(33, self.animate_tiles)
+    
+    def apply_fog_to_image(self, img):
+        """Wendet Fog-of-War auf ein PIL Image an (für SVG-Modus)"""
+        if not self.fog_enabled or not self.fog:
+            return img
+        
+        # Konvertiere zu RGBA für Transparenz
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
+        
+        # Fog-Layer erstellen
+        fog_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(fog_layer)
+        
+        # Berechne Tile-Größe basierend auf Map-Dimensionen
+        map_width = self.map_data.get("width", 50)
+        map_height = self.map_data.get("height", 50)
+        tile_width = img.width / map_width
+        tile_height = img.height / map_height
+        
+        # Zeichne Fog über nicht-revealed Bereiche
+        for y in range(map_height):
+            for x in range(map_width):
+                if not self.fog.is_revealed(x, y):
+                    x1 = int(x * tile_width)
+                    y1 = int(y * tile_height)
+                    x2 = int((x + 1) * tile_width)
+                    y2 = int((y + 1) * tile_height)
+                    draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 220))
+        
+        # Kombiniere Bild mit Fog-Layer
+        img = Image.alpha_composite(img, fog_layer)
+        return img.convert('RGB')
     
     def render_svg_map(self):
         """Rendert SVG-Map mit Zoom/Pan Support"""
