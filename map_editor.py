@@ -10,6 +10,7 @@ from texture_manager import TextureManager
 from map_system import MapSystem
 from advanced_texture_renderer import AdvancedTextureRenderer
 from material_manager import MaterialBar, MaterialManagerWindow
+from material_bundle_manager import MaterialBundleManager
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
@@ -19,6 +20,9 @@ class MapEditor(tk.Frame):
         
         # Map System
         self.map_system = MapSystem()
+        
+        # Bundle Manager initialisieren
+        self.bundle_manager = MaterialBundleManager()
         
         # Wenn Map-Daten übergeben wurden, diese laden
         if map_data:
@@ -38,6 +42,20 @@ class MapEditor(tk.Frame):
             custom_materials = map_data["custom_materials"]
             print(f"📦 Lade {len(custom_materials)} Custom-Materialien...")
             
+            # Bundle aus Custom-Materials erstellen (falls nicht vorhanden)
+            bundle_id = None
+            if len(custom_materials) > 20:  # Nur bei vielen Materials
+                map_name = map_data.get("name", "imported_map")
+                bundle_id = self.bundle_manager.create_bundle_from_materials(
+                    bundle_id=f"{map_name}_bundle",
+                    name=map_name,
+                    materials=list(custom_materials.keys()),
+                    description=f"Auto-Bundle aus {map_name}",
+                    icon="🏘️",
+                    always_loaded=False
+                )
+                print(f"📦 Auto-Bundle erstellt: {bundle_id}")
+            
             for mat_id, mat_info in custom_materials.items():
                 # Registriere Material im Renderer
                 self.texture_renderer.custom_textures[mat_id] = mat_info
@@ -46,11 +64,14 @@ class MapEditor(tk.Frame):
                 if 'texture_path' in mat_info:
                     try:
                         self.texture_renderer.import_texture(mat_id, mat_info['texture_path'])
-                        print(f"  ✅ {mat_id}")
                     except Exception as e:
                         print(f"  ⚠️ Fehler bei {mat_id}: {e}")
             
             print(f"✅ Custom-Materialien geladen!")
+            
+            # Auto-aktiviere Bundle falls erstellt
+            if bundle_id:
+                self.bundle_manager.activate_bundle(bundle_id)
         
         # Texture Manager für Kompatibilität
         self.texture_manager = TextureManager()
@@ -95,7 +116,29 @@ class MapEditor(tk.Frame):
     
     def setup_ui(self):
         """UI-Elemente erstellen"""
-        # Material-Leiste
+        # Bundle-Switcher-Frame (GANZ OBEN)
+        bundle_frame = tk.Frame(self, bg="#0a0a0a", height=45)
+        bundle_frame.pack(side=tk.TOP, fill=tk.X)
+        
+        tk.Label(bundle_frame, text="📦", font=("Arial", 14),
+                bg="#0a0a0a", fg="white").pack(side=tk.LEFT, padx=(10, 5))
+        
+        tk.Label(bundle_frame, text="Material-Bundles:", font=("Arial", 10, "bold"),
+                bg="#0a0a0a", fg="#888").pack(side=tk.LEFT, padx=5)
+        
+        # Bundle-Buttons dynamisch erstellen
+        self.bundle_button_frame = tk.Frame(bundle_frame, bg="#0a0a0a")
+        self.bundle_button_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
+        
+        self.bundle_buttons = {}
+        self.refresh_bundle_buttons()
+        
+        # Bundle-Manager öffnen
+        tk.Button(bundle_frame, text="⚙️ Verwalten",
+                 bg="#3a3a3a", fg="white", font=("Arial", 9),
+                 padx=10, pady=2, command=self.open_bundle_manager).pack(side=tk.RIGHT, padx=10)
+        
+        # Material-Leiste (gefiltert nach aktiven Bundles)
         self.material_bar = MaterialBar(
             self, 
             self.texture_renderer,
@@ -103,6 +146,9 @@ class MapEditor(tk.Frame):
             tile_size=self.tile_size
         )
         self.material_bar.pack(side=tk.TOP, fill=tk.X)
+        
+        # Initial: Material-Bar nach Bundles filtern
+        self.filter_material_bar()
         
         # Toolbar
         toolbar = tk.Frame(self, bg="#1a1a1a", height=50)
@@ -122,6 +168,10 @@ class MapEditor(tk.Frame):
         tk.Button(file_frame, text="📁 Laden", bg="#2a5d8d", fg="white",
                  font=("Arial", 10), padx=10, pady=5,
                  command=self.load_map).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(file_frame, text="📤 Als SVG exportieren", bg="#2a5d7d", fg="white",
+                 font=("Arial", 10), padx=10, pady=5,
+                 command=self.export_as_svg).pack(side=tk.LEFT, padx=5)
         
         tk.Button(file_frame, text="🎨 Material-Manager", bg="#5d2a7d", fg="white",
                  font=("Arial", 10), padx=10, pady=5,
@@ -369,6 +419,290 @@ class MapEditor(tk.Frame):
             "tiles": self.map,
             "river_directions": self.river_directions
         }
+    
+    def export_as_svg(self):
+        """Map als SVG exportieren mit Qualitäts-Dialog"""
+        # Dialog für Qualität
+        quality_dialog = tk.Toplevel(self)
+        quality_dialog.title("SVG Export")
+        quality_dialog.geometry("400x300")
+        quality_dialog.configure(bg="#1a1a1a")
+        quality_dialog.transient(self)
+        quality_dialog.grab_set()
+        
+        tk.Label(quality_dialog, text="📤 Map als SVG exportieren",
+                font=("Arial", 14, "bold"),
+                bg="#1a1a1a", fg="#d4af37").pack(pady=20)
+        
+        tk.Label(quality_dialog, text="Wähle die Export-Qualität:",
+                bg="#1a1a1a", fg="white",
+                font=("Arial", 10)).pack(pady=10)
+        
+        quality_var = tk.StringVar(value="high")
+        
+        qualities = [
+            ("Low (256px) - Klein, schnell", "low"),
+            ("High (512px) - Empfohlen ⭐", "high"),
+            ("Ultra (1024px) - Maximale Qualität", "ultra")
+        ]
+        
+        for text, value in qualities:
+            tk.Radiobutton(quality_dialog, text=text,
+                          variable=quality_var, value=value,
+                          bg="#1a1a1a", fg="white",
+                          selectcolor="#2a2a2a",
+                          font=("Arial", 9)).pack(anchor=tk.W, padx=40, pady=5)
+        
+        def do_export():
+            quality = quality_var.get()
+            quality_dialog.destroy()
+            
+            # Datei-Dialog
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".svg",
+                filetypes=[("SVG Dateien", "*.svg"), ("Alle Dateien", "*.*")],
+                initialdir="."
+            )
+            
+            if filename:
+                try:
+                    from svg_map_exporter import SVGMapExporter
+                    
+                    # 1. Map-Daten von 2D-Array in {(x,y): material} Dictionary konvertieren
+                    map_dict = {}
+                    for y in range(self.height):
+                        for x in range(self.width):
+                            material = self.map[y][x]
+                            if material and material != "empty":
+                                map_dict[(x, y)] = material
+                    
+                    # 2. Materials Dictionary vorbereiten
+                    # Alle Materialien aus dem Renderer sammeln
+                    materials = {}
+                    
+                    # Standard-Materialien
+                    if hasattr(self.texture_renderer, 'material_definitions'):
+                        materials.update(self.texture_renderer.material_definitions)
+                    
+                    # Custom-Materials hinzufügen
+                    if hasattr(self.texture_renderer, 'custom_textures'):
+                        for mat_name, mat_path in self.texture_renderer.custom_textures.items():
+                            materials[mat_name] = {
+                                'type': 'custom',
+                                'path': mat_path
+                            }
+                    
+                    # 3. SVG Exporter mit korrekter tile_size erstellen
+                    tile_sizes = {
+                        "low": 256,
+                        "high": 512,
+                        "ultra": 1024
+                    }
+                    base_tile_size = tile_sizes.get(quality, 512)
+                    
+                    exporter = SVGMapExporter(tile_size=base_tile_size)
+                    
+                    # 4. Exportiere mit korrekter API
+                    success = exporter.export_map_to_svg(
+                        map_data=map_dict,
+                        materials=materials,
+                        renderer=self.texture_renderer,
+                        output_path=filename,
+                        embed_images=True,
+                        render_resolution=quality
+                    )
+                    
+                    if success:
+                        messagebox.showinfo("Erfolg", 
+                                           f"SVG exportiert!\n\n"
+                                           f"Datei: {filename}\n"
+                                           f"Qualität: {quality.upper()}\n"
+                                           f"Base Tile-Größe: {base_tile_size}px")
+                    else:
+                        messagebox.showerror("Fehler", "SVG Export fehlgeschlagen!")
+                
+                except Exception as e:
+                    import traceback
+                    messagebox.showerror("Fehler", f"Export fehlgeschlagen:\n{e}\n\n{traceback.format_exc()}")
+        
+        button_frame = tk.Frame(quality_dialog, bg="#1a1a1a")
+        button_frame.pack(pady=20)
+        
+        tk.Button(button_frame, text="✅ Exportieren",
+                 bg="#2a7d2a", fg="white",
+                 font=("Arial", 10, "bold"),
+                 padx=20, pady=5,
+                 command=do_export).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(button_frame, text="❌ Abbrechen",
+                 bg="#7d2a2a", fg="white",
+                 font=("Arial", 10, "bold"),
+                 padx=20, pady=5,
+                 command=quality_dialog.destroy).pack(side=tk.LEFT, padx=10)
+    
+    def refresh_bundle_buttons(self):
+        """Aktualisiert Bundle-Buttons"""
+        # Alte Buttons löschen
+        for widget in self.bundle_button_frame.winfo_children():
+            widget.destroy()
+        
+        self.bundle_buttons = {}
+        
+        # Bundles holen und sortieren
+        bundles = self.bundle_manager.get_bundle_list()
+        
+        for bundle_id, bundle_data in bundles:
+            icon = bundle_data.get("icon", "📦")
+            name = bundle_data.get("name", bundle_id)
+            is_active = self.bundle_manager.is_bundle_active(bundle_id)
+            is_always = bundle_data.get("always_loaded", False)
+            
+            # Button-Farbe basierend auf Status
+            if is_always:
+                bg_color = "#2a5d2a"  # Grün (immer geladen)
+                state = "disabled"
+            elif is_active:
+                bg_color = "#2a5d8d"  # Blau (aktiv)
+                state = "normal"
+            else:
+                bg_color = "#3a3a3a"  # Grau (inaktiv)
+                state = "normal"
+            
+            btn = tk.Button(
+                self.bundle_button_frame,
+                text=f"{icon} {name}",
+                bg=bg_color,
+                fg="white",
+                font=("Arial", 9),
+                padx=10,
+                pady=3,
+                relief=tk.RAISED if is_active else tk.FLAT,
+                state=state,
+                command=lambda bid=bundle_id: self.toggle_bundle(bid)
+            )
+            btn.pack(side=tk.LEFT, padx=3)
+            
+            self.bundle_buttons[bundle_id] = btn
+    
+    def toggle_bundle(self, bundle_id):
+        """Bundle aktivieren/deaktivieren"""
+        success = self.bundle_manager.toggle_bundle(bundle_id)
+        
+        if success:
+            # UI aktualisieren
+            self.refresh_bundle_buttons()
+            self.filter_material_bar()
+            
+            # Feedback
+            is_active = self.bundle_manager.is_bundle_active(bundle_id)
+            bundle_info = self.bundle_manager.get_bundle_info(bundle_id)
+            name = bundle_info.get("name", bundle_id) if bundle_info else bundle_id
+            
+            status = "aktiviert" if is_active else "deaktiviert"
+            print(f"📦 Bundle '{name}' {status}")
+    
+    def filter_material_bar(self):
+        """Filtert Material-Bar nach aktiven Bundles"""
+        if not hasattr(self, 'material_bar'):
+            return
+        
+        # Hole aktive Materialien aus Bundles
+        active_materials = self.bundle_manager.get_active_materials()
+        
+        # Füge alle Custom-Materials hinzu (falls vorhanden)
+        if hasattr(self.texture_renderer, 'custom_textures'):
+            for mat_name in self.texture_renderer.custom_textures.keys():
+                # Nur hinzufügen wenn Material in aktivem Bundle ist
+                bundle_id = self.bundle_manager.get_material_bundle(mat_name)
+                if bundle_id and self.bundle_manager.is_bundle_active(bundle_id):
+                    active_materials.add(mat_name)
+        
+        # Material-Bar aktualisieren
+        self.material_bar.filter_materials(active_materials)
+    
+    def open_bundle_manager(self):
+        """Öffnet Bundle-Manager-Dialog"""
+        dialog = tk.Toplevel(self)
+        dialog.title("📦 Bundle-Manager")
+        dialog.geometry("600x500")
+        dialog.configure(bg="#1a1a1a")
+        dialog.transient(self)
+        
+        tk.Label(dialog, text="📦 Material Bundle Manager",
+                font=("Arial", 14, "bold"),
+                bg="#1a1a1a", fg="#d4af37").pack(pady=20)
+        
+        # Info
+        total_bundles = len(self.bundle_manager.bundles)
+        active_count = len(self.bundle_manager.active_bundles)
+        tk.Label(dialog, text=f"{total_bundles} Bundles | {active_count} aktiv",
+                bg="#1a1a1a", fg="#888").pack(pady=5)
+        
+        # Liste mit Scrollbar
+        list_frame = tk.Frame(dialog, bg="#1a1a1a")
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        bundle_list = tk.Listbox(list_frame, 
+                                bg="#2a2a2a", fg="white",
+                                font=("Arial", 10),
+                                selectmode=tk.SINGLE,
+                                yscrollcommand=scrollbar.set)
+        bundle_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=bundle_list.yview)
+        
+        # Bundles anzeigen
+        bundles = self.bundle_manager.get_bundle_list()
+        for bundle_id, bundle_data in bundles:
+            icon = bundle_data.get("icon", "📦")
+            name = bundle_data.get("name", bundle_id)
+            mat_count = len(bundle_data.get("materials", []))
+            is_active = self.bundle_manager.is_bundle_active(bundle_id)
+            status = "✅" if is_active else "⬜"
+            
+            display = f"{status} {icon} {name} ({mat_count} Materials)"
+            bundle_list.insert(tk.END, display)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg="#1a1a1a")
+        button_frame.pack(pady=10)
+        
+        def toggle_selected():
+            sel = bundle_list.curselection()
+            if sel:
+                idx = sel[0]
+                bundle_id = list(self.bundle_manager.bundles.keys())[idx]
+                self.toggle_bundle(bundle_id)
+                dialog.destroy()
+                self.open_bundle_manager()  # Refresh
+        
+        def delete_selected():
+            sel = bundle_list.curselection()
+            if sel:
+                idx = sel[0]
+                bundle_id = list(self.bundle_manager.bundles.keys())[idx]
+                bundle_info = self.bundle_manager.get_bundle_info(bundle_id)
+                name = bundle_info.get("name", bundle_id)
+                
+                if messagebox.askyesno("Löschen?", f"Bundle '{name}' wirklich löschen?"):
+                    self.bundle_manager.delete_bundle(bundle_id)
+                    self.refresh_bundle_buttons()
+                    dialog.destroy()
+                    self.open_bundle_manager()  # Refresh
+        
+        tk.Button(button_frame, text="🔄 Aktivieren/Deaktivieren",
+                 bg="#2a5d8d", fg="white", font=("Arial", 9),
+                 padx=15, pady=5, command=toggle_selected).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="🗑️ Löschen",
+                 bg="#7d2a2a", fg="white", font=("Arial", 9),
+                 padx=15, pady=5, command=delete_selected).pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(button_frame, text="✅ Schließen",
+                 bg="#2a7d2a", fg="white", font=("Arial", 9),
+                 padx=15, pady=5, command=dialog.destroy).pack(side=tk.LEFT, padx=5)
     
     def destroy(self):
         """Aufräumen"""

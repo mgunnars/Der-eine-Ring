@@ -157,8 +157,13 @@ class MaterialBar(tk.Frame):
             self.toggle_button.config(text="▶ Materialien")
             self.is_collapsed = True
     
-    def refresh_materials(self):
-        """Lädt und zeigt alle Materialien neu"""
+    def refresh_materials(self, filter_set=None):
+        """
+        Lädt und zeigt alle Materialien neu
+        
+        Args:
+            filter_set: Optional - Set von Material-IDs die angezeigt werden sollen
+        """
         # Lösche alte Buttons
         for widget in self.materials_inner_frame.winfo_children():
             widget.destroy()
@@ -167,7 +172,13 @@ class MaterialBar(tk.Frame):
         self.photo_cache.clear()
         
         # Alle Materialien holen (sortiert A-Z)
-        materials = self.renderer.get_all_materials()
+        all_materials = self.renderer.get_all_materials()
+        
+        # Filtern falls gewünscht
+        if filter_set is not None:
+            materials = {k: v for k, v in all_materials.items() if k in filter_set}
+        else:
+            materials = all_materials
         
         # Material-Buttons erstellen
         for idx, (mat_id, mat_data) in enumerate(materials.items()):
@@ -176,6 +187,15 @@ class MaterialBar(tk.Frame):
         # Scrollregion aktualisieren
         self.materials_inner_frame.update_idletasks()
         self.materials_canvas.configure(scrollregion=self.materials_canvas.bbox("all"))
+    
+    def filter_materials(self, material_set):
+        """
+        Filtert angezeigte Materialien nach Bundle
+        
+        Args:
+            material_set: Set von Material-IDs die angezeigt werden sollen
+        """
+        self.refresh_materials(filter_set=material_set)
     
     def create_material_button(self, material_id, material_data, index):
         """Erstellt einen Button für ein Material"""
