@@ -141,10 +141,12 @@ class TextureEditor(tk.Toplevel):
         # Pinselgröße
         self.bind('[', lambda e: self.change_brush_size(-2))
         self.bind(']', lambda e: self.change_brush_size(2))
+        self.bind('<minus>', lambda e: self.change_brush_size(-2))
+        self.bind('<plus>', lambda e: self.change_brush_size(2))
         
         # Deckkraft
-        self.bind('<', lambda e: self.change_opacity(-10))
-        self.bind('>', lambda e: self.change_opacity(10))
+        self.bind('<comma>', lambda e: self.change_opacity(-10))
+        self.bind('<period>', lambda e: self.change_opacity(10))
         
         # Transform (nur wenn Selektion aktiv)
         self.bind('t', lambda e: self.toggle_transform_mode())
@@ -220,10 +222,30 @@ class TextureEditor(tk.Toplevel):
         main_container = tk.Frame(self, bg="#2a2a2a")
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        # Linke Seite: Werkzeuge (erstmal nur Frame, Tools später)
-        tools_frame = tk.Frame(main_container, bg="#1a1a1a", width=150)
-        tools_frame.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
-        tools_frame.pack_propagate(False)
+        # Linke Seite: Werkzeuge mit Scrollbar
+        tools_outer = tk.Frame(main_container, bg="#1a1a1a", width=170)
+        tools_outer.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        tools_outer.pack_propagate(False)
+        
+        # Canvas mit Scrollbar für Tools
+        tools_canvas = tk.Canvas(tools_outer, bg="#1a1a1a", highlightthickness=0)
+        tools_scrollbar = tk.Scrollbar(tools_outer, orient="vertical", command=tools_canvas.yview)
+        tools_frame = tk.Frame(tools_canvas, bg="#1a1a1a")
+        
+        tools_canvas.configure(yscrollcommand=tools_scrollbar.set)
+        tools_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tools_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tools_canvas.create_window((0, 0), window=tools_frame, anchor="nw")
+        
+        # Scrollregion aktualisieren
+        def update_scroll_region(event=None):
+            tools_canvas.configure(scrollregion=tools_canvas.bbox("all"))
+        tools_frame.bind("<Configure>", update_scroll_region)
+        
+        # Mausrad-Scrolling
+        def on_mousewheel(event):
+            tools_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        tools_canvas.bind_all("<MouseWheel>", on_mousewheel)
         
         # Rechte Seite: Canvas und Optionen
         right_frame = tk.Frame(main_container, bg="#2a2a2a")
@@ -388,8 +410,6 @@ class TextureEditor(tk.Toplevel):
             btn.pack(pady=1, padx=5)
             self.tool_buttons[tool] = btn
         
-        self.select_tool("brush")
-        
         # Separator
         tk.Frame(parent, bg="#555555", height=2).pack(fill=tk.X, pady=10, padx=10)
         
@@ -430,7 +450,7 @@ class TextureEditor(tk.Toplevel):
         brush_scale.pack(fill=tk.X, padx=10)
         
         # Deckkraft/Opacity
-        tk.Label(parent, text="Deckkraft < >", bg="#1a1a1a", fg="white",
+        tk.Label(parent, text="Deckkraft , .", bg="#1a1a1a", fg="white",
                 font=("Arial", 9)).pack(pady=(5, 2))
         
         self.opacity_var = tk.IntVar(value=255)
@@ -558,6 +578,9 @@ class TextureEditor(tk.Toplevel):
         tk.Button(parent, text="🗑️ Löschen", bg="#7d2a2a", fg="white",
                  font=("Arial", 9), width=12,
                  command=self.clear_canvas).pack(pady=2, padx=5)
+        
+        # JETZT erst Tool auswählen (nachdem alle Frames existieren)
+        self.select_tool("brush")
     
     def select_tool(self, tool):
         """Werkzeug auswählen"""
@@ -570,21 +593,24 @@ class TextureEditor(tk.Toplevel):
         # Ausgewählten Button hervorheben
         self.tool_buttons[tool].config(relief=tk.SUNKEN, bg="#2a5d8d")
         
-        # Tool-spezifische Optionen ein/ausblenden
-        if tool == "spray":
-            self.spray_frame.pack(fill=tk.X, padx=5, before=self.shape_frame)
-        else:
-            self.spray_frame.pack_forget()
+        # Tool-spezifische Optionen ein/ausblenden (nur wenn Frames existieren)
+        if hasattr(self, 'spray_frame'):
+            if tool == "spray":
+                self.spray_frame.pack(fill=tk.X, padx=5, before=self.shape_frame)
+            else:
+                self.spray_frame.pack_forget()
         
-        if tool in ["rectangle", "circle"]:
-            self.shape_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
-        else:
-            self.shape_frame.pack_forget()
+        if hasattr(self, 'shape_frame'):
+            if tool in ["rectangle", "circle"]:
+                self.shape_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
+            else:
+                self.shape_frame.pack_forget()
         
-        if tool == "fill":
-            self.fill_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
-        else:
-            self.fill_frame.pack_forget()
+        if hasattr(self, 'fill_frame'):
+            if tool == "fill":
+                self.fill_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
+            else:
+                self.fill_frame.pack_forget()
         
         # Cursor ändern
         cursors = {
@@ -1596,8 +1622,9 @@ class TextureEditor(tk.Toplevel):
   M  - Bewegen
 
 📐 PINSEL & EINSTELLUNGEN:
-  [  - Pinsel kleiner  ]  - Pinsel größer
-  <  - Deckkraft -     >  - Deckkraft +
+  [ ] - Pinsel kleiner/größer
+  - + - Pinsel kleiner/größer (alternativ)
+  , . - Deckkraft -/+ (Komma/Punkt)
 
 🎨 MAL-MODI:
   • Acryl: Deckend, präzise
