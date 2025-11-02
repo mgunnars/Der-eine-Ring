@@ -43,8 +43,25 @@ class PNGMapImporter:
             width_px, height_px = img.size
             grid_width = width_px // tile_size
             grid_height = height_px // tile_size
+            total_tiles = grid_width * grid_height
             
             print(f"📦 PNG-Import: {width_px}x{height_px}px → {grid_width}x{grid_height} Tiles")
+            
+            # WARNUNG bei zu vielen Tiles (Performance/Memory)
+            if total_tiles > 2500:
+                print(f"⚠️ WARNUNG: {total_tiles} Tiles ist sehr viel!")
+                print(f"💡 Empfehlung:")
+                print(f"   - Nutze größere Tile-Größe (z.B. 128px statt 64px)")
+                print(f"   - ODER nutze 'Single-Texture-Modus' für große Bilder")
+                print(f"   - Editor kann nur ~1000-2000 Tiles flüssig darstellen")
+                
+                # Optional: Automatisch abbrechen
+                if total_tiles > 5000:
+                    raise ValueError(
+                        f"Zu viele Tiles ({total_tiles})!\n\n"
+                        f"Bitte wähle eine größere Tile-Größe (z.B. 128px).\n"
+                        f"Oder nutze den 'Single-Texture-Modus' für große Karten."
+                    )
             
             # Erstelle Tile-Grid
             tiles = []

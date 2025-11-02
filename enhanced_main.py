@@ -427,10 +427,15 @@ class DerEineRingProApp(tk.Tk):
                       bg="#2a2a2a", fg="white", selectcolor="#1a1a1a",
                       font=("Arial", 9)).pack(anchor=tk.W, padx=20, pady=2)
         
-        tk.Radiobutton(mode_frame, text="🖼️ Single-Modus (PNG als eine Textur)",
+        tk.Radiobutton(mode_frame, text="🖼️ Single-Modus (PNG als eine Textur) ⭐ FÜR GROSSE BILDER",
                       variable=import_mode, value="single",
                       bg="#2a2a2a", fg="white", selectcolor="#1a1a1a",
                       font=("Arial", 9)).pack(anchor=tk.W, padx=20, pady=2)
+        
+        # Hilfe-Text
+        tk.Label(mode_frame, 
+                text="💡 Bei großen Bildern (>2000px) nutze Single-Modus!",
+                bg="#2a2a2a", fg="#ffaa66", font=("Arial", 8, "italic")).pack(anchor=tk.W, padx=20, pady=2)
         
         # Tile-Größe (nur für Grid-Modus)
         tile_frame = tk.Frame(options_frame, bg="#2a2a2a")
@@ -458,7 +463,24 @@ class DerEineRingProApp(tk.Tk):
             ts = tile_size_var.get()
             grid_w = img_w // ts
             grid_h = img_h // ts
-            tile_info_label.config(text=f"{ts}px → {grid_w}x{grid_h} Tiles")
+            total_tiles = grid_w * grid_h
+            
+            # Warnung bei zu vielen Tiles
+            if total_tiles > 2500:
+                tile_info_label.config(
+                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ⚠️ ZU VIEL!",
+                    fg="#ff6666"
+                )
+            elif total_tiles > 1500:
+                tile_info_label.config(
+                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ⚠️ LANGSAM",
+                    fg="#ffaa66"
+                )
+            else:
+                tile_info_label.config(
+                    text=f"{ts}px → {grid_w}x{grid_h} Tiles ✅",
+                    fg="#66ff66"
+                )
         
         tile_size_var.trace('w', update_tile_info)
         

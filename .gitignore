@@ -13,3 +13,9 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+
+# Importierte Maps (zu groß für Git)
+imported_maps/
+*.png
+*.jpg
+*.jpeg
