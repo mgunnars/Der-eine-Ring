@@ -39,6 +39,9 @@ class PNGMapImporter:
             if map_name is None:
                 map_name = os.path.splitext(os.path.basename(png_path))[0]
             
+            # Sicherstellen dass texture_storage_dir existiert
+            os.makedirs(self.texture_storage_dir, exist_ok=True)
+            
             # Berechne Grid-Dimensionen
             width_px, height_px = img.size
             grid_width = width_px // tile_size
@@ -46,6 +49,7 @@ class PNGMapImporter:
             total_tiles = grid_width * grid_height
             
             print(f"📦 PNG-Import: {width_px}x{height_px}px → {grid_width}x{grid_height} Tiles")
+            print(f"📁 Speicherpfad: {self.texture_storage_dir}")
             
             # WARNUNG bei zu vielen Tiles (Performance/Memory)
             if total_tiles > 2500:
@@ -79,14 +83,17 @@ class PNGMapImporter:
                     
                     tile_img = img.crop((left, top, right, bottom))
                     
-                    # Generiere eindeutigen Material-Namen
-                    material_id = f"imported_{map_name}_tile_{x}_{y}"
+                    # Generiere eindeutigen Material-Namen (ohne Leerzeichen!)
+                    safe_map_name = map_name.replace(" ", "_").replace("\\", "_").replace("/", "_")
+                    material_id = f"{safe_map_name}_x{x}_y{y}"
                     
-                    # Speichere Tile-Textur
-                    tile_path = os.path.join(
-                        self.texture_storage_dir, 
-                        f"{map_name}_tile_{x}_{y}.png"
-                    )
+                    # Speichere Tile-Textur mit NORMALISIERTEN Pfaden
+                    tile_filename = f"{safe_map_name}_tile_{x}_{y}.png"
+                    tile_path = os.path.join(self.texture_storage_dir, tile_filename)
+                    
+                    # Normalisiere Pfad (Forward Slashes für Konsistenz)
+                    tile_path = tile_path.replace("\\", "/")
+                    
                     tile_img.save(tile_path)
                     
                     # Registriere Material
@@ -115,11 +122,15 @@ class PNGMapImporter:
                 "source_png": png_path,
                 "tile_size": tile_size,
                 "custom_materials": tile_textures,
-                "map_name": map_name
+                "name": map_name,  # Wichtig für Bundle-System!
+                "storage_dir": self.texture_storage_dir
             }
             
-            # Speichere Map-Daten als JSON
-            json_path = os.path.join(self.texture_storage_dir, f"{map_name}_map.json")
+            # Speichere Map-Daten als JSON (mit normalisiertem Pfad)
+            safe_map_name = map_name.replace(" ", "_").replace("\\", "_").replace("/", "_")
+            json_path = os.path.join(self.texture_storage_dir, f"{safe_map_name}_map.json")
+            json_path = json_path.replace("\\", "/")
+            
             with open(json_path, 'w') as f:
                 json.dump(map_data, f, indent=2)
             
