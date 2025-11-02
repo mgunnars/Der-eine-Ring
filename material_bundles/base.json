@@ -1,0 +1,31 @@
+{
+  "name": "Basis-Materialien",
+  "description": "Standard-Terrain für alle Karten",
+  "always_loaded": true,
+  "materials": [
+    "empty",
+    "grass",
+    "dirt",
+    "stone",
+    "water",
+    "deep_water",
+    "sand",
+    "snow",
+    "ice",
+    "lava",
+    "forest",
+    "mountain",
+    "hills",
+    "swamp",
+    "desert",
+    "tundra",
+    "river",
+    "road",
+    "path",
+    "bridge",
+    "wall",
+    "door"
+  ],
+  "icon": "🗺️",
+  "order": 0
+}

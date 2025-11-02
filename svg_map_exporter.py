@@ -23,7 +23,8 @@ class SVGMapExporter:
         self.tile_size = tile_size
         
     def export_map_to_svg(self, map_data, materials, renderer, output_path, 
-                         embed_images=True, render_resolution="high", max_dimension=2048):
+                         embed_images=True, render_resolution="high", max_dimension=2048,
+                         use_symbols=False):
         """
         Exportiert die komplette Karte als SVG
         
@@ -35,6 +36,7 @@ class SVGMapExporter:
             embed_images: Wenn True, werden Bilder als base64 eingebettet
             render_resolution: "low" (256), "high" (512), "ultra" (1024)
             max_dimension: Maximale Pixel pro Dimension (Standard: 2048)
+            use_symbols: Wenn True, nutze <symbol>+<use> (kleiner, aber PIL-inkompatibel!)
         """
         # Finde Kartengrenzen
         if not map_data:
@@ -116,7 +118,7 @@ class SVGMapExporter:
         material_cache = {}
         material_symbols = {}  # {material_name: symbol_id}
         
-        # PHASE 1: Alle einzigartigen Materialien in <defs> speichern
+        # PHASE 1: Alle einzigartigen Materialien rendern
         unique_materials = set(map_data.values())
         print(f"   Deduplizierung: {len(map_data)} Tiles → {len(unique_materials)} einzigartige Materialien")
         
@@ -128,24 +130,26 @@ class SVGMapExporter:
             if tile_data:
                 material_cache[material_name] = tile_data
                 
-                # Symbol in <defs> erstellen für Wiederverwendung
-                symbol_id = f"mat_{material_name.replace(' ', '_')}"
-                material_symbols[material_name] = symbol_id
-                
-                # Symbol-Definition
-                symbol = ET.SubElement(defs, 'symbol', {
-                    'id': symbol_id,
-                    'viewBox': f"0 0 {tile_data['size']} {tile_data['size']}"
-                })
-                
-                if embed_images:
-                    ET.SubElement(symbol, 'image', {
-                        'width': str(tile_data['size']),
-                        'height': str(tile_data['size']),
-                        'xlink:href': tile_data['data_uri']
+                # SYMBOL-MODUS (kleiner, aber PIL-inkompatibel!)
+                if use_symbols:
+                    # Symbol in <defs> erstellen für Wiederverwendung
+                    symbol_id = f"mat_{material_name.replace(' ', '_').replace('.', '_')}"
+                    material_symbols[material_name] = symbol_id
+                    
+                    # Symbol-Definition
+                    symbol = ET.SubElement(defs, 'symbol', {
+                        'id': symbol_id,
+                        'viewBox': f"0 0 {tile_data['size']} {tile_data['size']}"
                     })
+                    
+                    if embed_images:
+                        ET.SubElement(symbol, 'image', {
+                            'width': str(tile_data['size']),
+                            'height': str(tile_data['size']),
+                            'xlink:href': tile_data['data_uri']
+                        })
         
-        # PHASE 2: Tiles als <use>-Referenzen platzieren (statt volle Bilder!)
+        # PHASE 2: Tiles platzieren
         tile_count = 0
         for (grid_x, grid_y), material_name in sorted(map_data.items()):
             # Position im SVG berechnen
@@ -154,7 +158,7 @@ class SVGMapExporter:
             
             tile_data = material_cache.get(material_name)
             
-            if tile_data and material_name in material_symbols:
+            if tile_data:
                 tile_render_size = tile_data['size']
                 
                 # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
@@ -165,16 +169,29 @@ class SVGMapExporter:
                     offset_y = svg_y
                     offset_x = svg_x
                 
-                # REFERENZ zum Symbol (statt volles Bild!)
-                ET.SubElement(map_group, 'use', {
-                    'xlink:href': f"#{material_symbols[material_name]}",
-                    'x': str(offset_x),
-                    'y': str(offset_y),
-                    'width': str(tile_render_size),
-                    'height': str(tile_render_size),
-                    'data-material': material_name,
-                    'data-grid': f"{grid_x},{grid_y}"
-                })
+                # SYMBOL-MODUS: Referenz zum Symbol
+                if use_symbols and material_name in material_symbols:
+                    ET.SubElement(map_group, 'use', {
+                        'xlink:href': f"#{material_symbols[material_name]}",
+                        'x': str(offset_x),
+                        'y': str(offset_y),
+                        'width': str(tile_render_size),
+                        'height': str(tile_render_size),
+                        'data-material': material_name,
+                        'data-grid': f"{grid_x},{grid_y}"
+                    })
+                else:
+                    # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags (größer, aber funktioniert überall!)
+                    if embed_images:
+                        ET.SubElement(map_group, 'image', {
+                            'x': str(offset_x),
+                            'y': str(offset_y),
+                            'width': str(tile_render_size),
+                            'height': str(tile_render_size),
+                            'xlink:href': tile_data['data_uri'],
+                            'data-material': material_name,
+                            'data-grid': f"{grid_x},{grid_y}"
+                        })
             
             tile_count += 1
             if tile_count % 50 == 0:

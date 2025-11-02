@@ -42,12 +42,14 @@ class MapEditor(tk.Frame):
             custom_materials = map_data["custom_materials"]
             print(f"📦 Lade {len(custom_materials)} Custom-Materialien...")
             
-            # Bundle aus Custom-Materials erstellen (falls nicht vorhanden)
-            bundle_id = None
-            if len(custom_materials) > 20:  # Nur bei vielen Materials
-                map_name = map_data.get("name", "imported_map")
-                bundle_id = self.bundle_manager.create_bundle_from_materials(
-                    bundle_id=f"{map_name}_bundle",
+            # PRÜFE ob Bundle bereits existiert (verhindert Doppelerstellung!)
+            map_name = map_data.get("name", "imported_map")
+            bundle_id = f"{map_name.lower().replace(' ', '_')}_bundle"
+            
+            # Nur erstellen wenn noch nicht vorhanden
+            if bundle_id not in self.bundle_manager.bundles and len(custom_materials) > 20:
+                self.bundle_manager.create_bundle_from_materials(
+                    bundle_id=bundle_id,
                     name=map_name,
                     materials=list(custom_materials.keys()),
                     description=f"Auto-Bundle aus {map_name}",
@@ -55,6 +57,9 @@ class MapEditor(tk.Frame):
                     always_loaded=False
                 )
                 print(f"📦 Auto-Bundle erstellt: {bundle_id}")
+            else:
+                if bundle_id in self.bundle_manager.bundles:
+                    print(f"📦 Bundle '{bundle_id}' bereits vorhanden (überspringe Erstellung)")
             
             for mat_id, mat_info in custom_materials.items():
                 # Registriere Material im Renderer
@@ -69,8 +74,8 @@ class MapEditor(tk.Frame):
             
             print(f"✅ Custom-Materialien geladen!")
             
-            # Auto-aktiviere Bundle falls erstellt
-            if bundle_id:
+            # Auto-aktiviere Bundle falls vorhanden
+            if bundle_id in self.bundle_manager.bundles:
                 self.bundle_manager.activate_bundle(bundle_id)
         
         # Texture Manager für Kompatibilität
@@ -544,7 +549,8 @@ class MapEditor(tk.Frame):
                         output_path=filename,
                         embed_images=True,
                         render_resolution=quality,
-                        max_dimension=max_dimension
+                        max_dimension=max_dimension,
+                        use_symbols=False  # Für PIL-Kompatibilität!
                     )
                     
                     if success:

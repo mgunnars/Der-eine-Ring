@@ -661,37 +661,18 @@ class DerEineRingProApp(tk.Tk):
                     )
                     msg = f"✅ Map als einzelne Textur importiert"
                 
-                # Bundle erstellen (bei Grid-Import mit vielen Tiles)
-                bundle_created = False
+                # Info über Bundle (wird automatisch im Editor erstellt)
                 if import_mode.get() == "grid" and "custom_materials" in self.current_map_data:
                     material_count = len(self.current_map_data["custom_materials"])
-                    
-                    # Nur bei vielen Materialien Bundle anbieten (>20)
                     if material_count > 20:
-                        if messagebox.askyesno("Bundle erstellen?",
-                                              f"Diese Map hat {material_count} Materialien.\n\n"
-                                              f"Möchtest du ein Material-Bundle erstellen?\n"
-                                              f"Das verbessert die Performance im Editor!"):
-                            try:
-                                from material_bundle_manager import MaterialBundleManager
-                                bundle_mgr = MaterialBundleManager()
-                                bundle_id = bundle_mgr.create_bundle_from_imported_map(
-                                    self.current_map_data,
-                                    bundle_name=map_name
-                                )
-                                if bundle_id:
-                                    bundle_created = True
-                                    msg += f"\n\n📦 Bundle '{map_name}' erstellt!"
-                            except Exception as e:
-                                print(f"⚠️ Bundle-Erstellung fehlgeschlagen: {e}")
+                        msg += f"\n\n📦 Material-Bundle wird automatisch im Editor erstellt"
                 
                 messagebox.showinfo("Erfolg", 
                                    f"{msg}\n\n"
                                    f"Du kannst die Map jetzt:\n"
                                    f"• Im Editor bearbeiten\n"
                                    f"• Als SVG exportieren\n"
-                                   f"• Im Projektor anzeigen" +
-                                   (f"\n\n📦 Bundle '{map_name}' kann im Editor aktiviert werden!" if bundle_created else ""))
+                                   f"• Im Projektor anzeigen")
                 main_canvas.unbind_all("<MouseWheel>")
                 dialog.destroy()
                 
