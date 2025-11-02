@@ -203,38 +203,8 @@ class SVGMapExporter:
             'data-layer': 'animation'
         })
         
-        # Grid-Overlay-Gruppe (optional, kann ein/ausgeschaltet werden)
-        grid_group = ET.SubElement(svg, 'g', {
-            'id': 'grid-overlay',
-            'data-layer': 'grid',
-            'opacity': '0.3',
-            'visibility': 'hidden'
-        })
-        
-        # Grid-Linien zeichnen
-        for i in range(width_tiles + 1):
-            x = i * render_size
-            ET.SubElement(grid_group, 'line', {
-                'x1': str(x),
-                'y1': '0',
-                'x2': str(x),
-                'y2': str(svg_height),
-                'stroke': '#888888',
-                'stroke-width': '1',
-                'vector-effect': 'non-scaling-stroke'
-            })
-        
-        for i in range(height_tiles + 1):
-            y = i * render_size
-            ET.SubElement(grid_group, 'line', {
-                'x1': '0',
-                'y1': str(y),
-                'x2': str(svg_width),
-                'y2': str(y),
-                'stroke': '#888888',
-                'stroke-width': '1',
-                'vector-effect': 'non-scaling-stroke'
-            })
+        # GRID ENTFERNT: Für Spieler im Projektor-Modus nicht relevant
+        # Grid-Linien sind nur für den Editor sinnvoll, nicht für die finale Projektion
         
         # Fog of War Gruppe (wird separat verwaltet)
         fog_group = ET.SubElement(svg, 'g', {
