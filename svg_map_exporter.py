@@ -159,8 +159,6 @@ class SVGMapExporter:
             tile_data = material_cache.get(material_name)
             
             if tile_data:
-                tile_render_size = tile_data['size']
-                
                 # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
                 if material_name == 'village':
                     offset_y = svg_y - (render_size * 2)
@@ -175,22 +173,24 @@ class SVGMapExporter:
                         'xlink:href': f"#{material_symbols[material_name]}",
                         'x': str(offset_x),
                         'y': str(offset_y),
-                        'width': str(tile_render_size),
-                        'height': str(tile_render_size),
+                        'width': str(render_size),  # IMMER volle Grid-Größe verwenden!
+                        'height': str(render_size),  # Tile wird automatisch gestreckt
                         'data-material': material_name,
                         'data-grid': f"{grid_x},{grid_y}"
                     })
                 else:
-                    # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags (größer, aber funktioniert überall!)
+                    # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags
+                    # WIDTH/HEIGHT auf render_size setzen, auch wenn Bild kleiner ist!
                     if embed_images:
                         ET.SubElement(map_group, 'image', {
                             'x': str(offset_x),
                             'y': str(offset_y),
-                            'width': str(tile_render_size),
-                            'height': str(tile_render_size),
+                            'width': str(render_size),  # Grid-Größe (z.B. 97px)
+                            'height': str(render_size),  # Bild ist vielleicht nur 95px, wird gestreckt
                             'xlink:href': tile_data['data_uri'],
                             'data-material': material_name,
-                            'data-grid': f"{grid_x},{grid_y}"
+                            'data-grid': f"{grid_x},{grid_y}",
+                            'preserveAspectRatio': 'none'  # Stretchable ohne Aspect-Ratio-Lock!
                         })
             
             tile_count += 1
@@ -228,7 +228,11 @@ class SVGMapExporter:
             actual_size = size * 3 if material_name == 'village' else size
             
             # Material aus Dateisystem laden oder mit Renderer erzeugen
-            material_path = f"materials/{material_name}.png"
+            # WICHTIG: Wenn material_name wie ein Pfad aussieht (enthält / oder \), direkt verwenden
+            if '/' in material_name or '\\' in material_name:
+                material_path = material_name  # Direkter Pfad zu importiertem Tile
+            else:
+                material_path = f"materials/{material_name}.png"  # Material aus Bundle
             
             if os.path.exists(material_path):
                 # Lade existierende Textur
@@ -250,6 +254,9 @@ class SVGMapExporter:
             # Auf Zielgröße skalieren
             if img.size != (actual_size, actual_size):
                 img = img.resize((actual_size, actual_size), Image.LANCZOS)
+            
+            # BORDER-REMOVAL: Entferne Tile-Borders für saubere SVG
+            img = self._remove_tile_borders(img)
             
             # PNG OPTIMIERUNG für kleinere Datei
             buffer = BytesIO()
@@ -280,6 +287,63 @@ class SVGMapExporter:
         
         alpha = img.getchannel('A')
         return alpha.getextrema()[0] < 255  # Mindestens ein Pixel nicht voll opak
+    
+    def _remove_tile_borders(self, img):
+        """
+        Entfernt Tile-Borders (dunkle Ränder) von einem Bild
+        Prüft automatisch ob Borders vorhanden sind
+        """
+        try:
+            width, height = img.size
+            
+            # Zu kleine Bilder nicht bearbeiten
+            if width < 10 or height < 10:
+                return img
+            
+            # Zu RGB konvertieren für Analyse
+            if img.mode == 'RGBA':
+                img_rgb = img.convert('RGB')
+            else:
+                img_rgb = img
+            
+            pixels = img_rgb.load()
+            
+            # Sample Ränder
+            edge_samples = []
+            for x in [0, width//4, width//2, width*3//4, width-1]:
+                edge_samples.append(sum(pixels[x, 0]))
+                edge_samples.append(sum(pixels[x, height-1]))
+            
+            for y in [0, height//4, height//2, height*3//4, height-1]:
+                edge_samples.append(sum(pixels[0, y]))
+                edge_samples.append(sum(pixels[width-1, y]))
+            
+            edge_brightness = sum(edge_samples) / len(edge_samples)
+            
+            # Sample Center
+            cx, cy = width // 2, height // 2
+            center_samples = [
+                sum(pixels[cx, cy]),
+                sum(pixels[cx-width//4, cy]),
+                sum(pixels[cx+width//4, cy]),
+                sum(pixels[cx, cy-height//4]),
+                sum(pixels[cx, cy+height//4])
+            ]
+            center_brightness = sum(center_samples) / len(center_samples)
+            
+            # AGGRESSIV: Entferne Borders wenn Rand auch nur ETWAS dunkler ist
+            # (Threshold: 0.95 = 5% dunkler)
+            if edge_brightness < center_brightness * 0.95:
+                # WICHTIG: Crop border OHNE resize zurück!
+                # Stattdessen geben wir kleineres Bild zurück und lassen SVG mit Overlap platzieren
+                border_size = 1  # 1px von jeder Seite = 2px total (besser als 2px = 4px total)
+                cropped = img.crop((border_size, border_size, width-border_size, height-border_size))
+                return cropped  # KEIN RESIZE - verhindert Interpolations-Artefakte!
+            
+            return img
+            
+        except Exception as e:
+            return img
     
     def _save_svg(self, svg_element, output_path):
         """Speichert SVG mit schöner Formatierung"""

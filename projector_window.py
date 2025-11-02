@@ -648,7 +648,6 @@ class ProjectorWindow(tk.Toplevel):
         
         # Fog-Layer erstellen
         fog_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(fog_layer)
         
         # Map-Dimensionen aus fog system holen (korrekte Tile-Anzahl!)
         map_width = self.fog.width
@@ -658,15 +657,39 @@ class ProjectorWindow(tk.Toplevel):
         tile_width = img.width / map_width
         tile_height = img.height / map_height
         
-        # Zeichne Fog über nicht-revealed Bereiche
+        # DEBUG
+        fog_count = 0
+        
+        # Zeichne Fog-Texturen über nicht-revealed Bereiche
         for y in range(map_height):
             for x in range(map_width):
                 if not self.fog.is_revealed(x, y):
+                    fog_count += 1
                     x1 = int(x * tile_width)
                     y1 = int(y * tile_height)
-                    x2 = int((x + 1) * tile_width)
-                    y2 = int((y + 1) * tile_height)
-                    draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 220))
+                    
+                    # Fog-Textur holen mit passender Größe
+                    fog_tile_size = int(max(tile_width, tile_height))
+                    
+                    if fog_tile_size not in self.fog_photo_cache:
+                        fog_texture = self.fog_texture_gen.get_fog_texture(fog_tile_size, "normal")
+                        self.fog_photo_cache[fog_tile_size] = fog_texture
+                        print(f"🌫️ Fog-Textur generiert: {fog_tile_size}px, Mode: {fog_texture.mode}")
+                    else:
+                        fog_texture = self.fog_photo_cache[fog_tile_size]
+                    
+                    # Skaliere Fog-Textur auf exakte Tile-Größe falls nötig
+                    if fog_texture.size != (int(tile_width), int(tile_height)):
+                        fog_texture = fog_texture.resize((int(tile_width), int(tile_height)), Image.LANCZOS)
+                    
+                    # Paste Fog-Textur aufs Layer
+                    if fog_texture.mode == 'RGBA':
+                        fog_layer.paste(fog_texture, (x1, y1), fog_texture)
+                    else:
+                        fog_layer.paste(fog_texture, (x1, y1))
+        
+        if fog_count > 0:
+            print(f"🌫️ Fog angewendet auf {fog_count} Tiles (SVG-Modus)")
         
         # Kombiniere Bild mit Fog-Layer
         img = Image.alpha_composite(img, fog_layer)
@@ -809,11 +832,14 @@ class ProjectorWindow(tk.Toplevel):
                 viewport_img = viewport_img.convert('RGBA')
             
             fog_layer = Image.new('RGBA', viewport_img.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(fog_layer)
+            
+            fog_tiles_count = 0
             
             for ty in range(max(0, start_tile_y), min(self.fog.height, end_tile_y)):
                 for tx in range(max(0, start_tile_x), min(self.fog.width, end_tile_x)):
                     if not self.fog.is_revealed(tx, ty):
+                        fog_tiles_count += 1
+                        
                         # Tile-Position im Full-Image
                         tile_x = tx * tile_width * current_scale
                         tile_y = ty * tile_height * current_scale
@@ -823,12 +849,31 @@ class ProjectorWindow(tk.Toplevel):
                         # Relativ zum Viewport
                         x1 = int(tile_x - view_x)
                         y1 = int(tile_y - view_y)
-                        x2 = int(x1 + tile_w)
-                        y2 = int(y1 + tile_h)
                         
                         # Nur zeichnen wenn im sichtbaren Bereich
-                        if x2 > 0 and y2 > 0 and x1 < canvas_width and y1 < canvas_height:
-                            draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 220))
+                        if x1 + tile_w > 0 and y1 + tile_h > 0 and x1 < canvas_width and y1 < canvas_height:
+                            # FOG-TEXTUR verwenden statt Verdunkelung!
+                            fog_tile_size = int(max(tile_w, tile_h))
+                            
+                            if fog_tile_size not in self.fog_photo_cache:
+                                fog_texture = self.fog_texture_gen.get_fog_texture(fog_tile_size, "normal")
+                                self.fog_photo_cache[fog_tile_size] = fog_texture
+                                print(f"🌫️ SVG-Fog-Textur generiert: {fog_tile_size}px")
+                            else:
+                                fog_texture = self.fog_photo_cache[fog_tile_size]
+                            
+                            # Skaliere auf exakte Größe
+                            if fog_texture.size != (int(tile_w), int(tile_h)):
+                                fog_texture = fog_texture.resize((int(tile_w), int(tile_h)), Image.LANCZOS)
+                            
+                            # Paste Fog-Textur
+                            if fog_texture.mode == 'RGBA':
+                                fog_layer.paste(fog_texture, (x1, y1), fog_texture)
+                            else:
+                                fog_layer.paste(fog_texture, (x1, y1))
+            
+            if fog_tiles_count > 0:
+                print(f"🌫️ SVG: {fog_tiles_count} Fog-Tiles im Viewport gerendert")
             
             viewport_img = Image.alpha_composite(viewport_img, fog_layer)
             viewport_img = viewport_img.convert('RGB')

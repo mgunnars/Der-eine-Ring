@@ -259,7 +259,10 @@ class AdvancedTextureRenderer:
             img = img.resize((size, size), Image.LANCZOS)
             return img
         except Exception as e:
-            print(f"Fehler beim Laden der Textur: {e}")
+            # Fehler nur bei unerwarteten Problemen ausgeben
+            # (Fehlende Tiles sind OK - werden grau)
+            if "No such file or directory" not in str(e) and "[Errno 2]" not in str(e):
+                print(f"Fehler beim Laden der Textur: {e}")
             # Fallback
             return Image.new('RGB', (size, size), (128, 128, 128))
     

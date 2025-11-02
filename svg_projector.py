@@ -16,13 +16,15 @@ import time
 import xml.etree.ElementTree as ET
 import base64
 
-# cairosvg ist optional - wir haben einen Fallback
+# cairosvg ist optional (benötigt Cairo-DLLs unter Windows)
 try:
     import cairosvg
     HAS_CAIROSVG = True
-except ImportError:
+    print("✅ CairoSVG verfügbar - nutze High-Quality SVG-Rendering")
+except (ImportError, OSError) as e:
     HAS_CAIROSVG = False
-    print("⚠️ cairosvg nicht gefunden - verwende PIL-Fallback (einfachere Qualität)")
+    print("ℹ️  CairoSVG nicht verfügbar - nutze PIL-Fallback mit Border-Removal")
+    print("   (Unter Windows benötigt CairoSVG zusätzliche DLL-Dateien)")
 
 
 class SVGProjectorRenderer:
@@ -39,11 +41,35 @@ class SVGProjectorRenderer:
         self.load_svg()
     
     def load_svg(self):
-        """Lädt SVG-Datei"""
+        """Lädt SVG-Datei und entfernt Grid-Layer für Projektor"""
         try:
             with open(self.svg_path, 'r', encoding='utf-8') as f:
-                self.svg_data = f.read()
-            print(f"✅ SVG geladen: {self.svg_path}")
+                svg_content = f.read()
+            
+            # Parse SVG und entferne Grid-Layer (für Spieler-Projektor unnötig)
+            try:
+                root = ET.fromstring(svg_content)
+                
+                # Namespace-Map
+                ns = {'svg': 'http://www.w3.org/2000/svg'}
+                
+                # Finde und entferne grid-overlay Gruppe (mit und ohne Namespace)
+                for group in root.findall('.//svg:g[@id="grid-overlay"]', ns):
+                    root.remove(group)
+                
+                # Fallback ohne Namespace
+                for group in root.findall('.//g[@id="grid-overlay"]'):
+                    root.remove(group)
+                
+                # Zurück zu String
+                self.svg_data = ET.tostring(root, encoding='unicode')
+                print(f"✅ SVG geladen (Grid-Layer entfernt für Projektor): {self.svg_path}")
+            except Exception as e:
+                # Fallback: Originales SVG verwenden
+                print(f"⚠️ Grid-Entfernung fehlgeschlagen: {e}")
+                self.svg_data = svg_content
+                print(f"✅ SVG geladen: {self.svg_path}")
+            
             return True
         except Exception as e:
             print(f"❌ Fehler beim Laden der SVG: {e}")
@@ -142,6 +168,10 @@ class SVGProjectorRenderer:
             
             print(f"   Gefunden: {len(images)} Bilder")
             
+            # DEBUG: Prüfe erste paar Tiles auf Borders
+            border_check_count = 0
+            tiles_with_borders = 0
+            
             success_count = 0
             for idx, img_elem in enumerate(images):
                 try:
@@ -168,14 +198,25 @@ class SVGProjectorRenderer:
                         # Base64 decodieren
                         base64_data = href.split(',', 1)[1]
                         img_data = base64.b64decode(base64_data)
-                        tile = Image.open(BytesIO(img_data))
+                        tile_img = Image.open(BytesIO(img_data))
+                        
+                        # Prüfe VOR der Bereinigung ob Borders vorhanden sind (für Statistik)
+                        had_border = False
+                        if border_check_count < 10:
+                            had_border = self._check_tile_for_borders(tile_img)
+                            if had_border:
+                                tiles_with_borders += 1
+                            border_check_count += 1
+                        
+                        # BORDER-REMOVAL: Entferne Borders falls vorhanden
+                        tile_img = self._remove_tile_border(tile_img)
                         
                         # Skalieren falls nötig
-                        if tile.size != (scaled_w, scaled_h):
-                            tile = tile.resize((scaled_w, scaled_h), Image.LANCZOS)
+                        if tile_img.size != (scaled_w, scaled_h):
+                            tile_img = tile_img.resize((scaled_w, scaled_h), Image.LANCZOS)
                         
                         # Einfügen
-                        composite.paste(tile, (scaled_x, scaled_y))
+                        composite.paste(tile_img, (scaled_x, scaled_y))
                         success_count += 1
                     
                 except Exception as e:
@@ -184,6 +225,12 @@ class SVGProjectorRenderer:
                     continue
             
             print(f"   ✅ {success_count}/{len(images)} Bilder erfolgreich eingefügt")
+            
+            if tiles_with_borders > 0:
+                print(f"   🧹 {tiles_with_borders}/{border_check_count} Tiles hatten Borders → automatisch bereinigt!")
+            else:
+                print(f"   ✅ Keine Tile-Borders erkannt - saubere Texturen!")
+            
             return composite
             
         except Exception as e:
@@ -192,6 +239,87 @@ class SVGProjectorRenderer:
             traceback.print_exc()
             # Notfall: Schwarzes Bild
             return Image.new('RGB', (width, height), (26, 26, 26))
+    
+    def _check_tile_for_borders(self, tile_img):
+        """
+        Prüft ob ein Tile dunkle Ränder hat (Grid-Lines)
+        Gibt True zurück wenn Borders erkannt werden
+        """
+        try:
+            width, height = tile_img.size
+            
+            # Zu kleine Tiles nicht prüfen
+            if width < 10 or height < 10:
+                return False
+            
+            # Konvertiere zu RGB
+            if tile_img.mode == 'RGBA':
+                tile_rgb = tile_img.convert('RGB')
+            else:
+                tile_rgb = tile_img
+            
+            pixels = tile_rgb.load()
+            
+            # Sample Ränder
+            edge_samples = []
+            # Top & Bottom (nur ein paar Samples)
+            for x in [0, width//4, width//2, width*3//4, width-1]:
+                edge_samples.append(sum(pixels[x, 0]))  # Top
+                edge_samples.append(sum(pixels[x, height-1]))  # Bottom
+            
+            # Left & Right
+            for y in [0, height//4, height//2, height*3//4, height-1]:
+                edge_samples.append(sum(pixels[0, y]))  # Left
+                edge_samples.append(sum(pixels[width-1, y]))  # Right
+            
+            edge_brightness = sum(edge_samples) / len(edge_samples)
+            
+            # Sample Center
+            cx = width // 2
+            cy = height // 2
+            center_samples = [
+                sum(pixels[cx, cy]),
+                sum(pixels[cx-width//4, cy]),
+                sum(pixels[cx+width//4, cy]),
+                sum(pixels[cx, cy-height//4]),
+                sum(pixels[cx, cy+height//4])
+            ]
+            center_brightness = sum(center_samples) / len(center_samples)
+            
+            # Wenn Ränder mindestens 20% dunkler → Border vorhanden
+            # (Schwellenwert reduziert für bessere Erkennung)
+            return edge_brightness < center_brightness * 0.8
+            
+        except Exception as e:
+            return False
+    
+    def _remove_tile_border(self, tile_img):
+        """
+        Entfernt 1-2px Border von Tile (Grid-Lines)
+        Prüft automatisch ob Borders vorhanden sind
+        """
+        try:
+            width, height = tile_img.size
+            
+            # Zu kleine Tiles nicht bearbeiten
+            if width < 10 or height < 10:
+                return tile_img
+            
+            # Prüfe ob Borders vorhanden sind
+            if not self._check_tile_for_borders(tile_img):
+                return tile_img
+            
+            # Crop 2px von allen Seiten und scale zurück
+            # (2px für dickere Grid-Lines, funktioniert auch bei dünnen)
+            border_size = 2
+            cropped = tile_img.crop((border_size, border_size, width-border_size, height-border_size))
+            
+            # Scale zurück auf Original-Größe mit LANCZOS (beste Qualität)
+            return cropped.resize((width, height), Image.LANCZOS)
+            
+        except Exception as e:
+            # Bei Fehler: Original zurückgeben
+            return tile_img
     
     def render_to_canvas(self, canvas, scale=1.0, offset_x=0, offset_y=0):
         """

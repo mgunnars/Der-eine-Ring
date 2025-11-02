@@ -581,7 +581,7 @@ class GamemasterControlPanel(tk.Toplevel):
                 tile_width = mini_width / self.projector_window.fog.width
                 tile_height = mini_height / self.projector_window.fog.height
                 
-                # Fog zeichnen + Grid-Lines für GM
+                # Nur Fog zeichnen (KEIN GRID - das kommt als Canvas-Overlay)
                 for ty in range(self.projector_window.fog.height):
                     for tx in range(self.projector_window.fog.width):
                         x1 = int(tx * tile_width)
@@ -592,17 +592,25 @@ class GamemasterControlPanel(tk.Toplevel):
                         # Fog wenn nicht revealed
                         if not self.projector_window.fog.is_revealed(tx, ty):
                             draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 200))
-                        
-                        # Grid-Lines für GM (immer sichtbar)
-                        draw.rectangle([x1, y1, x2, y2], outline=(80, 80, 80, 150), width=1)
                 
                 mini_img = Image.alpha_composite(mini_img, fog_layer)
                 mini_img = mini_img.convert('RGB')
                 
                 # Auf Canvas anzeigen
                 photo = ImageTk.PhotoImage(mini_img)
+                self.fog_map_canvas.delete("all")  # Vorherige Inhalte löschen
                 self.fog_map_canvas.create_image(0, 0, image=photo, anchor=tk.NW, tags="svg_preview")
                 self.fog_map_canvas.image = photo  # Referenz behalten
+                
+                # Grid-Lines als Canvas-Overlay (NUR für GM-Panel, NICHT im Projektor!)
+                # Diese Lines werden nur hier im GM-Control-Panel gezeichnet
+                for ty in range(self.projector_window.fog.height + 1):
+                    y = int(ty * tile_height)
+                    self.fog_map_canvas.create_line(0, y, mini_width, y, fill='#505050', width=1, tags="grid")
+                
+                for tx in range(self.projector_window.fog.width + 1):
+                    x = int(tx * tile_width)
+                    self.fog_map_canvas.create_line(x, 0, x, mini_height, fill='#505050', width=1, tags="grid")
                 
                 # Scroll-Region
                 self.fog_map_canvas.config(scrollregion=(0, 0, mini_width, mini_height))
@@ -639,13 +647,39 @@ class GamemasterControlPanel(tk.Toplevel):
         if not self.projector_window or not hasattr(self, 'fog_map_canvas'):
             return
         
-        # Canvas-Koordinaten in Tile-Koordinaten umwandeln
+        # WICHTIG: Bei scrollbaren Canvas ist event.x/y relativ zum sichtbaren Bereich
+        # canvasx/canvasy konvertieren zur absoluten Position im Canvas
         canvas_x = self.fog_map_canvas.canvasx(event.x)
         canvas_y = self.fog_map_canvas.canvasy(event.y)
         
-        tile_size = getattr(self.fog_map_canvas, 'tile_size', 8)
-        tile_x = int(canvas_x / tile_size)
-        tile_y = int(canvas_y / tile_size)
+        # Map-Dimensionen
+        map_width = self.projector_window.fog.width
+        map_height = self.projector_window.fog.height
+        
+        # SVG-Modus: Berechne Tile-Koordinaten basierend auf Canvas-Größe
+        if self.projector_window.is_svg_mode:
+            # Hole Canvas-Scrollregion (die tatsächliche Bildgröße)
+            scrollregion = self.fog_map_canvas.cget('scrollregion')
+            if scrollregion:
+                coords = [float(x) for x in scrollregion.split()]
+                canvas_width = coords[2] - coords[0]
+                canvas_height = coords[3] - coords[1]
+            else:
+                canvas_width = self.fog_map_canvas.winfo_width()
+                canvas_height = self.fog_map_canvas.winfo_height()
+            
+            # Tile-Koordinaten berechnen (Canvas-Pixel → Grid-Koordinaten)
+            tile_x = int((canvas_x / canvas_width) * map_width)
+            tile_y = int((canvas_y / canvas_height) * map_height)
+        else:
+            # JSON-Modus: Tile-Größe verwenden (war 8px, jetzt 16px)
+            tile_size = getattr(self.fog_map_canvas, 'tile_size', 16)
+            tile_x = int(canvas_x / tile_size)
+            tile_y = int(canvas_y / tile_size)
+        
+        # Bounds-Check
+        tile_x = max(0, min(tile_x, map_width - 1))
+        tile_y = max(0, min(tile_y, map_height - 1))
         
         # Brush-Größe
         brush_size = self.fog_brush_size.get()
@@ -653,8 +687,8 @@ class GamemasterControlPanel(tk.Toplevel):
         # Bereich berechnen
         x1 = max(0, tile_x - brush_size // 2)
         y1 = max(0, tile_y - brush_size // 2)
-        x2 = min(self.projector_window.map_data.get("width", 50) - 1, tile_x + brush_size // 2)
-        y2 = min(self.projector_window.map_data.get("height", 50) - 1, tile_y + brush_size // 2)
+        x2 = min(map_width - 1, tile_x + brush_size // 2)
+        y2 = min(map_height - 1, tile_y + brush_size // 2)
         
         # Fog updaten
         if reveal:
@@ -673,6 +707,12 @@ class GamemasterControlPanel(tk.Toplevel):
         if not hasattr(self, 'fog_map_canvas'):
             return
         
+        # Bei SVG-Mode: Komplettes Neu-Rendering nötig (kein Tile-basiertes Canvas)
+        if self.projector_window.is_svg_mode:
+            self.update_fog_map_svg()
+            return
+        
+        # JSON-Mode: Nur geänderte Tiles updaten
         map_data = self.projector_window.map_data
         tiles = map_data.get("tiles", [])
         

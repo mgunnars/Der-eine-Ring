@@ -83,6 +83,9 @@ class PNGMapImporter:
                     
                     tile_img = img.crop((left, top, right, bottom))
                     
+                    # BORDER-REMOVAL: Entferne 1px Border falls vorhanden (schwarze/graue Linien)
+                    tile_img = self._remove_tile_border_if_present(tile_img)
+                    
                     # Generiere eindeutigen Material-Namen (ohne Leerzeichen!)
                     safe_map_name = map_name.replace(" ", "_").replace("\\", "_").replace("/", "_")
                     material_id = f"{safe_map_name}_x{x}_y{y}"
@@ -146,6 +149,65 @@ class PNGMapImporter:
         """Berechnet durchschnittliche Farbe eines Tiles (für Fallback)"""
         img_small = img.resize((1, 1), Image.Resampling.LANCZOS)
         return img_small.getpixel((0, 0))
+    
+    def _remove_tile_border_if_present(self, tile_img):
+        """
+        Entfernt 1px Border von Tile falls vorhanden (Grid-Lines von importierten PNGs)
+        Prüft ob Ränder deutlich dunkler sind als das Innere
+        """
+        width, height = tile_img.size
+        
+        # Zu kleine Tiles nicht bearbeiten
+        if width < 10 or height < 10:
+            return tile_img
+        
+        # Konvertiere zu RGB falls nötig
+        if tile_img.mode == 'RGBA':
+            tile_rgb = tile_img.convert('RGB')
+        else:
+            tile_rgb = tile_img
+        
+        pixels = tile_rgb.load()
+        
+        # Sample Ränder (Top, Bottom, Left, Right)
+        edge_pixels = []
+        
+        # Top & Bottom
+        for x in range(width):
+            edge_pixels.append(pixels[x, 0])  # Top
+            edge_pixels.append(pixels[x, height-1])  # Bottom
+        
+        # Left & Right
+        for y in range(height):
+            edge_pixels.append(pixels[0, y])  # Left
+            edge_pixels.append(pixels[width-1, y])  # Right
+        
+        # Berechne durchschnittliche Helligkeit der Ränder
+        edge_brightness = sum(sum(p) for p in edge_pixels) / (len(edge_pixels) * 3)
+        
+        # Sample Inneres (Center 50%)
+        center_start_x = width // 4
+        center_start_y = height // 4
+        center_end_x = (width * 3) // 4
+        center_end_y = (height * 3) // 4
+        
+        center_pixels = []
+        for y in range(center_start_y, center_end_y, max(1, (center_end_y - center_start_y) // 10)):
+            for x in range(center_start_x, center_end_x, max(1, (center_end_x - center_start_x) // 10)):
+                center_pixels.append(pixels[x, y])
+        
+        if not center_pixels:
+            return tile_img
+        
+        center_brightness = sum(sum(p) for p in center_pixels) / (len(center_pixels) * 3)
+        
+        # Wenn Ränder mindestens 30% dunkler sind als Inneres → Border entfernen
+        if edge_brightness < center_brightness * 0.7:
+            # Crop 1px von allen Seiten und scale zurück
+            cropped = tile_img.crop((1, 1, width-1, height-1))
+            return cropped.resize((width, height), Image.LANCZOS)
+        
+        return tile_img
     
     def import_png_as_single_texture(self, png_path, material_id=None, map_width=50, map_height=50):
         """

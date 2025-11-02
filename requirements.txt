@@ -11,7 +11,9 @@ pygame>=2.5.0          # Sound-Effekte (optional)
 noise>=1.2.2           # Perlin-Noise für organische Texturen (optional)
 imageio>=2.31.0        # GIF-Animation Export (optional)
 scipy>=1.11.0          # Erweiterte Mathematik (optional)
-cairosvg>=2.7.0        # SVG High-Quality Rendering (optional, Fallback vorhanden)
+
+# SVG-Rendering (optional - benötigt unter Windows Cairo-DLLs)
+# cairosvg>=2.7.0      # High-Quality SVG (optional, Fallback mit PIL vorhanden)
 
 # HINWEIS: tkinter ist standardmäßig in Python enthalten
 # Falls tkinter fehlt: sudo apt-get install python3-tk (Linux)

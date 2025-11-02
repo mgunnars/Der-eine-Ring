@@ -110,7 +110,18 @@ class DerEineRingProApp(tk.Tk):
                 if self.projector_window and self.projector_window.winfo_exists():
                     self.projector_window.destroy()
                 
-                self.projector_window = ProjectorWindow(self, svg_path=self.loaded_svg_path, webcam_tracker=self.webcam_tracker)
+                # Map-Daten holen (für source_png Info)
+                map_data = self.current_map_data
+                if self.current_editor:
+                    map_data = self.current_editor.get_map_data()
+                
+                # Projektor mit map_data UND svg_path erstellen
+                self.projector_window = ProjectorWindow(
+                    self, 
+                    map_data=map_data,
+                    svg_path=self.loaded_svg_path, 
+                    webcam_tracker=self.webcam_tracker
+                )
                 return
             
             # JSON-Modus: Normale Tile-basierte Map
