@@ -13,8 +13,15 @@ import os
 import sys
 from PIL import Image
 from svg_map_exporter import SVGMapExporter
-from svg_projector import SVGProjectorRenderer
 from advanced_texture_renderer import AdvancedTextureRenderer
+
+# SVG Projektor mit Fallback
+try:
+    from svg_projector import SVGProjectorRenderer
+    HAS_SVG_RENDERER = True
+except ImportError:
+    HAS_SVG_RENDERER = False
+    print("⚠️ SVG Projektor nicht verfügbar")
 
 
 class RenderingBenchmark:
@@ -75,6 +82,10 @@ class RenderingBenchmark:
     
     def benchmark_svg_render(self, svg_file, width, height):
         """Benchmark SVG Rendering zu Bildschirmauflösung"""
+        if not HAS_SVG_RENDERER:
+            print(f"\n⚠️ SVG Rendering übersprungen (Renderer nicht verfügbar)")
+            return {'success': False, 'skipped': True}
+        
         print(f"\n🎬 Teste SVG Rendering ({width}×{height})...")
         
         if not os.path.exists(svg_file):

@@ -9,11 +9,20 @@ Vorteile gegenüber PNG-Tiles:
 """
 
 import tkinter as tk
-from PIL import Image, ImageTk
-import cairosvg
+from PIL import Image, ImageTk, ImageDraw
 from io import BytesIO
 import os
 import time
+import xml.etree.ElementTree as ET
+import base64
+
+# cairosvg ist optional - wir haben einen Fallback
+try:
+    import cairosvg
+    HAS_CAIROSVG = True
+except ImportError:
+    HAS_CAIROSVG = False
+    print("⚠️ cairosvg nicht gefunden - verwende PIL-Fallback (einfachere Qualität)")
 
 
 class SVGProjectorRenderer:
@@ -65,16 +74,15 @@ class SVGProjectorRenderer:
         start_time = time.time()
         
         try:
-            # SVG zu PNG rendern mit cairosvg
-            png_data = cairosvg.svg2png(
-                bytestring=self.svg_data.encode('utf-8'),
-                output_width=width,
-                output_height=height,
-                dpi=300  # Hohe DPI für beste Qualität
-            )
+            if HAS_CAIROSVG:
+                # Hochwertig mit cairosvg
+                image = self._render_with_cairosvg(width, height)
+            else:
+                # Fallback mit PIL (extrahiert eingebettete Bilder)
+                image = self._render_with_pil_fallback(width, height)
             
-            # PNG zu PIL Image
-            image = Image.open(BytesIO(png_data))
+            if not image:
+                return None
             
             self.render_time = time.time() - start_time
             print(f"✅ Rendering abgeschlossen in {self.render_time:.2f}s")
@@ -89,6 +97,84 @@ class SVGProjectorRenderer:
         except Exception as e:
             print(f"❌ Fehler beim Rendern: {e}")
             return None
+    
+    def _render_with_cairosvg(self, width, height):
+        """Rendert mit cairosvg (hohe Qualität)"""
+        png_data = cairosvg.svg2png(
+            bytestring=self.svg_data.encode('utf-8'),
+            output_width=width,
+            output_height=height,
+            dpi=300
+        )
+        return Image.open(BytesIO(png_data))
+    
+    def _render_with_pil_fallback(self, width, height):
+        """
+        Fallback-Rendering mit PIL
+        Extrahiert base64-eingebettete PNG-Tiles und compositet sie
+        """
+        try:
+            root = ET.fromstring(self.svg_data)
+            
+            # SVG Dimensionen auslesen
+            svg_width = int(root.get('width', '1000').replace('px', ''))
+            svg_height = int(root.get('height', '1000').replace('px', ''))
+            
+            # Skalierungsfaktor
+            scale_x = width / svg_width
+            scale_y = height / svg_height
+            
+            # Schwarzer Hintergrund
+            composite = Image.new('RGB', (width, height), (26, 26, 26))
+            
+            # Alle <image> Elemente finden
+            ns = {'svg': 'http://www.w3.org/2000/svg', 
+                  'xlink': 'http://www.w3.org/1999/xlink'}
+            
+            images = root.findall('.//svg:image', ns) + root.findall('.//image')
+            
+            print(f"   Gefunden: {len(images)} Bilder")
+            
+            for img_elem in images:
+                try:
+                    # Position und Größe
+                    x = float(img_elem.get('x', 0))
+                    y = float(img_elem.get('y', 0))
+                    w = float(img_elem.get('width', 256))
+                    h = float(img_elem.get('height', 256))
+                    
+                    # Skaliert
+                    scaled_x = int(x * scale_x)
+                    scaled_y = int(y * scale_y)
+                    scaled_w = int(w * scale_x)
+                    scaled_h = int(h * scale_y)
+                    
+                    # Bild-Daten (href oder xlink:href)
+                    href = img_elem.get('href') or img_elem.get('{http://www.w3.org/1999/xlink}href')
+                    
+                    if href and href.startswith('data:image/png;base64,'):
+                        # Base64 decodieren
+                        base64_data = href.split(',', 1)[1]
+                        img_data = base64.b64decode(base64_data)
+                        tile = Image.open(BytesIO(img_data))
+                        
+                        # Skalieren falls nötig
+                        if tile.size != (scaled_w, scaled_h):
+                            tile = tile.resize((scaled_w, scaled_h), Image.LANCZOS)
+                        
+                        # Einfügen
+                        composite.paste(tile, (scaled_x, scaled_y))
+                
+                except Exception as e:
+                    print(f"⚠️ Fehler bei Tile: {e}")
+                    continue
+            
+            return composite
+            
+        except Exception as e:
+            print(f"❌ PIL-Fallback Fehler: {e}")
+            # Notfall: Schwarzes Bild
+            return Image.new('RGB', (width, height), (26, 26, 26))
     
     def render_to_canvas(self, canvas, scale=1.0, offset_x=0, offset_y=0):
         """
