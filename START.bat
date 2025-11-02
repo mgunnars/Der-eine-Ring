@@ -1,14 +1,15 @@
 @echo off
-title Der Eine Ring - Tabletop Projektor
+title Der Eine Ring - Tabletop Projektor PRO
 echo.
 echo ===================================
-echo   Der Eine Ring - Kartenprojektor
+echo   Der Eine Ring - PRO Edition
+echo   JSON + SVG Support
 echo ===================================
 echo.
-echo Starte Anwendung mit SVG-Support...
+echo Starte Anwendung...
 echo.
 
-py start_with_svg.py
+py enhanced_main.py
 
 if errorlevel 1 (
     echo.

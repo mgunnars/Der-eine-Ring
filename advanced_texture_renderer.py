@@ -137,6 +137,11 @@ class AdvancedTextureRenderer:
         
         return sorted_materials
     
+    @property
+    def registered_materials(self):
+        """Alias für SVG-Export Kompatibilität"""
+        return self.get_all_materials()
+    
     def create_new_material(self, material_id, name, color=(128, 128, 128), 
                            animated=False, emoji="🎨", base_texture=None):
         """Erstellt ein neues benutzerdefiniertes Material"""
@@ -185,6 +190,12 @@ class AdvancedTextureRenderer:
                          if key.startswith(f"{material_id}_")]
         for key in keys_to_remove:
             del self.texture_cache[key]
+    
+    def render_texture(self, material_name, material_type, size):
+        """
+        Wrapper für SVG-Export - ruft get_texture() auf
+        """
+        return self.get_texture(material_name, size=size, animation_frame=0)
     
     def get_texture(self, material_id, size=64, animation_frame=0, river_direction="right"):
         """

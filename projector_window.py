@@ -1,22 +1,35 @@
 """
 Projektor-Fenster für "Der Eine Ring"
 Zeigt die Karte im Vollbild auf einem zweiten Monitor mit Fog-of-War
+Unterstützt JSON-Maps (Tile-basiert) und SVG-Maps (Vektor-basiert)
 """
 import tkinter as tk
 from tkinter import Canvas
 from PIL import Image, ImageTk, ImageDraw, ImageFilter
 import json
 import random
+import os
 from fog_texture_generator import FogTextureGenerator
 
 class ProjectorWindow(tk.Toplevel):
     """Vollbild-Projektor-Fenster für Spieler mit Fog-of-War"""
     
-    def __init__(self, parent, map_data=None, webcam_tracker=None):
+    def __init__(self, parent, map_data=None, webcam_tracker=None, svg_path=None):
         super().__init__(parent)
         
         self.title("Der Eine Ring - Projektor")
         self.configure(bg="#0a0a0a", cursor="none")
+        
+        # SVG-Modus Detection
+        self.is_svg_mode = svg_path is not None
+        self.svg_path = svg_path
+        self.svg_renderer = None
+        
+        if self.is_svg_mode:
+            # SVG-Projektor-Modus initialisieren
+            from svg_projector import SVGProjectorRenderer
+            self.svg_renderer = SVGProjectorRenderer(svg_path)
+            self.title("Der Eine Ring - Projektor (SVG)")
         
         # NICHT im Vollbild starten - User kann mit F11 wechseln
         self.attributes('-fullscreen', False)
@@ -191,9 +204,14 @@ class ProjectorWindow(tk.Toplevel):
     def render_map(self):
         """
         Karte auf dem Canvas rendern - OPTIMIERT MIT CACHING!
-        Statische Tiles werden gecacht, nur animierte Tiles werden neu gerendert
-        KEIN delete("all") mehr - nur Image-Update für flackerfreies Rendering!
+        Unterstützt sowohl JSON-Maps (Tile-basiert) als auch SVG-Maps (Vektor-basiert)
         """
+        # SVG-Modus: Delegiere an SVG-Renderer
+        if self.is_svg_mode:
+            self.render_svg_map()
+            return
+        
+        # JSON-Modus: Normale Tile-Rendering
         # Sicherheitscheck: Ist das Fenster noch vorhanden?
         try:
             if not self.winfo_exists():
@@ -562,6 +580,52 @@ class ProjectorWindow(tk.Toplevel):
         
         # Nächster Frame nach 33ms (~30 FPS Animation, 15 FPS Rendering)
         self.animation_id = self.after(33, self.animate_tiles)
+    
+    def render_svg_map(self):
+        """Rendert SVG-Map mit Zoom/Pan Support"""
+        try:
+            # Canvas-Größe ermitteln
+            self.canvas.update_idletasks()
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+        except:
+            return
+        
+        # SVG in passender Größe rendern (mit Zoom)
+        target_width = int(canvas_width * self.zoom_level)
+        target_height = int(canvas_height * self.zoom_level)
+        
+        # Von SVGProjectorRenderer rendern lassen
+        rendered_img = self.svg_renderer.render_to_size(target_width, target_height)
+        
+        if rendered_img is None:
+            return
+        
+        # Pan-Offset anwenden (Zentrierung)
+        final_img = Image.new('RGB', (canvas_width, canvas_height), (10, 10, 10))
+        
+        # Zentrieren mit Pan-Offset
+        offset_x = (canvas_width - rendered_img.width) // 2 + int(self.pan_offset_x)
+        offset_y = (canvas_height - rendered_img.height) // 2 + int(self.pan_offset_y)
+        
+        final_img.paste(rendered_img, (offset_x, offset_y))
+        
+        # Fog-of-War anwenden (falls aktiviert)
+        if self.fog_enabled and self.fog:
+            final_img = self.apply_fog_to_image(final_img)
+        
+        # Auf Canvas anzeigen
+        photo = ImageTk.PhotoImage(final_img)
+        
+        if self.canvas_image_id:
+            self.canvas.itemconfig(self.canvas_image_id, image=photo)
+        else:
+            self.canvas_image_id = self.canvas.create_image(
+                canvas_width // 2, canvas_height // 2, 
+                image=photo, anchor=tk.CENTER
+            )
+        
+        self.canvas.photo = photo
     
     def destroy(self):
         """Aufräumen beim Schließen"""

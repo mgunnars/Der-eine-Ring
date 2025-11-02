@@ -116,6 +116,12 @@ class SVGProjectorRenderer:
         try:
             root = ET.fromstring(self.svg_data)
             
+            # SVG Namespaces
+            namespaces = {
+                'svg': 'http://www.w3.org/2000/svg',
+                'xlink': 'http://www.w3.org/1999/xlink'
+            }
+            
             # SVG Dimensionen auslesen
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
@@ -127,15 +133,17 @@ class SVGProjectorRenderer:
             # Schwarzer Hintergrund
             composite = Image.new('RGB', (width, height), (26, 26, 26))
             
-            # Alle <image> Elemente finden
-            ns = {'svg': 'http://www.w3.org/2000/svg', 
-                  'xlink': 'http://www.w3.org/1999/xlink'}
+            # Alle <image> Elemente finden MIT Namespace
+            images = root.findall('.//{http://www.w3.org/2000/svg}image', namespaces)
             
-            images = root.findall('.//svg:image', ns) + root.findall('.//image')
+            # Fallback: Auch ohne Namespace versuchen
+            if len(images) == 0:
+                images = root.findall('.//image')
             
             print(f"   Gefunden: {len(images)} Bilder")
             
-            for img_elem in images:
+            success_count = 0
+            for idx, img_elem in enumerate(images):
                 try:
                     # Position und Größe
                     x = float(img_elem.get('x', 0))
@@ -149,10 +157,14 @@ class SVGProjectorRenderer:
                     scaled_w = int(w * scale_x)
                     scaled_h = int(h * scale_y)
                     
-                    # Bild-Daten (href oder xlink:href)
-                    href = img_elem.get('href') or img_elem.get('{http://www.w3.org/1999/xlink}href')
+                    # Bild-Daten mit xlink:href Namespace
+                    href = img_elem.get('{http://www.w3.org/1999/xlink}href')
                     
-                    if href and href.startswith('data:image/png;base64,'):
+                    # Debug ersten paar Bilder
+                    if idx < 3:
+                        print(f"   Bild {idx}: href={href[:50] if href else 'None'}...")
+                    
+                    if href and 'data:image/png;base64,' in href:
                         # Base64 decodieren
                         base64_data = href.split(',', 1)[1]
                         img_data = base64.b64decode(base64_data)
@@ -164,15 +176,20 @@ class SVGProjectorRenderer:
                         
                         # Einfügen
                         composite.paste(tile, (scaled_x, scaled_y))
-                
+                        success_count += 1
+                    
                 except Exception as e:
-                    print(f"⚠️ Fehler bei Tile: {e}")
+                    if idx < 3:  # Nur erste paar Fehler anzeigen
+                        print(f"   ⚠️ Fehler bei Bild {idx}: {e}")
                     continue
             
+            print(f"   ✅ {success_count}/{len(images)} Bilder erfolgreich eingefügt")
             return composite
             
         except Exception as e:
             print(f"❌ PIL-Fallback Fehler: {e}")
+            import traceback
+            traceback.print_exc()
             # Notfall: Schwarzes Bild
             return Image.new('RGB', (width, height), (26, 26, 26))
     
@@ -339,6 +356,9 @@ class SVGProjectorWindow:
             self.window.attributes('-fullscreen', True)
             self.window.configure(bg='black')
         
+        # Menu-Leiste
+        self.setup_menu()
+        
         # SVG Renderer
         self.renderer = SVGProjectorRenderer(svg_path)
         
@@ -360,6 +380,55 @@ class SVGProjectorWindow:
         
         # Initial render
         self.window.after(100, self.render)
+    
+    def setup_menu(self):
+        """Erstellt Menu-Leiste"""
+        from tkinter import filedialog, messagebox
+        
+        menubar = tk.Menu(self.window)
+        self.window.config(menu=menubar)
+        
+        # Datei-Menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Datei", menu=file_menu)
+        file_menu.add_command(label="📂 SVG öffnen...", command=self.load_svg)
+        file_menu.add_separator()
+        file_menu.add_command(label="❌ Schließen", command=self.window.destroy)
+    
+    def load_svg(self):
+        """Lädt eine neue SVG-Datei"""
+        from tkinter import filedialog, messagebox
+        
+        svg_file = filedialog.askopenfilename(
+            title="SVG-Karte auswählen",
+            initialdir="maps",
+            filetypes=[
+                ("Alle Dateien", "*.*"),
+                ("SVG-Dateien", "*.svg")
+            ]
+        )
+        
+        if svg_file and os.path.exists(svg_file):
+            try:
+                # Neuen Renderer erstellen
+                self.svg_path = svg_file
+                self.renderer = SVGProjectorRenderer(svg_file)
+                
+                # View zurücksetzen
+                self.scale = 1.0
+                self.offset_x = 0
+                self.offset_y = 0
+                
+                # Neu rendern
+                self.render()
+                
+                # Titel aktualisieren
+                filename = os.path.basename(svg_file)
+                self.window.title(f"SVG Projektor - {filename}")
+                
+                messagebox.showinfo("Erfolg", f"SVG geladen:\n{filename}")
+            except Exception as e:
+                messagebox.showerror("Fehler", f"SVG konnte nicht geladen werden:\n{e}")
     
     def setup_controls(self):
         """Tastatur-Steuerung"""

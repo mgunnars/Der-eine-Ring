@@ -74,6 +74,10 @@ class MapSystem:
             print(f"Karte nicht gefunden: {filepath}")
             return None
         
+        # SVG-Dateien ignorieren (werden nur vom Projektor unterstützt)
+        if filepath.lower().endswith('.svg'):
+            return None
+        
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -91,6 +95,11 @@ class MapSystem:
         
         except json.JSONDecodeError as e:
             print(f"Fehler beim Laden der Karte: {e}")
+            print(f"  Datei: {filepath}")
+            # Nicht kritisch - einfach None zurückgeben
+            return None
+        except Exception as e:
+            print(f"Unerwarteter Fehler beim Laden: {e}")
             return None
     
     def list_maps(self):
@@ -98,7 +107,7 @@ class MapSystem:
         Listet alle verfügbaren Karten auf
         
         Returns:
-            Liste von Tupeln (filename, created_date)
+            Liste von Tupeln (filename, created_date, size)
         """
         maps = []
         
@@ -106,9 +115,10 @@ class MapSystem:
             return maps
         
         for filename in os.listdir(self.maps_folder):
+            filepath = os.path.join(self.maps_folder, filename)
+            
+            # JSON-Dateien
             if filename.endswith('.json'):
-                filepath = os.path.join(self.maps_folder, filename)
-                
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         data = json.load(f)
@@ -119,6 +129,18 @@ class MapSystem:
                 
                 except:
                     maps.append((filename, 'Fehler beim Laden', '?'))
+            
+            # SVG-Dateien auch auflisten
+            elif filename.endswith('.svg'):
+                try:
+                    # Dateigröße und Datum
+                    import time
+                    created = time.ctime(os.path.getmtime(filepath))
+                    file_size = os.path.getsize(filepath)
+                    size_str = f"{file_size/1024:.1f}KB"
+                    maps.append((filename, created, size_str))
+                except:
+                    maps.append((filename, 'SVG', 'Unbekannt'))
         
         return sorted(maps, key=lambda x: x[1], reverse=True)
     

@@ -1,6 +1,7 @@
 """
 Der Eine Ring PRO - Erweiterte Hauptanwendung
 Mit Editor-Modus, Projektor-Modus und VTT-Features
+Unterstützt JSON-Maps und SVG-Maps
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -98,10 +99,20 @@ class DerEineRingProApp(tk.Tk):
             messagebox.showerror("Fehler", f"Editor konnte nicht gestartet werden:\n{e}")
     
     def start_projector(self):
-        """Projektor-Fenster öffnen"""
+        """Projektor-Fenster öffnen - unterstützt JSON und SVG"""
         try:
             from projector_window import ProjectorWindow
             
+            # Prüfe ob eine SVG-Datei geladen wurde
+            if hasattr(self, 'loaded_svg_path') and self.loaded_svg_path:
+                # SVG-Modus: Öffne Projektor mit SVG
+                if self.projector_window and self.projector_window.winfo_exists():
+                    self.projector_window.destroy()
+                
+                self.projector_window = ProjectorWindow(self, svg_path=self.loaded_svg_path, webcam_tracker=self.webcam_tracker)
+                return
+            
+            # JSON-Modus: Normale Tile-basierte Map
             # Wenn kein Editor läuft, aktuelle Map-Daten nutzen
             map_data = self.current_map_data
             
@@ -149,14 +160,30 @@ class DerEineRingProApp(tk.Tk):
             messagebox.showerror("Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
     def load_map(self):
-        """Karte laden"""
+        """Karte laden - unterstützt JSON und SVG"""
         filename = filedialog.askopenfilename(
             title="Karte laden",
-            filetypes=[("JSON Dateien", "*.json"), ("Alle Dateien", "*.*")],
+            filetypes=[("Alle Dateien", "*.*"), ("JSON Dateien", "*.json"), ("SVG Dateien", "*.svg")],
             initialdir="maps"
         )
         
         if filename:
+            # SVG? → Merke Pfad und öffne im Projektor
+            if filename.lower().endswith('.svg'):
+                self.loaded_svg_path = filename
+                messagebox.showinfo("SVG geladen", 
+                    f"✅ SVG-Karte geladen!\n\n"
+                    f"Datei: {os.path.basename(filename)}\n\n"
+                    f"Öffne nun '📺 Projektor-Modus' um die SVG anzuzeigen.\n\n"
+                    f"Steuerung:\n"
+                    f"• Mausrad: Zoom\n"
+                    f"• Drag: Pan\n"
+                    f"• F11: Vollbild\n"
+                    f"• F: Fog of War\n"
+                    f"• ESC: Beenden")
+                return
+            
+            # JSON → Lade als normale Karte
             try:
                 from map_system import MapSystem
                 ms = MapSystem()
@@ -164,6 +191,7 @@ class DerEineRingProApp(tk.Tk):
                 
                 if map_data:
                     self.current_map_data = map_data
+                    self.loaded_svg_path = None  # Reset SVG-Modus
                     messagebox.showinfo("Erfolg", f"Karte geladen:\n{os.path.basename(filename)}")
                 else:
                     messagebox.showerror("Fehler", "Karte konnte nicht geladen werden")
@@ -218,9 +246,21 @@ class DerEineRingProApp(tk.Tk):
                 if selection:
                     idx = selection[0]
                     filename = maps[idx][0]
+                    
+                    # SVG? → Merke Pfad für Projektor
+                    if filename.lower().endswith('.svg'):
+                        self.loaded_svg_path = os.path.join('maps', filename)
+                        messagebox.showinfo("SVG geladen", 
+                            f"✅ {filename} geladen!\n\n"
+                            f"Öffne nun '📺 Projektor-Modus'")
+                        list_win.destroy()
+                        return
+                    
+                    # JSON → Lade als normale Karte
                     map_data = ms.load_map(filename)
                     if map_data:
                         self.current_map_data = map_data
+                        self.loaded_svg_path = None  # Reset SVG-Modus
                         messagebox.showinfo("Erfolg", f"Karte geladen: {filename}")
                         list_win.destroy()
             

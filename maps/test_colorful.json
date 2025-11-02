@@ -1,0 +1,509 @@
+{
+  "width": 10,
+  "height": 10,
+  "tiles": [
+    {
+      "x": 0,
+      "y": 0,
+      "material": "grass"
+    },
+    {
+      "x": 1,
+      "y": 0,
+      "material": "water"
+    },
+    {
+      "x": 2,
+      "y": 0,
+      "material": "forest"
+    },
+    {
+      "x": 3,
+      "y": 0,
+      "material": "mountain"
+    },
+    {
+      "x": 4,
+      "y": 0,
+      "material": "sand"
+    },
+    {
+      "x": 5,
+      "y": 0,
+      "material": "stone"
+    },
+    {
+      "x": 6,
+      "y": 0,
+      "material": "grass"
+    },
+    {
+      "x": 7,
+      "y": 0,
+      "material": "water"
+    },
+    {
+      "x": 8,
+      "y": 0,
+      "material": "forest"
+    },
+    {
+      "x": 9,
+      "y": 0,
+      "material": "mountain"
+    },
+    {
+      "x": 0,
+      "y": 1,
+      "material": "water"
+    },
+    {
+      "x": 1,
+      "y": 1,
+      "material": "forest"
+    },
+    {
+      "x": 2,
+      "y": 1,
+      "material": "mountain"
+    },
+    {
+      "x": 3,
+      "y": 1,
+      "material": "sand"
+    },
+    {
+      "x": 4,
+      "y": 1,
+      "material": "stone"
+    },
+    {
+      "x": 5,
+      "y": 1,
+      "material": "grass"
+    },
+    {
+      "x": 6,
+      "y": 1,
+      "material": "water"
+    },
+    {
+      "x": 7,
+      "y": 1,
+      "material": "forest"
+    },
+    {
+      "x": 8,
+      "y": 1,
+      "material": "mountain"
+    },
+    {
+      "x": 9,
+      "y": 1,
+      "material": "sand"
+    },
+    {
+      "x": 0,
+      "y": 2,
+      "material": "forest"
+    },
+    {
+      "x": 1,
+      "y": 2,
+      "material": "mountain"
+    },
+    {
+      "x": 2,
+      "y": 2,
+      "material": "sand"
+    },
+    {
+      "x": 3,
+      "y": 2,
+      "material": "stone"
+    },
+    {
+      "x": 4,
+      "y": 2,
+      "material": "grass"
+    },
+    {
+      "x": 5,
+      "y": 2,
+      "material": "water"
+    },
+    {
+      "x": 6,
+      "y": 2,
+      "material": "forest"
+    },
+    {
+      "x": 7,
+      "y": 2,
+      "material": "mountain"
+    },
+    {
+      "x": 8,
+      "y": 2,
+      "material": "sand"
+    },
+    {
+      "x": 9,
+      "y": 2,
+      "material": "stone"
+    },
+    {
+      "x": 0,
+      "y": 3,
+      "material": "mountain"
+    },
+    {
+      "x": 1,
+      "y": 3,
+      "material": "sand"
+    },
+    {
+      "x": 2,
+      "y": 3,
+      "material": "stone"
+    },
+    {
+      "x": 3,
+      "y": 3,
+      "material": "grass"
+    },
+    {
+      "x": 4,
+      "y": 3,
+      "material": "water"
+    },
+    {
+      "x": 5,
+      "y": 3,
+      "material": "forest"
+    },
+    {
+      "x": 6,
+      "y": 3,
+      "material": "mountain"
+    },
+    {
+      "x": 7,
+      "y": 3,
+      "material": "sand"
+    },
+    {
+      "x": 8,
+      "y": 3,
+      "material": "stone"
+    },
+    {
+      "x": 9,
+      "y": 3,
+      "material": "grass"
+    },
+    {
+      "x": 0,
+      "y": 4,
+      "material": "sand"
+    },
+    {
+      "x": 1,
+      "y": 4,
+      "material": "stone"
+    },
+    {
+      "x": 2,
+      "y": 4,
+      "material": "grass"
+    },
+    {
+      "x": 3,
+      "y": 4,
+      "material": "water"
+    },
+    {
+      "x": 4,
+      "y": 4,
+      "material": "forest"
+    },
+    {
+      "x": 5,
+      "y": 4,
+      "material": "mountain"
+    },
+    {
+      "x": 6,
+      "y": 4,
+      "material": "sand"
+    },
+    {
+      "x": 7,
+      "y": 4,
+      "material": "stone"
+    },
+    {
+      "x": 8,
+      "y": 4,
+      "material": "grass"
+    },
+    {
+      "x": 9,
+      "y": 4,
+      "material": "water"
+    },
+    {
+      "x": 0,
+      "y": 5,
+      "material": "stone"
+    },
+    {
+      "x": 1,
+      "y": 5,
+      "material": "grass"
+    },
+    {
+      "x": 2,
+      "y": 5,
+      "material": "water"
+    },
+    {
+      "x": 3,
+      "y": 5,
+      "material": "forest"
+    },
+    {
+      "x": 4,
+      "y": 5,
+      "material": "mountain"
+    },
+    {
+      "x": 5,
+      "y": 5,
+      "material": "sand"
+    },
+    {
+      "x": 6,
+      "y": 5,
+      "material": "stone"
+    },
+    {
+      "x": 7,
+      "y": 5,
+      "material": "grass"
+    },
+    {
+      "x": 8,
+      "y": 5,
+      "material": "water"
+    },
+    {
+      "x": 9,
+      "y": 5,
+      "material": "forest"
+    },
+    {
+      "x": 0,
+      "y": 6,
+      "material": "grass"
+    },
+    {
+      "x": 1,
+      "y": 6,
+      "material": "water"
+    },
+    {
+      "x": 2,
+      "y": 6,
+      "material": "forest"
+    },
+    {
+      "x": 3,
+      "y": 6,
+      "material": "mountain"
+    },
+    {
+      "x": 4,
+      "y": 6,
+      "material": "sand"
+    },
+    {
+      "x": 5,
+      "y": 6,
+      "material": "stone"
+    },
+    {
+      "x": 6,
+      "y": 6,
+      "material": "grass"
+    },
+    {
+      "x": 7,
+      "y": 6,
+      "material": "water"
+    },
+    {
+      "x": 8,
+      "y": 6,
+      "material": "forest"
+    },
+    {
+      "x": 9,
+      "y": 6,
+      "material": "mountain"
+    },
+    {
+      "x": 0,
+      "y": 7,
+      "material": "water"
+    },
+    {
+      "x": 1,
+      "y": 7,
+      "material": "forest"
+    },
+    {
+      "x": 2,
+      "y": 7,
+      "material": "mountain"
+    },
+    {
+      "x": 3,
+      "y": 7,
+      "material": "sand"
+    },
+    {
+      "x": 4,
+      "y": 7,
+      "material": "stone"
+    },
+    {
+      "x": 5,
+      "y": 7,
+      "material": "grass"
+    },
+    {
+      "x": 6,
+      "y": 7,
+      "material": "water"
+    },
+    {
+      "x": 7,
+      "y": 7,
+      "material": "forest"
+    },
+    {
+      "x": 8,
+      "y": 7,
+      "material": "mountain"
+    },
+    {
+      "x": 9,
+      "y": 7,
+      "material": "sand"
+    },
+    {
+      "x": 0,
+      "y": 8,
+      "material": "forest"
+    },
+    {
+      "x": 1,
+      "y": 8,
+      "material": "mountain"
+    },
+    {
+      "x": 2,
+      "y": 8,
+      "material": "sand"
+    },
+    {
+      "x": 3,
+      "y": 8,
+      "material": "stone"
+    },
+    {
+      "x": 4,
+      "y": 8,
+      "material": "grass"
+    },
+    {
+      "x": 5,
+      "y": 8,
+      "material": "water"
+    },
+    {
+      "x": 6,
+      "y": 8,
+      "material": "forest"
+    },
+    {
+      "x": 7,
+      "y": 8,
+      "material": "mountain"
+    },
+    {
+      "x": 8,
+      "y": 8,
+      "material": "sand"
+    },
+    {
+      "x": 9,
+      "y": 8,
+      "material": "stone"
+    },
+    {
+      "x": 0,
+      "y": 9,
+      "material": "mountain"
+    },
+    {
+      "x": 1,
+      "y": 9,
+      "material": "sand"
+    },
+    {
+      "x": 2,
+      "y": 9,
+      "material": "stone"
+    },
+    {
+      "x": 3,
+      "y": 9,
+      "material": "grass"
+    },
+    {
+      "x": 4,
+      "y": 9,
+      "material": "water"
+    },
+    {
+      "x": 5,
+      "y": 9,
+      "material": "forest"
+    },
+    {
+      "x": 6,
+      "y": 9,
+      "material": "mountain"
+    },
+    {
+      "x": 7,
+      "y": 9,
+      "material": "sand"
+    },
+    {
+      "x": 8,
+      "y": 9,
+      "material": "stone"
+    },
+    {
+      "x": 9,
+      "y": 9,
+      "material": "grass"
+    }
+  ],
+  "created": "2025-11-02T12:43:36.639966",
+  "name": "Farbige Test-Karte",
+  "river_directions": {}
+}
