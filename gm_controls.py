@@ -484,8 +484,8 @@ class GamemasterControlPanel(tk.Toplevel):
         height = map_data.get("height", 50)
         tiles = map_data.get("tiles", [])
         
-        # Kleine Tile-Größe für Overview
-        tile_size = 8
+        # Größere Tile-Größe für bessere GM-Übersicht (war 8, jetzt 16)
+        tile_size = 16
         
         # Farben für Terrain-Typen (vereinfacht)
         terrain_colors = {
@@ -518,10 +518,10 @@ class GamemasterControlPanel(tk.Toplevel):
                 # Farbe anpassen je nach Fog-Status
                 if is_revealed:
                     fill_color = base_color  # Normal sichtbar
-                    outline = "#2a2a2a"
+                    outline = "#444444"  # Hellere Grid-Lines für GM (war #2a2a2a)
                 else:
                     fill_color = "#3a3a3a"   # Grau = verborgen
-                    outline = "#2a2a2a"
+                    outline = "#444444"
                 
                 # Tile zeichnen
                 x1 = x * tile_size
@@ -560,8 +560,8 @@ class GamemasterControlPanel(tk.Toplevel):
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
-            # Berechne Mini-Größe (max 400px)
-            max_size = 400
+            # Berechne Mini-Größe (max 500px für bessere Sicht, war 400)
+            max_size = 500
             scale = min(max_size / svg_width, max_size / svg_height)
             mini_width = int(svg_width * scale)
             mini_height = int(svg_height * scale)
@@ -581,15 +581,20 @@ class GamemasterControlPanel(tk.Toplevel):
                 tile_width = mini_width / self.projector_window.fog.width
                 tile_height = mini_height / self.projector_window.fog.height
                 
-                # Fog zeichnen
+                # Fog zeichnen + Grid-Lines für GM
                 for ty in range(self.projector_window.fog.height):
                     for tx in range(self.projector_window.fog.width):
+                        x1 = int(tx * tile_width)
+                        y1 = int(ty * tile_height)
+                        x2 = int((tx + 1) * tile_width)
+                        y2 = int((ty + 1) * tile_height)
+                        
+                        # Fog wenn nicht revealed
                         if not self.projector_window.fog.is_revealed(tx, ty):
-                            x1 = int(tx * tile_width)
-                            y1 = int(ty * tile_height)
-                            x2 = int((tx + 1) * tile_width)
-                            y2 = int((ty + 1) * tile_height)
                             draw.rectangle([x1, y1, x2, y2], fill=(20, 20, 20, 200))
+                        
+                        # Grid-Lines für GM (immer sichtbar)
+                        draw.rectangle([x1, y1, x2, y2], outline=(80, 80, 80, 150), width=1)
                 
                 mini_img = Image.alpha_composite(mini_img, fog_layer)
                 mini_img = mini_img.convert('RGB')

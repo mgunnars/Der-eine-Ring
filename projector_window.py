@@ -390,9 +390,9 @@ class ProjectorWindow(tk.Toplevel):
                             map_image.paste(fog_texture, (paste_x, paste_y))
         
         # JETZT erst: Konvertiere das EINE große Bild zu PhotoImage
-        # Offset für Zentrierung
-        offset_x = max(0, (canvas_width - total_map_width) // 2)
-        offset_y = max(0, (canvas_height - total_map_height) // 2)
+        # Offset für Zentrierung + Pan-Offset
+        offset_x = max(0, (canvas_width - total_map_width) // 2) + self.pan_offset_x
+        offset_y = max(0, (canvas_height - total_map_height) // 2) + self.pan_offset_y
         
         self.map_photo = ImageTk.PhotoImage(map_image)
         
@@ -452,9 +452,10 @@ class ProjectorWindow(tk.Toplevel):
             self.svg_viewport_y -= dy
             self.render_map()
         else:
-            # JSON: Normale Scan-Methode
-            self.canvas.scan_mark(self.pan_start_x, self.pan_start_y)
-            self.canvas.scan_dragto(event.x, event.y, gain=1)
+            # JSON: Auch mit Offset-System für Zoom-Kompatibilität
+            self.pan_offset_x += dx
+            self.pan_offset_y += dy
+            self.render_map()
         
         self.pan_start_x = event.x
         self.pan_start_y = event.y
