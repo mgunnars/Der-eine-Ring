@@ -117,13 +117,24 @@ class SVGMapExporter:
             tile_data = material_cache[material_name]
             
             if tile_data:
+                # SPECIAL: Village braucht größere Platzierung (3x) für Rauch
+                tile_render_size = tile_data['size']  # Kann 1x oder 3x sein
+                
+                # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
+                if material_name == 'village':
+                    offset_y = svg_y - (render_size * 2)  # 2 Tiles höher
+                    offset_x = svg_x
+                else:
+                    offset_y = svg_y
+                    offset_x = svg_x
+                
                 if embed_images:
                     # Bild als base64 einbetten
                     image_elem = ET.SubElement(map_group, 'image', {
-                        'x': str(svg_x),
-                        'y': str(svg_y),
-                        'width': str(render_size),
-                        'height': str(render_size),
+                        'x': str(offset_x),
+                        'y': str(offset_y),
+                        'width': str(tile_render_size),
+                        'height': str(tile_render_size),
                         'xlink:href': tile_data['data_uri'],
                         'data-material': material_name,
                         'data-grid': f"{grid_x},{grid_y}"
@@ -131,10 +142,10 @@ class SVGMapExporter:
                 else:
                     # Referenz zu externer Datei
                     image_elem = ET.SubElement(map_group, 'image', {
-                        'x': str(svg_x),
-                        'y': str(svg_y),
-                        'width': str(render_size),
-                        'height': str(render_size),
+                        'x': str(offset_x),
+                        'y': str(offset_y),
+                        'width': str(tile_render_size),
+                        'height': str(tile_render_size),
                         'xlink:href': tile_data['file_path'],
                         'data-material': material_name,
                         'data-grid': f"{grid_x},{grid_y}"
@@ -201,6 +212,9 @@ class SVGMapExporter:
     def _render_material_for_svg(self, material_name, materials, renderer, size):
         """Rendert ein Material in der gewünschten Auflösung"""
         try:
+            # SPECIAL: Village braucht 3x Größe für Rauch-Overlay!
+            actual_size = size * 3 if material_name == 'village' else size
+            
             # Material aus Dateisystem laden oder mit Renderer erzeugen
             material_path = f"materials/{material_name}.png"
             
@@ -211,18 +225,19 @@ class SVGMapExporter:
                 # Rendere mit AdvancedTextureRenderer
                 if material_name in materials:
                     mat_data = materials[material_name]
+                    # Village mit 3x Größe rendern!
                     img = renderer.render_texture(
                         material_name,
                         mat_data.get('type', 'basic'),
-                        size
+                        actual_size
                     )
                 else:
                     # Fallback: Einfarbiges Tile
-                    img = Image.new('RGB', (size, size), (50, 50, 50))
+                    img = Image.new('RGB', (actual_size, actual_size), (50, 50, 50))
             
             # Auf Zielgröße skalieren
-            if img.size != (size, size):
-                img = img.resize((size, size), Image.LANCZOS)
+            if img.size != (actual_size, actual_size):
+                img = img.resize((actual_size, actual_size), Image.LANCZOS)
             
             # Als base64 data URI konvertieren
             buffer = BytesIO()
@@ -233,7 +248,7 @@ class SVGMapExporter:
             return {
                 'data_uri': data_uri,
                 'file_path': material_path,
-                'size': size
+                'size': actual_size  # Korrekte Größe zurückgeben!
             }
             
         except Exception as e:

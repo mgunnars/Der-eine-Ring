@@ -9,6 +9,7 @@ from PIL import Image, ImageTk, ImageDraw, ImageFilter
 import json
 import random
 import os
+import xml.etree.ElementTree as ET
 from fog_texture_generator import FogTextureGenerator
 
 class ProjectorWindow(tk.Toplevel):
@@ -30,6 +31,11 @@ class ProjectorWindow(tk.Toplevel):
             from svg_projector import SVGProjectorRenderer
             self.svg_renderer = SVGProjectorRenderer(svg_path)
             self.title("Der Eine Ring - Projektor (SVG)")
+            
+            # SVG-spezifisches Caching
+            self.svg_static_cache = None  # Gecachte statische Tiles
+            self.svg_cache_size = None    # (width, height, zoom) für Invalidierung
+            self.svg_animated_materials = set()  # Set von Material-Namen die animiert sind
         
         # NICHT im Vollbild starten - User kann mit F11 wechseln
         self.attributes('-fullscreen', False)
@@ -133,9 +139,15 @@ class ProjectorWindow(tk.Toplevel):
         self.render_map()
         
         # Prüfe ob Animation gebraucht wird
-        self.check_for_animated_tiles()
+        if self.is_svg_mode:
+            # SVG: Prüfe SVG-Daten auf animierte Materialien
+            self.check_svg_for_animations()
+        else:
+            # JSON: Normale Tile-Prüfung
+            self.check_for_animated_tiles()
+        
         if self.has_animated_tiles:
-            print(f"Animation aktiviert: {len(self.animated_positions)} animierte Tiles")
+            print(f"Animation aktiviert: {len(self.animated_positions) if not self.is_svg_mode else len(self.svg_animated_materials)} animierte Tiles")
             self.start_animation()  # Nur starten wenn nötig
         else:
             print("Keine animierten Tiles gefunden - statische Map")
@@ -515,6 +527,35 @@ class ProjectorWindow(tk.Toplevel):
         
         self.render_map()
     
+    def check_svg_for_animations(self):
+        """Prüft SVG auf animierte Materialien"""
+        self.has_animated_tiles = False
+        self.svg_animated_materials = set()
+        
+        if not self.svg_renderer or not self.svg_renderer.svg_data:
+            return
+        
+        # Parse SVG und finde alle data-material Attribute
+        try:
+            root = ET.fromstring(self.svg_renderer.svg_data)
+            namespaces = {'svg': 'http://www.w3.org/2000/svg'}
+            
+            # Animierte Materialien
+            animated_materials = {'water', 'forest', 'animated_forest', 'animated_grass', 'village'}
+            
+            # Finde alle image-Elemente mit data-material
+            for img in root.findall('.//svg:image[@data-material]', namespaces):
+                material = img.get('data-material')
+                if material in animated_materials:
+                    self.svg_animated_materials.add(material)
+                    self.has_animated_tiles = True
+            
+            if self.has_animated_tiles:
+                print(f"SVG-Animation: {len(self.svg_animated_materials)} animierte Material-Typen gefunden: {self.svg_animated_materials}")
+        
+        except Exception as e:
+            print(f"⚠️ Fehler beim Parsen der SVG für Animation: {e}")
+    
     def check_for_animated_tiles(self):
         """Prüft ob die Map animierte Tiles hat und sammelt ihre Positionen"""
         self.has_animated_tiles = False
@@ -583,7 +624,7 @@ class ProjectorWindow(tk.Toplevel):
         # Nächster Frame nach 33ms (~30 FPS Animation, 15 FPS Rendering)
         self.animation_id = self.after(33, self.animate_tiles)
     
-    def apply_fog_to_image(self, img):
+    def apply_fog_to_image(self, img, svg_mode=False):
         """Wendet Fog-of-War auf ein PIL Image an (für SVG-Modus)"""
         if not self.fog_enabled or not self.fog:
             return img
@@ -596,9 +637,11 @@ class ProjectorWindow(tk.Toplevel):
         fog_layer = Image.new('RGBA', img.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(fog_layer)
         
-        # Berechne Tile-Größe basierend auf Map-Dimensionen
-        map_width = self.map_data.get("width", 50)
-        map_height = self.map_data.get("height", 50)
+        # Map-Dimensionen aus fog system holen (korrekte Tile-Anzahl!)
+        map_width = self.fog.width
+        map_height = self.fog.height
+        
+        # Tile-Größe im gerenderten Bild
         tile_width = img.width / map_width
         tile_height = img.height / map_height
         
@@ -617,7 +660,7 @@ class ProjectorWindow(tk.Toplevel):
         return img.convert('RGB')
     
     def render_svg_map(self):
-        """Rendert SVG-Map mit Zoom/Pan Support"""
+        """Rendert SVG-Map mit Zoom/Pan Support und Animation"""
         try:
             # Canvas-Größe ermitteln
             self.canvas.update_idletasks()
@@ -626,15 +669,88 @@ class ProjectorWindow(tk.Toplevel):
         except:
             return
         
-        # SVG in passender Größe rendern (mit Zoom)
-        target_width = int(canvas_width * self.zoom_level)
-        target_height = int(canvas_height * self.zoom_level)
+        # SVG Original-Größe holen (aus Parser)
+        root = ET.fromstring(self.svg_renderer.svg_data)
+        svg_width = int(root.get('width', '1000').replace('px', ''))
+        svg_height = int(root.get('height', '1000').replace('px', ''))
         
-        # Von SVGProjectorRenderer rendern lassen
-        rendered_img = self.svg_renderer.render_to_size(target_width, target_height)
+        # Aspect Ratio beibehalten!
+        aspect_ratio = svg_width / svg_height
         
-        if rendered_img is None:
-            return
+        # Berechne Ziel-Größe mit korrektem Aspect Ratio
+        if canvas_width / canvas_height > aspect_ratio:
+            # Canvas breiter als SVG - height begrenzt
+            target_height = int(canvas_height * self.zoom_level)
+            target_width = int(target_height * aspect_ratio)
+        else:
+            # Canvas höher als SVG - width begrenzt
+            target_width = int(canvas_width * self.zoom_level)
+            target_height = int(target_width / aspect_ratio)
+        
+        # Cache-Key für Invalidierung
+        cache_key = (target_width, target_height, self.zoom_level)
+        cache_invalid = self.svg_static_cache is None or self.svg_cache_size != cache_key
+        
+        # STATISCHE MAP CACHEN (ohne Animation)
+        if cache_invalid or not self.has_animated_tiles:
+            # Rendere komplettes SVG (alle Tiles statisch)
+            rendered_img = self.svg_renderer.render_to_size(target_width, target_height, cache=False)
+            
+            if rendered_img is None:
+                return
+            
+            # Cache speichern
+            self.svg_static_cache = rendered_img.copy()
+            self.svg_cache_size = cache_key
+        
+        # Kopiere statischen Cache als Basis
+        rendered_img = self.svg_static_cache.copy()
+        
+        # ANIMIERTE TILES übermalen (wenn Animation läuft)
+        if self.is_animating and self.has_animated_tiles:
+            # Hole Texture-Manager für animierte Tiles
+            if not hasattr(self, 'texture_manager'):
+                from texture_manager import TextureManager
+                self.texture_manager = TextureManager()
+            
+            # Parse SVG für animierte Tile-Positionen
+            namespaces = {'svg': 'http://www.w3.org/2000/svg'}
+            tile_size = svg_width / self.fog.width  # Original tile size im SVG
+            scale_factor = target_width / svg_width  # Skalierungsfaktor
+            
+            for img_elem in root.findall('.//svg:image[@data-material]', namespaces):
+                material = img_elem.get('data-material')
+                
+                # Nur animierte Materialien neu rendern
+                if material in self.svg_animated_materials:
+                    x = float(img_elem.get('x', 0))
+                    y = float(img_elem.get('y', 0))
+                    width = float(img_elem.get('width', tile_size))
+                    
+                    # Skalierte Position und Größe
+                    scaled_x = int(x * scale_factor)
+                    scaled_y = int(y * scale_factor)
+                    scaled_size = int(width * scale_factor)
+                    
+                    # Rendere animiertes Tile mit aktuellem Frame
+                    if hasattr(self.texture_manager, 'advanced_renderer') and self.texture_manager.advanced_renderer:
+                        animated_tile = self.texture_manager.advanced_renderer.get_texture(
+                            material, scaled_size, self.animation_frame
+                        )
+                        
+                        if animated_tile:
+                            # Village-Special: größeres Bild (3x)
+                            if material == 'village' and animated_tile.size[0] > scaled_size:
+                                if animated_tile.mode == 'RGBA':
+                                    offset_y = scaled_y - int(scaled_size * 2)
+                                    rendered_img.paste(animated_tile, (scaled_x, offset_y), animated_tile)
+                                else:
+                                    animated_tile = animated_tile.convert('RGB')
+                                    rendered_img.paste(animated_tile, (scaled_x, scaled_y))
+                            else:
+                                if animated_tile.mode != 'RGB':
+                                    animated_tile = animated_tile.convert('RGB')
+                                rendered_img.paste(animated_tile, (scaled_x, scaled_y))
         
         # Pan-Offset anwenden (Zentrierung)
         final_img = Image.new('RGB', (canvas_width, canvas_height), (10, 10, 10))
