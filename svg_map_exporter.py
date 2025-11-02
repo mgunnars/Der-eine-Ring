@@ -88,7 +88,8 @@ class SVGMapExporter:
             'width': str(svg_width),
             'height': str(svg_height),
             'viewBox': f'0 0 {svg_width} {svg_height}',
-            'version': '1.1'
+            'version': '1.1',
+            'shape-rendering': 'crispEdges'  # Verhindert Anti-Aliasing-Gaps beim Zoom!
         })
         
         # Metadata
@@ -98,6 +99,22 @@ class SVGMapExporter:
         
         # Definitions für wiederverwendbare Elemente (DEDUPLIZIERUNG!)
         defs = ET.SubElement(svg, 'defs')
+        
+        # CSS-Styles für besseres Tile-Rendering beim Zoom
+        style = ET.SubElement(defs, 'style')
+        style.text = """
+            /* Verhindere Tile-Borders beim Herauszoomen */
+            #map-tiles image {
+                image-rendering: -webkit-optimize-contrast;
+                image-rendering: crisp-edges;
+            }
+            /* Leichtes Aufhellen beim Herauszoomen (Borders weniger sichtbar) */
+            @media (max-width: 1000px) {
+                #map-tiles {
+                    filter: brightness(1.05);
+                }
+            }
+        """
         
         # Hintergrund
         bg_rect = ET.SubElement(svg, 'rect', {
@@ -149,16 +166,22 @@ class SVGMapExporter:
                             'xlink:href': tile_data['data_uri']
                         })
         
-        # PHASE 2: Tiles platzieren
+        # PHASE 2: Tiles platzieren (mit Overlap um Zoom-Gaps zu vermeiden)
         tile_count = 0
+        overlap = 2  # 2px Überlappung (wichtig beim Herauszoomen!)
+        
         for (grid_x, grid_y), material_name in sorted(map_data.items()):
-            # Position im SVG berechnen
-            svg_x = (grid_x - min_x) * render_size
-            svg_y = (grid_y - min_y) * render_size
+            # Position im SVG berechnen (mit Overlap-Offset)
+            svg_x = (grid_x - min_x) * render_size - (overlap if grid_x > min_x else 0)
+            svg_y = (grid_y - min_y) * render_size - (overlap if grid_y > min_y else 0)
             
             tile_data = material_cache.get(material_name)
             
             if tile_data:
+                # Tile-Größe mit Overlap (außer am Rand)
+                tile_width = render_size + (overlap if grid_x < max_x else 0)
+                tile_height = render_size + (overlap if grid_y < max_y else 0)
+                
                 # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
                 if material_name == 'village':
                     offset_y = svg_y - (render_size * 2)
@@ -173,24 +196,23 @@ class SVGMapExporter:
                         'xlink:href': f"#{material_symbols[material_name]}",
                         'x': str(offset_x),
                         'y': str(offset_y),
-                        'width': str(render_size),  # IMMER volle Grid-Größe verwenden!
-                        'height': str(render_size),  # Tile wird automatisch gestreckt
+                        'width': str(tile_width),  # Mit Overlap!
+                        'height': str(tile_height),  # Mit Overlap!
                         'data-material': material_name,
                         'data-grid': f"{grid_x},{grid_y}"
                     })
                 else:
                     # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags
-                    # WIDTH/HEIGHT auf render_size setzen, auch wenn Bild kleiner ist!
                     if embed_images:
                         ET.SubElement(map_group, 'image', {
                             'x': str(offset_x),
                             'y': str(offset_y),
-                            'width': str(render_size),  # Grid-Größe (z.B. 97px)
-                            'height': str(render_size),  # Bild ist vielleicht nur 95px, wird gestreckt
+                            'width': str(tile_width),  # Mit Overlap!
+                            'height': str(tile_height),  # Mit Overlap!
                             'xlink:href': tile_data['data_uri'],
                             'data-material': material_name,
                             'data-grid': f"{grid_x},{grid_y}",
-                            'preserveAspectRatio': 'none'  # Stretchable ohne Aspect-Ratio-Lock!
+                            'preserveAspectRatio': 'none'  # Stretchable!
                         })
             
             tile_count += 1
@@ -290,17 +312,17 @@ class SVGMapExporter:
     
     def _remove_tile_borders(self, img):
         """
-        Entfernt Tile-Borders (dunkle Ränder) von einem Bild
-        Prüft automatisch ob Borders vorhanden sind
+        Entfernt nur die äußerste dunkle Border-Linie (1px)
+        WICHTIG: Kein Resize zurück - Overlap im SVG kompensiert!
         """
         try:
             width, height = img.size
             
             # Zu kleine Bilder nicht bearbeiten
-            if width < 10 or height < 10:
+            if width < 20 or height < 20:
                 return img
             
-            # Zu RGB konvertieren für Analyse
+            # Prüfe ob dunkle Borders vorhanden sind
             if img.mode == 'RGBA':
                 img_rgb = img.convert('RGB')
             else:
@@ -308,37 +330,31 @@ class SVGMapExporter:
             
             pixels = img_rgb.load()
             
-            # Sample Ränder
+            # Sample nur die äußerste Pixel-Reihe
             edge_samples = []
-            for x in [0, width//4, width//2, width*3//4, width-1]:
-                edge_samples.append(sum(pixels[x, 0]))
-                edge_samples.append(sum(pixels[x, height-1]))
-            
-            for y in [0, height//4, height//2, height*3//4, height-1]:
-                edge_samples.append(sum(pixels[0, y]))
-                edge_samples.append(sum(pixels[width-1, y]))
+            for i in range(min(width, height)):
+                if i < width:
+                    edge_samples.append(sum(pixels[i, 0]))  # Top
+                    edge_samples.append(sum(pixels[i, height-1]))  # Bottom
+                if i < height:
+                    edge_samples.append(sum(pixels[0, i]))  # Left
+                    edge_samples.append(sum(pixels[width-1, i]))  # Right
             
             edge_brightness = sum(edge_samples) / len(edge_samples)
             
-            # Sample Center
-            cx, cy = width // 2, height // 2
-            center_samples = [
-                sum(pixels[cx, cy]),
-                sum(pixels[cx-width//4, cy]),
-                sum(pixels[cx+width//4, cy]),
-                sum(pixels[cx, cy-height//4]),
-                sum(pixels[cx, cy+height//4])
-            ]
-            center_brightness = sum(center_samples) / len(center_samples)
+            # Sample innere Bereiche (nicht Center, sondern breiter)
+            center_samples = []
+            for x in range(5, width-5, max(1, width//20)):
+                for y in range(5, height-5, max(1, height//20)):
+                    center_samples.append(sum(pixels[x, y]))
             
-            # AGGRESSIV: Entferne Borders wenn Rand auch nur ETWAS dunkler ist
-            # (Threshold: 0.95 = 5% dunkler)
-            if edge_brightness < center_brightness * 0.95:
-                # WICHTIG: Crop border OHNE resize zurück!
-                # Stattdessen geben wir kleineres Bild zurück und lassen SVG mit Overlap platzieren
-                border_size = 1  # 1px von jeder Seite = 2px total (besser als 2px = 4px total)
-                cropped = img.crop((border_size, border_size, width-border_size, height-border_size))
-                return cropped  # KEIN RESIZE - verhindert Interpolations-Artefakte!
+            center_brightness = sum(center_samples) / len(center_samples) if center_samples else edge_brightness
+            
+            # Wenn Rand deutlich dunkler (>10%) → entfernen
+            if edge_brightness < center_brightness * 0.90:
+                # Nur 1px entfernen (weniger Artefakte!)
+                cropped = img.crop((1, 1, width-1, height-1))
+                return cropped  # KEIN RESIZE!
             
             return img
             
