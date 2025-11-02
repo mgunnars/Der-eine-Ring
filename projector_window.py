@@ -763,6 +763,10 @@ class ProjectorWindow(tk.Toplevel):
         view_x = max(0, min(view_x, full_width - canvas_width))
         view_y = max(0, min(view_y, full_height - canvas_height))
         
+        # WICHTIG: Schreibe begrenzte Werte zurück!
+        self.svg_viewport_x = view_x
+        self.svg_viewport_y = view_y
+        
         # Wenn Bild kleiner als Canvas, zentrieren
         if full_width <= canvas_width:
             view_x = -(canvas_width - full_width) // 2

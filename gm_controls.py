@@ -542,6 +542,12 @@ class GamemasterControlPanel(tk.Toplevel):
         # Referenz für spätere Nutzung
         if not hasattr(self.fog_map_canvas, 'tile_size'):
             self.fog_map_canvas.tile_size = tile_size
+        
+        # WICHTIG: Event-Bindings nach jedem Update neu setzen!
+        # (gehen nach Tab-Wechsel verloren)
+        self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
+        self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
+        self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
     
     def update_fog_map_svg(self):
         """Rendert SVG-Miniatur mit Texturen für GM-Panel"""
@@ -599,6 +605,12 @@ class GamemasterControlPanel(tk.Toplevel):
                 # Tile-Größe für Klick-Erkennung
                 self.fog_map_canvas.tile_size = tile_width
                 self.fog_map_canvas.mini_scale = scale
+                
+                # WICHTIG: Event-Bindings nach jedem Update neu setzen!
+                # (gehen nach Tab-Wechsel verloren)
+                self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
+                self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
+                self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
         
         except Exception as e:
             print(f"⚠️ Fehler beim Rendern der SVG-Miniatur: {e}")
