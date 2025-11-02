@@ -352,10 +352,10 @@ class DerEineRingProApp(tk.Tk):
         if not png_path:
             return
         
-        # Import-Dialog erstellen
+        # Import-Dialog erstellen (BREITER für mehr Platz!)
         dialog = tk.Toplevel(self)
         dialog.title("PNG-Karte importieren")
-        dialog.geometry("750x700")
+        dialog.geometry("950x750")  # Breiter: 750→950
         dialog.configure(bg="#1a1a1a")
         dialog.transient(self)
         dialog.grab_set()
@@ -410,7 +410,15 @@ class DerEineRingProApp(tk.Tk):
         max_dimension = max(img_w, img_h)
         recommended_tile_size = 64  # Default
         
-        if max_dimension > 4000:
+        if max_dimension > 8000:
+            recommended_tile_size = 512
+            recommendation = "🔥🔥 EXTREM! Empfehlung: 512px Tiles"
+            rec_color = "#ff0000"
+        elif max_dimension > 6000:
+            recommended_tile_size = 384
+            recommendation = "🔥 Riesig! Empfehlung: 384px Tiles"
+            rec_color = "#ff3333"
+        elif max_dimension > 4000:
             recommended_tile_size = 256
             recommendation = "🔥 Sehr groß! Empfehlung: 256px Tiles"
             rec_color = "#ff6666"
@@ -475,12 +483,12 @@ class DerEineRingProApp(tk.Tk):
         tile_size_frame = tk.Frame(tile_frame, bg="#2a2a2a")
         tile_size_frame.pack(fill=tk.X, padx=20, pady=5)
         
-        # Verbesserter Slider mit Markierungen
-        slider = tk.Scale(tile_size_frame, from_=32, to=256, orient=tk.HORIZONTAL,
+        # Verbesserter Slider mit Markierungen (bis 512px!)
+        slider = tk.Scale(tile_size_frame, from_=32, to=512, orient=tk.HORIZONTAL,
                 variable=tile_size_var, bg="#2a2a2a", fg="white",
-                font=("Arial", 9), length=300,
-                tickinterval=32,  # Zeigt 32, 64, 96, 128, 160, 192, 224, 256
-                resolution=8,  # Schritte von 8px
+                font=("Arial", 9), length=400,
+                tickinterval=64,  # Zeigt 32, 96, 160, 224, 288, 352, 416, 480
+                resolution=16,  # Schritte von 16px
                 troughcolor="#1a1a1a",
                 highlightthickness=0)
         slider.pack(side=tk.LEFT)
@@ -499,7 +507,7 @@ class DerEineRingProApp(tk.Tk):
                 bg="#2a2a2a", fg="#888",
                 font=("Arial", 8)).pack(side=tk.LEFT, padx=5)
         
-        for size in [32, 64, 96, 128, 160, 192, 256]:
+        for size in [32, 64, 96, 128, 192, 256, 384, 512]:
             btn = tk.Button(quick_frame, text=f"{size}px",
                           bg="#3a3a3a", fg="white",
                           font=("Arial", 7),
@@ -552,6 +560,41 @@ class DerEineRingProApp(tk.Tk):
                 bg="#3a3a3a", fg="white", font=("Arial", 10),
                 width=40).pack(anchor=tk.W, padx=20, pady=5)
         
+        # Speicherpfad für Tile-Set (nur Grid-Modus)
+        storage_frame = tk.Frame(options_frame, bg="#2a2a2a")
+        storage_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(storage_frame, text="Speicherpfad für Tile-Set:",
+                bg="#2a2a2a", fg="white",
+                font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        
+        tk.Label(storage_frame, 
+                text="💡 Gib einen Unterordner-Namen an. Tiles werden in imported_maps/DEIN_NAME/ gespeichert",
+                bg="#2a2a2a", fg="#888", font=("Arial", 8, "italic")).pack(anchor=tk.W, padx=20, pady=2)
+        
+        storage_path_var = tk.StringVar(value=map_name_var.get().lower().replace(" ", "_"))
+        
+        storage_entry_frame = tk.Frame(storage_frame, bg="#2a2a2a")
+        storage_entry_frame.pack(anchor=tk.W, padx=20, pady=5)
+        
+        tk.Label(storage_entry_frame, text="imported_maps/",
+                bg="#2a2a2a", fg="#888", font=("Arial", 10)).pack(side=tk.LEFT)
+        
+        storage_entry = tk.Entry(storage_entry_frame, textvariable=storage_path_var,
+                                bg="#3a3a3a", fg="white", font=("Arial", 10),
+                                width=30)
+        storage_entry.pack(side=tk.LEFT)
+        
+        tk.Label(storage_entry_frame, text="/",
+                bg="#2a2a2a", fg="#888", font=("Arial", 10)).pack(side=tk.LEFT)
+        
+        # Map-Name ändert auch Speicherpfad
+        def sync_storage_path(*args):
+            if storage_path_var.get() == "" or not storage_entry.focus_get():
+                storage_path_var.set(map_name_var.get().lower().replace(" ", "_"))
+        
+        map_name_var.trace('w', sync_storage_path)
+        
         # Preview
         preview_frame = tk.LabelFrame(scrollable_frame, text="Vorschau",
                                      bg="#2a2a2a", fg="white",
@@ -590,15 +633,25 @@ class DerEineRingProApp(tk.Tk):
                 importer = PNGMapImporter()
                 
                 map_name = map_name_var.get()
+                storage_path = storage_path_var.get().strip()
+                
+                # Validiere Speicherpfad
+                if not storage_path:
+                    storage_path = map_name.lower().replace(" ", "_")
                 
                 if import_mode.get() == "grid":
-                    # Grid-Import
+                    # Grid-Import mit Custom-Speicherpfad
+                    # Ändere den texture_storage_dir des Importers
+                    custom_storage_dir = os.path.join("imported_maps", storage_path)
+                    importer.texture_storage_dir = custom_storage_dir
+                    
                     self.current_map_data = importer.import_png_map(
                         png_path, 
                         tile_size=tile_size_var.get(),
                         map_name=map_name
                     )
-                    msg = f"✅ Map importiert: {self.current_map_data['width']}x{self.current_map_data['height']} Tiles"
+                    msg = f"✅ Map importiert: {self.current_map_data['width']}x{self.current_map_data['height']} Tiles\n"
+                    msg += f"📁 Tiles gespeichert in: {custom_storage_dir}"
                 else:
                     # Single-Texture-Import
                     self.current_map_data = importer.import_png_as_single_texture(
