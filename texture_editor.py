@@ -4,8 +4,10 @@ Ermöglicht das Erstellen und Bearbeiten eigener Texturen mit erweiterten Tools
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser, filedialog
-from PIL import Image, ImageDraw, ImageTk, ImageFilter
+from PIL import Image, ImageDraw, ImageTk, ImageFilter, ImageChops
 import os
+import math
+import random
 
 
 class TextureEditor(tk.Toplevel):
@@ -57,10 +59,42 @@ class TextureEditor(tk.Toplevel):
         self.last_x = None
         self.last_y = None
         
-        # ERWEITERTE TOOLS
-        self.tool = "brush"  # brush, pencil, eraser, fill, eyedropper, blur (verwischen)
-        self.brush_size = 3  # 1-20 für brush/blur
+        # PROFESSIONELLE TOOLS
+        self.tool = "brush"  # brush, pencil, eraser, fill, eyedropper, blur, spray, line, curve, rectangle, circle, select, move
+        self.brush_size = 3  # 1-50 für brush/blur/spray
         self.brush_opacity = 255  # 0-255
+        
+        # MAL-MODI (Material-Systeme)
+        self.paint_mode = "acryl"  # acryl, oil, watercolor
+        self.paint_mode_settings = {
+            "acryl": {"mix": 0.2, "flow": 1.0, "texture": 0.1},  # Deckend, wenig Mischung
+            "oil": {"mix": 0.6, "flow": 0.7, "texture": 0.3},    # Stark mischbar, dickflüssig
+            "watercolor": {"mix": 0.8, "flow": 1.5, "texture": 0.05}  # Sehr transparent, fließend
+        }
+        
+        # SPRAY CAN
+        self.spray_density = 50  # 1-100 Partikel pro Spray
+        self.spray_randomness = 0.8  # 0-1 Streuung
+        
+        # FORM-TOOLS
+        self.shape_fill = True  # Formen gefüllt oder nur Umriss
+        self.shape_outline_width = 2
+        self.shape_start_pos = None  # Für Formen und Linien
+        
+        # KURVEN (Bezier)
+        self.curve_points = []  # Kontrollpunkte für Bezier-Kurven
+        
+        # SELECTION & TRANSFORM
+        self.selection_rect = None  # (x1, y1, x2, y2)
+        self.selected_image = None  # Ausgewählter Bereich als Image
+        self.transform_mode = None  # None, "move", "scale", "rotate"
+        
+        # GRAFIKTABLETT-SUPPORT
+        self.tablet_pressure = 1.0  # 0-1, wird von Tablet-Events gesetzt
+        self.use_pressure = True  # Drucksensitivität aktivieren
+        
+        # KEYBOARD SHORTCUTS
+        self.setup_keyboard_shortcuts()
         
         # Undo/Redo (pro Frame)
         self.history = [self.texture_image.copy()]
@@ -68,6 +102,79 @@ class TextureEditor(tk.Toplevel):
         self.max_history = 50
         
         self.setup_ui()
+    
+    def setup_keyboard_shortcuts(self):
+        """Richtet Tastaturkürzel ein"""
+        # Werkzeug-Shortcuts
+        self.bind('b', lambda e: self.select_tool('brush'))
+        self.bind('B', lambda e: self.select_tool('brush'))
+        self.bind('e', lambda e: self.select_tool('eraser'))
+        self.bind('E', lambda e: self.select_tool('eraser'))
+        self.bind('k', lambda e: self.select_tool('eyedropper'))
+        self.bind('K', lambda e: self.select_tool('eyedropper'))
+        self.bind('i', lambda e: self.select_tool('eyedropper'))  # Pipette = I
+        self.bind('I', lambda e: self.select_tool('eyedropper'))
+        self.bind('f', lambda e: self.select_tool('fill'))
+        self.bind('F', lambda e: self.select_tool('fill'))
+        self.bind('g', lambda e: self.select_tool('fill'))  # G wie "Gießen"
+        self.bind('G', lambda e: self.select_tool('fill'))
+        self.bind('s', lambda e: self.select_tool('spray'))
+        self.bind('S', lambda e: self.select_tool('spray'))
+        self.bind('l', lambda e: self.select_tool('line'))
+        self.bind('L', lambda e: self.select_tool('line'))
+        self.bind('u', lambda e: self.select_tool('curve'))  # U wie "kUrve"
+        self.bind('U', lambda e: self.select_tool('curve'))
+        self.bind('r', lambda e: self.select_tool('rectangle'))
+        self.bind('R', lambda e: self.select_tool('rectangle'))
+        self.bind('c', lambda e: self.select_tool('circle'))
+        self.bind('C', lambda e: self.select_tool('circle'))
+        self.bind('m', lambda e: self.select_tool('move'))
+        self.bind('M', lambda e: self.select_tool('move'))
+        self.bind('v', lambda e: self.select_tool('select'))  # V wie auswählen
+        self.bind('V', lambda e: self.select_tool('select'))
+        
+        # Undo/Redo
+        self.bind('<Control-z>', lambda e: self.undo())
+        self.bind('<Control-y>', lambda e: self.redo())
+        self.bind('<Control-Shift-Z>', lambda e: self.redo())
+        
+        # Pinselgröße
+        self.bind('[', lambda e: self.change_brush_size(-2))
+        self.bind(']', lambda e: self.change_brush_size(2))
+        
+        # Deckkraft
+        self.bind('<', lambda e: self.change_opacity(-10))
+        self.bind('>', lambda e: self.change_opacity(10))
+        
+        # Transform (nur wenn Selektion aktiv)
+        self.bind('t', lambda e: self.toggle_transform_mode())
+        self.bind('T', lambda e: self.toggle_transform_mode())
+        self.bind('<Delete>', lambda e: self.delete_selection())
+        self.bind('<Escape>', lambda e: self.cancel_selection())
+        
+        # Selektion kopieren/ausschneiden/einfügen
+        self.bind('<Control-c>', lambda e: self.copy_selection())
+        self.bind('<Control-x>', lambda e: self.cut_selection())
+        self.bind('<Control-v>', lambda e: self.paste_selection())
+        
+        # Hilfe
+        self.bind('h', lambda e: self.show_help())
+        self.bind('H', lambda e: self.show_help())
+        self.bind('<F1>', lambda e: self.show_help())
+    
+    def change_brush_size(self, delta):
+        """Ändert Pinselgröße via Shortcut"""
+        if hasattr(self, 'brush_size_var'):
+            new_size = max(1, min(50, self.brush_size + delta))
+            self.brush_size_var.set(new_size)
+            self.update_brush_size(new_size)
+    
+    def change_opacity(self, delta):
+        """Ändert Deckkraft via Shortcut"""
+        if hasattr(self, 'opacity_var'):
+            new_opacity = max(10, min(255, self.brush_opacity + delta))
+            self.opacity_var.set(new_opacity)
+            self.update_opacity(new_opacity)
     
     def load_existing_material(self):
         """Lädt existierendes Material als Vorlage"""
@@ -203,6 +310,18 @@ class TextureEditor(tk.Toplevel):
                  font=("Arial", 9), padx=8, pady=3,
                  command=self.delete_frame).pack(side=tk.LEFT, padx=2)
         
+        # STATUSLEISTE
+        self.status_bar = tk.Frame(right_frame, bg="#1a1a1a", height=30)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X, before=frame_control_container)
+        
+        self.status_label = tk.Label(self.status_bar, text="Bereit | Werkzeug: Pinsel | Drücke H für Hilfe",
+                                     bg="#1a1a1a", fg="#888", font=("Arial", 8), anchor=tk.W)
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        tk.Button(self.status_bar, text="❓ Hilfe (H)", bg="#3a3a3a", fg="white",
+                 font=("Arial", 8), padx=8, pady=2,
+                 command=self.show_help).pack(side=tk.RIGHT, padx=5)
+        
         # Bottom: Vorschau und Einstellungen
         bottom_frame = tk.Frame(right_frame, bg="#2a2a2a")
         bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
@@ -240,26 +359,33 @@ class TextureEditor(tk.Toplevel):
         self.update_preview()
     
     def setup_tools(self, parent):
-        """Werkzeug-Panel erstellen - ERWEITERT"""
+        """Werkzeug-Panel erstellen - VOLLSTÄNDIG ERWEITERT"""
         tk.Label(parent, text="🛠️ Werkzeuge", bg="#1a1a1a", fg="white",
                 font=("Arial", 12, "bold")).pack(pady=10)
         
-        # Werkzeuge - MIT BLUR/VERWISCHEN UND BLEISTIFT
+        # ALLE Werkzeuge mit Shortcuts angezeigt
         tools = [
-            ("🖌️ Pinsel", "brush"),
-            ("✏️ Bleistift", "pencil"),
-            ("🧹 Radierer", "eraser"),
+            ("🖌️ Pinsel (B)", "brush"),
+            ("✏️ Bleistift (P)", "pencil"),
+            ("🧹 Radierer (E)", "eraser"),
             ("🌫️ Verwischen", "blur"),
-            ("💧 Füller", "fill"),
-            ("💉 Pipette", "eyedropper")
+            ("💧 Füller (F)", "fill"),
+            ("💉 Pipette (K)", "eyedropper"),
+            ("🎨 Spray (S)", "spray"),
+            ("📏 Linie (L)", "line"),
+            ("〰️ Kurve (U)", "curve"),
+            ("▭ Rechteck (R)", "rectangle"),
+            ("⭕ Kreis (C)", "circle"),
+            ("🔲 Auswahl (V)", "select"),
+            ("✋ Bewegen (M)", "move")
         ]
         
         self.tool_buttons = {}
         for text, tool in tools:
             btn = tk.Button(parent, text=text, bg="#3a3a3a", fg="white",
-                          font=("Arial", 9), width=12, pady=5,
+                          font=("Arial", 8), width=14, pady=3,
                           command=lambda t=tool: self.select_tool(t))
-            btn.pack(pady=2, padx=5)
+            btn.pack(pady=1, padx=5)
             self.tool_buttons[tool] = btn
         
         self.select_tool("brush")
@@ -267,12 +393,36 @@ class TextureEditor(tk.Toplevel):
         # Separator
         tk.Frame(parent, bg="#555555", height=2).pack(fill=tk.X, pady=10, padx=10)
         
+        # MAL-MODI
+        tk.Label(parent, text="🎨 Mal-Modus", bg="#1a1a1a", fg="white",
+                font=("Arial", 9, "bold")).pack(pady=(5, 2))
+        
+        self.paint_mode_var = tk.StringVar(value="acryl")
+        
+        mode_frame = tk.Frame(parent, bg="#1a1a1a")
+        mode_frame.pack(fill=tk.X, padx=5)
+        
+        tk.Radiobutton(mode_frame, text="Acryl", variable=self.paint_mode_var,
+                      value="acryl", bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=self.update_paint_mode).pack(anchor=tk.W)
+        
+        tk.Radiobutton(mode_frame, text="Öl", variable=self.paint_mode_var,
+                      value="oil", bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=self.update_paint_mode).pack(anchor=tk.W)
+        
+        tk.Radiobutton(mode_frame, text="Wasserfarbe", variable=self.paint_mode_var,
+                      value="watercolor", bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=self.update_paint_mode).pack(anchor=tk.W)
+        
+        # Separator
+        tk.Frame(parent, bg="#555555", height=2).pack(fill=tk.X, pady=10, padx=10)
+        
         # Pinselgröße
-        tk.Label(parent, text="Pinselgröße", bg="#1a1a1a", fg="white",
+        tk.Label(parent, text="Pinselgröße [ ]", bg="#1a1a1a", fg="white",
                 font=("Arial", 9)).pack(pady=(5, 2))
         
         self.brush_size_var = tk.IntVar(value=3)
-        brush_scale = tk.Scale(parent, from_=1, to=20, orient=tk.HORIZONTAL,
+        brush_scale = tk.Scale(parent, from_=1, to=50, orient=tk.HORIZONTAL,
                               variable=self.brush_size_var,
                               bg="#3a3a3a", fg="white", 
                               highlightthickness=0,
@@ -280,7 +430,7 @@ class TextureEditor(tk.Toplevel):
         brush_scale.pack(fill=tk.X, padx=10)
         
         # Deckkraft/Opacity
-        tk.Label(parent, text="Deckkraft", bg="#1a1a1a", fg="white",
+        tk.Label(parent, text="Deckkraft < >", bg="#1a1a1a", fg="white",
                 font=("Arial", 9)).pack(pady=(5, 2))
         
         self.opacity_var = tk.IntVar(value=255)
@@ -290,6 +440,66 @@ class TextureEditor(tk.Toplevel):
                               highlightthickness=0,
                               command=self.update_opacity)
         opacity_scale.pack(fill=tk.X, padx=10)
+        
+        # SPRAY-EINSTELLUNGEN (nur sichtbar bei Spray-Tool)
+        self.spray_frame = tk.Frame(parent, bg="#1a1a1a")
+        # Wird später ein/ausgeblendet
+        
+        tk.Label(self.spray_frame, text="Spray-Dichte", bg="#1a1a1a", fg="white",
+                font=("Arial", 9)).pack(pady=(5, 2))
+        
+        self.spray_density_var = tk.IntVar(value=50)
+        spray_scale = tk.Scale(self.spray_frame, from_=10, to=100, orient=tk.HORIZONTAL,
+                              variable=self.spray_density_var,
+                              bg="#3a3a3a", fg="white", 
+                              highlightthickness=0,
+                              command=lambda v: setattr(self, 'spray_density', int(v)))
+        spray_scale.pack(fill=tk.X, padx=10)
+        
+        # FORM-TOOL OPTIONEN (nur sichtbar bei Formen)
+        self.shape_frame = tk.Frame(parent, bg="#1a1a1a")
+        # Wird später ein/ausgeblendet
+        
+        self.shape_fill_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(self.shape_frame, text="Gefüllt", variable=self.shape_fill_var,
+                      bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=lambda: setattr(self, 'shape_fill', self.shape_fill_var.get())).pack(anchor=tk.W)
+        
+        tk.Label(self.shape_frame, text="Umrissstärke", bg="#1a1a1a", fg="white",
+                font=("Arial", 9)).pack(pady=(5, 2))
+        
+        self.outline_width_var = tk.IntVar(value=2)
+        outline_scale = tk.Scale(self.shape_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+                              variable=self.outline_width_var,
+                              bg="#3a3a3a", fg="white", 
+                              highlightthickness=0,
+                              command=lambda v: setattr(self, 'shape_outline_width', int(v)))
+        outline_scale.pack(fill=tk.X, padx=10)
+        
+        # TABLET PRESSURE
+        tk.Label(parent, text="🖊️ Tablet-Druck", bg="#1a1a1a", fg="white",
+                font=("Arial", 9)).pack(pady=(10, 2))
+        
+        self.use_pressure_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(parent, text="Drucksensitivität", variable=self.use_pressure_var,
+                      bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=lambda: setattr(self, 'use_pressure', self.use_pressure_var.get())).pack(anchor=tk.W, padx=10)
+        
+        # FÜLL-TOLERANZ (nur sichtbar bei Fill-Tool)
+        self.fill_frame = tk.Frame(parent, bg="#1a1a1a")
+        
+        tk.Label(self.fill_frame, text="Füll-Toleranz", bg="#1a1a1a", fg="white",
+                font=("Arial", 9)).pack(pady=(5, 2))
+        
+        self.fill_tolerance_var = tk.IntVar(value=30)
+        tolerance_scale = tk.Scale(self.fill_frame, from_=0, to=100, orient=tk.HORIZONTAL,
+                              variable=self.fill_tolerance_var,
+                              bg="#3a3a3a", fg="white", 
+                              highlightthickness=0)
+        tolerance_scale.pack(fill=tk.X, padx=10)
+        
+        tk.Label(self.fill_frame, text="(ähnliche Farben)", bg="#1a1a1a", fg="#888",
+                font=("Arial", 7)).pack()
         
         # Separator
         tk.Frame(parent, bg="#555555", height=2).pack(fill=tk.X, pady=10, padx=10)
@@ -360,6 +570,22 @@ class TextureEditor(tk.Toplevel):
         # Ausgewählten Button hervorheben
         self.tool_buttons[tool].config(relief=tk.SUNKEN, bg="#2a5d8d")
         
+        # Tool-spezifische Optionen ein/ausblenden
+        if tool == "spray":
+            self.spray_frame.pack(fill=tk.X, padx=5, before=self.shape_frame)
+        else:
+            self.spray_frame.pack_forget()
+        
+        if tool in ["rectangle", "circle"]:
+            self.shape_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
+        else:
+            self.shape_frame.pack_forget()
+        
+        if tool == "fill":
+            self.fill_frame.pack(fill=tk.X, padx=5, before=self.color_display if hasattr(self, 'color_display') else None)
+        else:
+            self.fill_frame.pack_forget()
+        
         # Cursor ändern
         cursors = {
             "brush": "crosshair",
@@ -367,9 +593,28 @@ class TextureEditor(tk.Toplevel):
             "eraser": "circle",
             "blur": "crosshair",
             "fill": "spraycan",
-            "eyedropper": "target"
+            "eyedropper": "target",
+            "spray": "crosshair",
+            "line": "crosshair",
+            "curve": "crosshair",
+            "rectangle": "crosshair",
+            "circle": "crosshair",
+            "select": "cross",
+            "move": "fleur"
         }
         self.canvas.config(cursor=cursors.get(tool, "crosshair"))
+        
+        # Reset temporäre Tool-States
+        if tool not in ["line", "curve", "rectangle", "circle", "select"]:
+            self.shape_start_pos = None
+            self.curve_points = []
+        
+        # Statusleiste aktualisieren
+        self.update_status("Bereit")
+    
+    def update_paint_mode(self):
+        """Aktualisiert den Mal-Modus"""
+        self.paint_mode = self.paint_mode_var.get()
     
     def update_brush_size(self, value):
         """Pinselgröße aktualisieren"""
@@ -405,20 +650,55 @@ class TextureEditor(tk.Toplevel):
         return '#%02x%02x%02x' % rgb
     
     def on_canvas_click(self, event):
-        """Klick auf Canvas"""
+        """Klick auf Canvas - ERWEITERT für alle Tools"""
+        # Tablet-Druck erkennen (falls verfügbar)
+        if hasattr(event, 'pressure'):
+            self.tablet_pressure = event.pressure
+        else:
+            self.tablet_pressure = 1.0
+        
         if self.tool == "fill":
             self.flood_fill(event.x, event.y)
         elif self.tool == "eyedropper":
             self.pick_color(event)
+        elif self.tool in ["line", "rectangle", "circle"]:
+            # Form-Tools: Startpunkt setzen
+            if self.shape_start_pos is None:
+                self.shape_start_pos = (event.x, event.y)
+            else:
+                # Form fertigstellen
+                self.finish_shape(event.x, event.y)
+        elif self.tool == "curve":
+            # Kurven-Kontrollpunkte sammeln
+            self.curve_points.append((event.x, event.y))
+            if len(self.curve_points) >= 4:
+                # Bezier-Kurve mit 4 Punkten zeichnen
+                self.draw_bezier_curve()
+                self.curve_points = []
+        elif self.tool == "select":
+            # Selektion starten
+            self.shape_start_pos = (event.x, event.y)
+            self.is_drawing = True
+        elif self.tool == "move":
+            # Bewegen: Wenn Selektion existiert, verschieben starten
+            if self.selection_rect:
+                self.transform_mode = "move"
+                self.last_x = event.x
+                self.last_y = event.y
         else:
+            # Standard Zeichen-Tools
             self.is_drawing = True
             self.last_x = event.x
             self.last_y = event.y
             self.draw_at(event.x, event.y)
     
     def on_canvas_drag(self, event):
-        """Ziehen auf Canvas"""
-        if self.is_drawing and self.tool in ["brush", "pencil", "eraser", "blur"]:
+        """Ziehen auf Canvas - ERWEITERT"""
+        # Tablet-Druck aktualisieren
+        if hasattr(event, 'pressure'):
+            self.tablet_pressure = event.pressure
+        
+        if self.tool in ["brush", "pencil", "eraser", "blur", "spray"] and self.is_drawing:
             # Linie von letzter Position zur aktuellen zeichnen (smooth)
             if self.last_x is not None and self.last_y is not None:
                 self.draw_line(self.last_x, self.last_y, event.x, event.y)
@@ -430,13 +710,40 @@ class TextureEditor(tk.Toplevel):
             
             # Canvas während Drag updaten (für Live-Feedback)
             self.update_canvas()
+        
+        elif self.tool in ["line", "rectangle", "circle"] and self.shape_start_pos:
+            # Form-Vorschau während Drag
+            self.update_canvas()
+            self.draw_shape_preview(event.x, event.y)
+        
+        elif self.tool == "select" and self.is_drawing:
+            # Selektions-Rechteck Vorschau
+            self.update_canvas()
+            self.draw_selection_preview(event.x, event.y)
+        
+        elif self.tool == "move" and self.transform_mode == "move":
+            # Selektion bewegen
+            dx = event.x - self.last_x
+            dy = event.y - self.last_y
+            self.move_selection(dx, dy)
+            self.last_x = event.x
+            self.last_y = event.y
     
     def on_canvas_release(self, event):
-        """Maus losgelassen"""
+        """Maus losgelassen - ERWEITERT"""
+        if self.tool == "select" and self.is_drawing and self.shape_start_pos:
+            # Selektion finalisieren
+            x1, y1 = self.shape_start_pos
+            x2, y2 = event.x, event.y
+            self.selection_rect = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+            self.extract_selection()
+            self.shape_start_pos = None
+        
         if self.is_drawing:
             self.is_drawing = False
             self.last_x = None
             self.last_y = None
+            self.transform_mode = None
             
             # Final update
             self.update_canvas()
@@ -467,7 +774,7 @@ class TextureEditor(tk.Toplevel):
                 y1 += sy
     
     def draw_at(self, x, y):
-        """Zeichnet an Position x, y mit dem aktuellen Werkzeug"""
+        """Zeichnet an Position x, y mit dem aktuellen Werkzeug - ERWEITERT"""
         if self.tool == "brush":
             self.draw_brush(x, y)
         elif self.tool == "pencil":
@@ -476,9 +783,8 @@ class TextureEditor(tk.Toplevel):
             self.draw_eraser(x, y)
         elif self.tool == "blur":
             self.apply_blur(x, y)
-        
-        # Update nur noch wenn nicht am Zeichnen (Performance)
-        # Beim Drag wird nur am Ende updated
+        elif self.tool == "spray":
+            self.draw_spray(x, y)
     
     def draw_pencil(self, x, y):
         """Bleistift - präzises 1-Pixel-Zeichnen"""
@@ -487,30 +793,92 @@ class TextureEditor(tk.Toplevel):
             self.texture_image.putpixel((x, y), self.current_color + (255,))
     
     def draw_brush(self, x, y):
-        """Zeichnet mit Pinsel"""
+        """Zeichnet mit Pinsel - MIT MAL-MODI und TABLET-DRUCK"""
         draw = ImageDraw.Draw(self.texture_image, 'RGBA')
         
+        # Tablet-Druck berücksichtigen
+        pressure = self.tablet_pressure if self.use_pressure else 1.0
+        effective_size = int(self.brush_size * pressure)
+        effective_opacity = int(self.brush_opacity * pressure)
+        
+        # Mal-Modus Einstellungen holen
+        mode_settings = self.paint_mode_settings[self.paint_mode]
+        mix_factor = mode_settings["mix"]
+        flow = mode_settings["flow"]
+        
         # Kreis mit Deckkraft zeichnen
-        for i in range(-self.brush_size, self.brush_size + 1):
-            for j in range(-self.brush_size, self.brush_size + 1):
-                if i*i + j*j <= self.brush_size*self.brush_size:
+        for i in range(-effective_size, effective_size + 1):
+            for j in range(-effective_size, effective_size + 1):
+                if i*i + j*j <= effective_size*effective_size:
                     px, py = x + i, y + j
                     if 0 <= px < self.canvas_size and 0 <= py < self.canvas_size:
-                        # Aktuelle Pixel-Farbe holen
                         try:
                             old_color = self.texture_image.getpixel((px, py))
                             if len(old_color) == 3:
                                 old_color = old_color + (255,)
                             
-                            # Alpha-Blending
-                            alpha = self.brush_opacity / 255.0
-                            new_r = int(old_color[0] * (1 - alpha) + self.current_color[0] * alpha)
-                            new_g = int(old_color[1] * (1 - alpha) + self.current_color[1] * alpha)
-                            new_b = int(old_color[2] * (1 - alpha) + self.current_color[2] * alpha)
+                            # MAL-MODI: Verschiedene Mischverhalten
+                            if self.paint_mode == "oil":
+                                # Öl: Starke Mischung mit Untergrund
+                                alpha = (effective_opacity / 255.0) * flow
+                                mixed_alpha = alpha * (1 - mix_factor) + mix_factor
+                                new_r = int(old_color[0] * (1 - mixed_alpha) + self.current_color[0] * mixed_alpha)
+                                new_g = int(old_color[1] * (1 - mixed_alpha) + self.current_color[1] * mixed_alpha)
+                                new_b = int(old_color[2] * (1 - mixed_alpha) + self.current_color[2] * mixed_alpha)
+                            
+                            elif self.paint_mode == "watercolor":
+                                # Wasserfarben: Transparent, fließend
+                                alpha = (effective_opacity / 255.0) * 0.3 * flow  # Sehr transparent
+                                new_r = int(old_color[0] * (1 - alpha) + self.current_color[0] * alpha)
+                                new_g = int(old_color[1] * (1 - alpha) + self.current_color[1] * alpha)
+                                new_b = int(old_color[2] * (1 - alpha) + self.current_color[2] * alpha)
+                            
+                            else:  # acryl
+                                # Acryl: Deckend, wenig Mischung
+                                alpha = (effective_opacity / 255.0) * flow
+                                new_r = int(old_color[0] * (1 - alpha) + self.current_color[0] * alpha)
+                                new_g = int(old_color[1] * (1 - alpha) + self.current_color[1] * alpha)
+                                new_b = int(old_color[2] * (1 - alpha) + self.current_color[2] * alpha)
                             
                             self.texture_image.putpixel((px, py), (new_r, new_g, new_b, 255))
                         except:
                             pass
+    
+    def draw_spray(self, x, y):
+        """Spray Can Tool - sprüht Partikel"""
+        import random
+        
+        # Tablet-Druck berücksichtigt Dichte
+        pressure = self.tablet_pressure if self.use_pressure else 1.0
+        num_particles = int(self.spray_density * pressure)
+        
+        # Spray-Radius
+        spray_radius = self.brush_size * 2
+        
+        for _ in range(num_particles):
+            # Zufällige Position im Spray-Radius
+            angle = random.random() * 2 * 3.14159
+            distance = random.random() * spray_radius * self.spray_randomness
+            
+            px = int(x + distance * math.cos(angle))
+            py = int(y + distance * math.sin(angle))
+            
+            if 0 <= px < self.canvas_size and 0 <= py < self.canvas_size:
+                # Einzelnes Partikel mit leichter Transparenz
+                try:
+                    old_color = self.texture_image.getpixel((px, py))
+                    if len(old_color) == 3:
+                        old_color = old_color + (255,)
+                    
+                    # Spray ist immer leicht transparent
+                    alpha = 0.1 * (self.brush_opacity / 255.0)
+                    new_r = int(old_color[0] * (1 - alpha) + self.current_color[0] * alpha)
+                    new_g = int(old_color[1] * (1 - alpha) + self.current_color[1] * alpha)
+                    new_b = int(old_color[2] * (1 - alpha) + self.current_color[2] * alpha)
+                    
+                    self.texture_image.putpixel((px, py), (new_r, new_g, new_b, 255))
+                except:
+                    pass
     
     def draw_eraser(self, x, y):
         """Radiert (setzt auf Weiß)"""
@@ -542,7 +910,7 @@ class TextureEditor(tk.Toplevel):
         self.texture_image.paste(blurred, (x1, y1))
     
     def flood_fill(self, x, y):
-        """Füllwerkzeug (Flood Fill) - MODERNISIERT"""
+        """Füllwerkzeug (Flood Fill) - MIT TOLERANZ für ähnliche Farben"""
         if not (0 <= x < self.canvas_size and 0 <= y < self.canvas_size):
             return
         
@@ -553,17 +921,27 @@ class TextureEditor(tk.Toplevel):
         if target_rgb == self.current_color:
             return  # Gleiche Farbe
         
-        # Flood-Fill Algorithmus
-        self._flood_fill_iterative(x, y, target_rgb)
+        # Toleranz holen
+        tolerance = self.fill_tolerance_var.get() if hasattr(self, 'fill_tolerance_var') else 30
+        
+        # Flood-Fill Algorithmus mit Toleranz
+        self._flood_fill_iterative_tolerance(x, y, target_rgb, tolerance)
         
         self.save_to_history()
         self.update_canvas()
         self.update_preview()
     
-    def _flood_fill_iterative(self, start_x, start_y, target_color):
-        """Stack-basierter Flood-Fill (effizienter als rekursiv)"""
+    def color_distance(self, c1, c2):
+        """Berechnet Farbdistanz (Euklidische Distanz im RGB-Raum)"""
+        return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2 + (c1[2] - c2[2])**2)
+    
+    def _flood_fill_iterative_tolerance(self, start_x, start_y, target_color, tolerance):
+        """Stack-basierter Flood-Fill mit Toleranz"""
         stack = [(start_x, start_y)]
         visited = set()
+        
+        # Maximale erlaubte Distanz
+        max_distance = tolerance * 4.41  # 255*sqrt(3) = 441, normalisiert auf 0-100
         
         while stack:
             x, y = stack.pop()
@@ -581,7 +959,8 @@ class TextureEditor(tk.Toplevel):
             except:
                 continue
             
-            if current_rgb != target_color:
+            # Prüfe ob Farbe innerhalb Toleranz
+            if self.color_distance(current_rgb, target_color) > max_distance:
                 continue
             
             # Pixel füllen
@@ -611,6 +990,292 @@ class TextureEditor(tk.Toplevel):
                 pass
             if self.tool == "eyedropper":
                 self.select_tool("brush")
+    
+    def finish_shape(self, x2, y2):
+        """Beendet eine Form (Linie, Rechteck, Kreis)"""
+        if not self.shape_start_pos:
+            return
+        
+        x1, y1 = self.shape_start_pos
+        draw = ImageDraw.Draw(self.texture_image)
+        
+        if self.tool == "line":
+            # Gerade Linie zeichnen
+            draw.line([(x1, y1), (x2, y2)], 
+                     fill=self.current_color, 
+                     width=self.shape_outline_width)
+        
+        elif self.tool == "rectangle":
+            # Rechteck
+            if self.shape_fill:
+                draw.rectangle([(x1, y1), (x2, y2)], 
+                              fill=self.current_color)
+            else:
+                draw.rectangle([(x1, y1), (x2, y2)], 
+                              outline=self.current_color, 
+                              width=self.shape_outline_width)
+        
+        elif self.tool == "circle":
+            # Kreis (Ellipse)
+            if self.shape_fill:
+                draw.ellipse([(x1, y1), (x2, y2)], 
+                            fill=self.current_color)
+            else:
+                draw.ellipse([(x1, y1), (x2, y2)], 
+                            outline=self.current_color, 
+                            width=self.shape_outline_width)
+        
+        self.shape_start_pos = None
+        self.save_to_history()
+        self.update_canvas()
+        self.update_preview()
+    
+    def draw_shape_preview(self, x2, y2):
+        """Zeichnet Vorschau der Form während Drag"""
+        if not self.shape_start_pos:
+            return
+        
+        x1, y1 = self.shape_start_pos
+        
+        # Temporäre Linie auf Canvas (als Canvas-Element, nicht auf Image)
+        self.canvas.delete("preview")
+        
+        if self.tool == "line":
+            self.canvas.create_line(x1, y1, x2, y2, 
+                                   fill=self.rgb_to_hex(self.current_color),
+                                   width=self.shape_outline_width,
+                                   tags="preview")
+        elif self.tool == "rectangle":
+            if self.shape_fill:
+                self.canvas.create_rectangle(x1, y1, x2, y2,
+                                            fill=self.rgb_to_hex(self.current_color),
+                                            tags="preview")
+            else:
+                self.canvas.create_rectangle(x1, y1, x2, y2,
+                                            outline=self.rgb_to_hex(self.current_color),
+                                            width=self.shape_outline_width,
+                                            tags="preview")
+        elif self.tool == "circle":
+            if self.shape_fill:
+                self.canvas.create_oval(x1, y1, x2, y2,
+                                       fill=self.rgb_to_hex(self.current_color),
+                                       tags="preview")
+            else:
+                self.canvas.create_oval(x1, y1, x2, y2,
+                                       outline=self.rgb_to_hex(self.current_color),
+                                       width=self.shape_outline_width,
+                                       tags="preview")
+    
+    def draw_bezier_curve(self):
+        """Zeichnet Bezier-Kurve mit 4 Kontrollpunkten"""
+        if len(self.curve_points) < 4:
+            return
+        
+        draw = ImageDraw.Draw(self.texture_image)
+        p0, p1, p2, p3 = self.curve_points[:4]
+        
+        # Bezier-Kurve berechnen
+        points = []
+        steps = 50
+        for i in range(steps + 1):
+            t = i / steps
+            # Kubische Bezier-Formel
+            x = (1-t)**3 * p0[0] + 3*(1-t)**2*t * p1[0] + 3*(1-t)*t**2 * p2[0] + t**3 * p3[0]
+            y = (1-t)**3 * p0[1] + 3*(1-t)**2*t * p1[1] + 3*(1-t)*t**2 * p2[1] + t**3 * p3[1]
+            points.append((int(x), int(y)))
+        
+        # Kurve zeichnen
+        for i in range(len(points) - 1):
+            draw.line([points[i], points[i+1]], 
+                     fill=self.current_color, 
+                     width=self.shape_outline_width)
+        
+        self.save_to_history()
+        self.update_canvas()
+        self.update_preview()
+    
+    def draw_selection_preview(self, x2, y2):
+        """Zeichnet Selektions-Rechteck Vorschau"""
+        if not self.shape_start_pos:
+            return
+        
+        x1, y1 = self.shape_start_pos
+        self.canvas.delete("selection_preview")
+        self.canvas.create_rectangle(x1, y1, x2, y2,
+                                     outline="blue",
+                                     width=2,
+                                     dash=(5, 5),
+                                     tags="selection_preview")
+    
+    def extract_selection(self):
+        """Extrahiert ausgewählten Bereich als separates Image"""
+        if not self.selection_rect:
+            return
+        
+        x1, y1, x2, y2 = self.selection_rect
+        self.selected_image = self.texture_image.crop((x1, y1, x2, y2))
+    
+    def move_selection(self, dx, dy):
+        """Bewegt die aktuelle Selektion"""
+        if not self.selection_rect or not self.selected_image:
+            return
+        
+        x1, y1, x2, y2 = self.selection_rect
+        
+        # Lösche alten Bereich (mit Weiß)
+        draw = ImageDraw.Draw(self.texture_image)
+        draw.rectangle([(x1, y1), (x2, y2)], fill=(255, 255, 255))
+        
+        # Neue Position
+        new_x1 = x1 + dx
+        new_y1 = y1 + dy
+        new_x2 = x2 + dx
+        new_y2 = y2 + dy
+        
+        # Paste an neuer Position
+        self.texture_image.paste(self.selected_image, (new_x1, new_y1))
+        
+        # Update selection rect
+        self.selection_rect = (new_x1, new_y1, new_x2, new_y2)
+        
+        self.update_canvas()
+    
+    def toggle_transform_mode(self):
+        """Wechselt Transform-Modus für Selektion"""
+        if not self.selection_rect or not self.selected_image:
+            messagebox.showinfo("Keine Selektion", "Bitte wählen Sie zuerst einen Bereich aus!")
+            return
+        
+        # Dialog für Transform-Optionen
+        transform_dialog = tk.Toplevel(self)
+        transform_dialog.title("Transform")
+        transform_dialog.geometry("300x200")
+        transform_dialog.configure(bg="#2a2a2a")
+        
+        tk.Label(transform_dialog, text="Transform Selektion", 
+                bg="#2a2a2a", fg="white", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Scale
+        scale_frame = tk.Frame(transform_dialog, bg="#2a2a2a")
+        scale_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        tk.Label(scale_frame, text="Skalierung (%):", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        scale_var = tk.IntVar(value=100)
+        scale_entry = tk.Entry(scale_frame, textvariable=scale_var, width=8)
+        scale_entry.pack(side=tk.LEFT, padx=10)
+        
+        # Rotate
+        rotate_frame = tk.Frame(transform_dialog, bg="#2a2a2a")
+        rotate_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        tk.Label(rotate_frame, text="Rotation (°):", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        rotate_var = tk.IntVar(value=0)
+        rotate_entry = tk.Entry(rotate_frame, textvariable=rotate_var, width=8)
+        rotate_entry.pack(side=tk.LEFT, padx=10)
+        
+        # Buttons
+        btn_frame = tk.Frame(transform_dialog, bg="#2a2a2a")
+        btn_frame.pack(pady=20)
+        
+        tk.Button(btn_frame, text="Anwenden", bg="#2a7d2a", fg="white",
+                 command=lambda: self.apply_transform(scale_var.get(), rotate_var.get(), transform_dialog)).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Abbrechen", bg="#7d2a2a", fg="white",
+                 command=transform_dialog.destroy).pack(side=tk.LEFT, padx=5)
+    
+    def apply_transform(self, scale_percent, rotate_degrees, dialog):
+        """Wendet Transform auf Selektion an"""
+        if not self.selected_image:
+            return
+        
+        transformed = self.selected_image.copy()
+        
+        # Skalieren
+        if scale_percent != 100:
+            new_width = int(transformed.width * scale_percent / 100)
+            new_height = int(transformed.height * scale_percent / 100)
+            transformed = transformed.resize((new_width, new_height), Image.LANCZOS)
+        
+        # Rotieren
+        if rotate_degrees != 0:
+            transformed = transformed.rotate(rotate_degrees, expand=True, fillcolor=(255, 255, 255))
+        
+        # An Selektion zurückschreiben
+        x1, y1, x2, y2 = self.selection_rect
+        
+        # Lösche alten Bereich
+        draw = ImageDraw.Draw(self.texture_image)
+        draw.rectangle([(x1, y1), (x2, y2)], fill=(255, 255, 255))
+        
+        # Paste transformiertes Bild
+        self.texture_image.paste(transformed, (x1, y1))
+        self.selected_image = transformed
+        
+        # Update Selektion Größe
+        self.selection_rect = (x1, y1, x1 + transformed.width, y1 + transformed.height)
+        
+        self.save_to_history()
+        self.update_canvas()
+        self.update_preview()
+        
+        dialog.destroy()
+    
+    def cancel_selection(self):
+        """Bricht Selektion ab"""
+        self.selection_rect = None
+        self.selected_image = None
+        self.update_canvas()
+    
+    def delete_selection(self):
+        """Löscht den selektierten Bereich"""
+        if not self.selection_rect:
+            return
+        
+        x1, y1, x2, y2 = self.selection_rect
+        draw = ImageDraw.Draw(self.texture_image)
+        draw.rectangle([(x1, y1), (x2, y2)], fill=(255, 255, 255))
+        
+        self.selection_rect = None
+        self.selected_image = None
+        
+        self.save_to_history()
+        self.update_canvas()
+        self.update_preview()
+    
+    def copy_selection(self):
+        """Kopiert Selektion in Zwischenablage (intern)"""
+        if self.selected_image:
+            self.clipboard_image = self.selected_image.copy()
+            messagebox.showinfo("Kopiert", "Selektion wurde kopiert!")
+    
+    def cut_selection(self):
+        """Schneidet Selektion aus"""
+        if not self.selection_rect:
+            return
+        
+        self.copy_selection()
+        self.delete_selection()
+    
+    def paste_selection(self):
+        """Fügt Zwischenablage ein"""
+        if not hasattr(self, 'clipboard_image') or self.clipboard_image is None:
+            messagebox.showwarning("Keine Daten", "Zwischenablage ist leer!")
+            return
+        
+        # Füge in Mitte des Canvas ein
+        paste_x = (self.canvas_size - self.clipboard_image.width) // 2
+        paste_y = (self.canvas_size - self.clipboard_image.height) // 2
+        
+        self.texture_image.paste(self.clipboard_image, (paste_x, paste_y))
+        
+        # Neue Selektion erstellen
+        self.selection_rect = (paste_x, paste_y, 
+                              paste_x + self.clipboard_image.width, 
+                              paste_y + self.clipboard_image.height)
+        self.selected_image = self.clipboard_image.copy()
+        
+        self.save_to_history()
+        self.update_canvas()
+        self.update_preview()
     
     def clear_canvas(self):
         """Canvas löschen"""
@@ -653,12 +1318,37 @@ class TextureEditor(tk.Toplevel):
             self.update_canvas()
             self.update_preview()
     
-    def update_canvas(self):
+    def update_canvas(self, clear_preview=True):
         """Aktualisiert die Canvas-Anzeige"""
         # Photo für Tkinter
         self.photo = ImageTk.PhotoImage(self.texture_image)
-        self.canvas.delete("all")
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
+        if clear_preview:
+            self.canvas.delete("all")
+        else:
+            # Nur Image updaten, Preview-Elemente behalten
+            self.canvas.delete("image")
+        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW, tags="image")
+        
+        # Selektion anzeigen wenn vorhanden
+        if self.selection_rect:
+            x1, y1, x2, y2 = self.selection_rect
+            self.canvas.create_rectangle(x1, y1, x2, y2,
+                                        outline="blue",
+                                        width=2,
+                                        dash=(5, 5),
+                                        tags="selection")
+        
+        # Kurven-Kontrollpunkte anzeigen
+        if self.curve_points and self.tool == "curve":
+            for i, (px, py) in enumerate(self.curve_points):
+                self.canvas.create_oval(px-3, py-3, px+3, py+3,
+                                       fill="red",
+                                       outline="white",
+                                       tags="curve_point")
+                self.canvas.create_text(px, py-10,
+                                       text=f"P{i+1}",
+                                       fill="white",
+                                       tags="curve_point")
     
     def update_preview(self):
         """Aktualisiert die Vorschau"""
@@ -871,6 +1561,107 @@ class TextureEditor(tk.Toplevel):
         
         messagebox.showinfo("Erfolg", f"Material '{name}' wurde gespeichert!")
         self.destroy()
+    
+    def show_help(self):
+        """Zeigt Hilfe-Dialog mit allen Shortcuts"""
+        help_window = tk.Toplevel(self)
+        help_window.title("Tastaturkürzel & Hilfe")
+        help_window.geometry("600x700")
+        help_window.configure(bg="#2a2a2a")
+        
+        # Scrollbarer Text
+        text_frame = tk.Frame(help_window, bg="#2a2a2a")
+        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        help_text = tk.Text(text_frame, bg="#1a1a1a", fg="white",
+                           font=("Courier", 10), wrap=tk.WORD,
+                           yscrollcommand=scrollbar.set)
+        help_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=help_text.yview)
+        
+        help_content = """
+╔══════════════════════════════════════════════════════╗
+║     PROFESSIONELLER TEXTURE EDITOR - HILFE          ║
+╚══════════════════════════════════════════════════════╝
+
+🎨 WERKZEUGE (Shortcuts):
+  B  - Pinsel          E  - Radierer
+  K/I- Pipette         F/G- Füller
+  S  - Spray Can       L  - Linie
+  U  - Kurve           R  - Rechteck
+  C  - Kreis           V  - Auswahl
+  M  - Bewegen
+
+📐 PINSEL & EINSTELLUNGEN:
+  [  - Pinsel kleiner  ]  - Pinsel größer
+  <  - Deckkraft -     >  - Deckkraft +
+
+🎨 MAL-MODI:
+  • Acryl: Deckend, präzise
+  • Öl: Mischbar, dickflüssig
+  • Wasserfarbe: Transparent, fließend
+
+✏️ ZEICHNEN:
+  • Pinsel: Drucksensitiv (Tablet)
+  • Spray: Organische Partikel-Streuung
+  • Kurve: 4 Punkte für Bezier-Kurve
+
+🖊️ GRAFIKTABLETT:
+  Automatische Druckerkennung
+  Beeinflusst Größe & Deckkraft
+
+🔲 SELEKTION & TRANSFORM:
+  V      - Selektion erstellen
+  M      - Selektion bewegen
+  T      - Transform (Scale/Rotate)
+  Del    - Selektion löschen
+  Esc    - Selektion abbrechen
+  Ctrl+C - Kopieren
+  Ctrl+X - Ausschneiden
+  Ctrl+V - Einfügen
+
+⏪ UNDO/REDO:
+  Ctrl+Z - Rückgängig
+  Ctrl+Y - Wiederholen
+
+💾 SPEICHERN:
+  Speichert als PNG (256x256)
+  Unterstützt Animation (Multi-Frame)
+
+🎬 ANIMATION:
+  ◄► - Frame Navigation
+  ➕  - Neuer Frame
+  📋  - Frame duplizieren
+
+❓ TIPPS:
+  • Rechtsklick = Schnell-Pipette
+  • Füll-Toleranz: Ähnliche Farben
+  • Mal-Modi für realistische Effekte
+  • Tablet-Druck für natürliches Zeichnen
+        """
+        
+        help_text.insert('1.0', help_content)
+        help_text.config(state=tk.DISABLED)
+        
+        tk.Button(help_window, text="Schließen", bg="#2a5d8d", fg="white",
+                 font=("Arial", 10), padx=20, pady=5,
+                 command=help_window.destroy).pack(pady=10)
+    
+    def update_status(self, message):
+        """Aktualisiert Statusleiste"""
+        if hasattr(self, 'status_label'):
+            tool_names = {
+                "brush": "Pinsel", "pencil": "Bleistift", "eraser": "Radierer",
+                "blur": "Verwischen", "fill": "Füller", "eyedropper": "Pipette",
+                "spray": "Spray", "line": "Linie", "curve": "Kurve",
+                "rectangle": "Rechteck", "circle": "Kreis",
+                "select": "Auswahl", "move": "Bewegen"
+            }
+            tool_name = tool_names.get(self.tool, self.tool)
+            self.status_label.config(text=f"{message} | Werkzeug: {tool_name} | Drücke H für Hilfe")
     
     def calculate_average_color(self):
         """Berechnet die Durchschnittsfarbe des Bildes"""

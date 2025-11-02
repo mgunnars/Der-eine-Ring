@@ -4,7 +4,7 @@ Verwaltung aller Materialien mit scrollbarer, ein-/ausklappbarer Leiste
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import ImageTk
+from PIL import Image, ImageTk
 from texture_editor import TextureEditor
 
 
@@ -192,6 +192,17 @@ class MaterialBar(tk.Frame):
         # Preview-Bild generieren
         try:
             texture_img = self.renderer.get_texture(material_id, self.preview_size, 0)
+            
+            # SPECIAL: Village (und andere extended tiles) müssen zugeschnitten werden
+            if texture_img.size[0] > self.preview_size or texture_img.size[1] > self.preview_size:
+                # Schneide den relevanten Teil aus (unten, wo das Gebäude ist)
+                # Bei village ist das Gebäude im untersten Drittel des 3x Canvas
+                orig_size = texture_img.size[0] // 3  # Original tile size
+                # Extrahiere das unterste Tile (dort ist das Gebäude)
+                texture_img = texture_img.crop((0, orig_size * 2, orig_size, orig_size * 3))
+                # Skaliere auf Preview-Größe
+                texture_img = texture_img.resize((self.preview_size, self.preview_size), Image.LANCZOS)
+            
             photo = ImageTk.PhotoImage(texture_img)
             self.photo_cache[material_id] = photo  # WICHTIG: Referenz behalten!
         except Exception as e:

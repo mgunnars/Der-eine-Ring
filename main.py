@@ -141,10 +141,25 @@ class MapEditor(tk.Frame):
                       value="down-right", bg="#1a1a1a", fg="white", selectcolor="#333",
                       command=self.update_river_mode_status).pack(side=tk.LEFT)
         
-        # Canvas für die Karte
+        # Separator
+        tk.Label(river_frame, text="|", bg="#1a1a1a", fg="#666").pack(side=tk.LEFT, padx=3)
+        
+        # Anzeige-Toggle für Flussrichtungs-Vektoren
+        self.show_river_vectors = tk.BooleanVar(value=False)
+        tk.Checkbutton(river_frame, text="📊 Vektoren", variable=self.show_river_vectors,
+                      bg="#1a1a1a", fg="white", selectcolor="#333",
+                      command=self.draw_grid).pack(side=tk.LEFT, padx=2)
+        
+        # Button zum Umkehren aller verbundenen Flüsse
+        tk.Button(river_frame, text="🔄 Fluss umkehren", bg="#5d2a7d", fg="white",
+                 font=("Arial", 8), padx=8, pady=2,
+                 command=self.reverse_river_flow).pack(side=tk.LEFT, padx=5)
+        
+        # Canvas für die Karte - EXPANDED LAYOUT
         canvas_frame = tk.Frame(self, bg="#2a2a2a")
         canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
+        # Canvas nimmt jetzt VOLLEN Platz ein
         self.canvas = tk.Canvas(canvas_frame, bg="#1a1a1a", highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -152,8 +167,11 @@ class MapEditor(tk.Frame):
         v_scroll = tk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
         v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        h_scroll = tk.Scrollbar(self, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        h_scroll.pack(side=tk.BOTTOM, fill=tk.X, padx=10)
+        h_scroll_frame = tk.Frame(self, bg="#2a2a2a")
+        h_scroll_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10)
+        
+        h_scroll = tk.Scrollbar(h_scroll_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
+        h_scroll.pack(side=tk.TOP, fill=tk.X)
         
         self.canvas.configure(xscrollcommand=h_scroll.set, yscrollcommand=v_scroll.set)
         
@@ -276,6 +294,12 @@ class MapEditor(tk.Frame):
                                           fill="white",
                                           font=("Arial", 6, "bold"),
                                           tags="coordinates")
+                
+                # Flussrichtungs-Vektoren anzeigen (wenn aktiviert und Water-Tile)
+                if self.show_river_vectors.get() and terrain == "water":
+                    coord_key = f"{x},{y}"
+                    direction = self.river_directions.get(coord_key, "right")
+                    self.draw_river_vector(x1, y1, direction)
         
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
@@ -414,10 +438,97 @@ class MapEditor(tk.Frame):
         else:
             self.master.title("Der Eine Ring - Map Editor")
     
+    def draw_river_vector(self, x1, y1, direction):
+        """Zeichnet einen Vektor-Pfeil für die Flussrichtung"""
+        center_x = x1 + self.tile_size // 2
+        center_y = y1 + self.tile_size // 2
+        
+        # Pfeil-Länge
+        arrow_length = self.tile_size // 3
+        
+        # Richtungs-Vektoren
+        direction_vectors = {
+            "right": (1, 0),
+            "left": (-1, 0),
+            "down": (0, 1),
+            "up": (0, -1),
+            "down-right": (0.707, 0.707),
+            "down-left": (-0.707, 0.707),
+            "up-right": (0.707, -0.707),
+            "up-left": (-0.707, -0.707)
+        }
+        
+        dx, dy = direction_vectors.get(direction, (1, 0))
+        
+        # End-Punkt des Pfeils
+        end_x = center_x + dx * arrow_length
+        end_y = center_y + dy * arrow_length
+        
+        # Zeichne Pfeil mit Schatten für bessere Sichtbarkeit
+        # Schatten
+        self.canvas.create_line(
+            center_x + 1, center_y + 1, end_x + 1, end_y + 1,
+            fill="black", width=3, arrow=tk.LAST,
+            tags="river_vector"
+        )
+        # Pfeil
+        self.canvas.create_line(
+            center_x, center_y, end_x, end_y,
+            fill="#00ff00", width=2, arrow=tk.LAST,
+            tags="river_vector"
+        )
+    
+    def reverse_river_flow(self):
+        """Kehrt die Flussrichtung aller verbundenen Water-Tiles um"""
+        if not messagebox.askyesno(
+            "Flussrichtung umkehren",
+            "Möchten Sie die Flussrichtung aller verbundenen Wasser-Tiles umkehren?"
+        ):
+            return
+        
+        # Umkehr-Mapping
+        reverse_map = {
+            "right": "left",
+            "left": "right",
+            "up": "down",
+            "down": "up",
+            "up-right": "down-left",
+            "down-left": "up-right",
+            "up-left": "down-right",
+            "down-right": "up-left"
+        }
+        
+        # Finde alle Water-Tiles und kehre ihre Richtung um
+        updated_count = 0
+        for y in range(self.height):
+            for x in range(self.width):
+                if self.map[y][x] == "water":
+                    coord_key = f"{x},{y}"
+                    if coord_key in self.river_directions:
+                        old_dir = self.river_directions[coord_key]
+                        new_dir = reverse_map.get(old_dir, old_dir)
+                        self.river_directions[coord_key] = new_dir
+                        updated_count += 1
+        
+        # Karte neu zeichnen
+        self.draw_grid()
+        
+        messagebox.showinfo(
+            "Erfolg",
+            f"Flussrichtung von {updated_count} Wasser-Tiles wurde umgekehrt!"
+        )
+    
     def auto_detect_river_direction(self, x, y):
         """
         Automatische Erkennung der Flussrichtung basierend auf benachbarten Water-Tiles.
-        Analysiert die Ausrichtung des gesamten Flusses (horizontal/vertikal/diagonal).
+        
+        LOGIK:
+        - Platziert User rechts von existierendem Wasser → Fluss von links nach rechts
+        - Platziert User links → Fluss von rechts nach links  
+        - Platziert User oben → Fluss von unten nach oben
+        - Platziert User unten → Fluss von oben nach unten
+        - Diagonale Muster (Dreieck) → Diagonale Flussrichtung
+        - Zickzack → Folge dem Vektor der Linie (immer diagonal)
         """
         # Prüfe alle 8 Nachbarn
         neighbors = []
@@ -444,9 +555,8 @@ class MapEditor(tk.Frame):
                         neighbor_directions.append(neighbor_dir)
                     neighbors.append((dx, dy))
         
-        # Wenn es Nachbarn mit Richtungen gibt, übernehme die häufigste
+        # PRIORITÄT 1: Wenn Nachbarn bereits Richtungen haben, übernehme die häufigste
         if neighbor_directions:
-            # Zähle Häufigkeit der Richtungen
             from collections import Counter
             direction_count = Counter(neighbor_directions)
             most_common_direction = direction_count.most_common(1)[0][0]
@@ -454,63 +564,109 @@ class MapEditor(tk.Frame):
             self.river_directions[coord_key] = most_common_direction
             return
         
-        # Keine Nachbarn mit Richtung - erkenne aus Geometrie
+        # PRIORITÄT 2: Keine Nachbarn - Default "right"
         if not neighbors:
-            # Kein Nachbar - Default "right"
             coord_key = f"{x},{y}"
             self.river_directions[coord_key] = "right"
             return
         
-        # Analysiere geometrische Anordnung der Nachbarn
-        # Zähle in welche Richtungen Nachbarn liegen
+        # PRIORITÄT 3: Analysiere geometrische Anordnung (WO sind die Nachbarn?)
+        # Die Richtung ist ENTGEGENGESETZT zur Nachbar-Position!
+        # Wenn Nachbar LINKS ist → Wasser fließt nach RECHTS (weg vom Nachbarn)
+        
         has_up = any(dy < 0 for dx, dy in neighbors)      # Nachbar oben
         has_down = any(dy > 0 for dx, dy in neighbors)    # Nachbar unten
         has_left = any(dx < 0 for dx, dy in neighbors)    # Nachbar links
         has_right = any(dx > 0 for dx, dy in neighbors)   # Nachbar rechts
         
-        # Zähle wie viele Nachbarn in jede Richtung
-        up_count = sum(1 for dx, dy in neighbors if dy < 0)
-        down_count = sum(1 for dx, dy in neighbors if dy > 0)
-        left_count = sum(1 for dx, dy in neighbors if dx < 0)
-        right_count = sum(1 for dx, dy in neighbors if dx > 0)
+        # Zähle Nachbarn pro Richtung
+        up_count = sum(1 for dx, dy in neighbors if dy < 0 and dx == 0)
+        down_count = sum(1 for dx, dy in neighbors if dy > 0 and dx == 0)
+        left_count = sum(1 for dx, dy in neighbors if dx < 0 and dy == 0)
+        right_count = sum(1 for dx, dy in neighbors if dx > 0 and dy == 0)
+        diagonal_count = sum(1 for dx, dy in neighbors if dx != 0 and dy != 0)
         
-        # LOGIK: Wenn Nachbarn oben sind, fließt Wasser nach unten
-        #        Wenn Nachbarn links sind, fließt Wasser nach rechts
+        # STRATEGIE: Bestimme aus welcher Richtung das Wasser KOMMT
+        # (= wo sind die meisten Nachbarn)
         
-        # Berechne Flow-Tendenz
-        # Mehr oben = fließt nach unten, mehr unten = fließt nach oben
-        vertical_tendency = up_count - down_count  # Positiv = fließt nach unten
-        horizontal_tendency = left_count - right_count  # Positiv = fließt nach rechts
-        
-        # Entscheide welche Richtung dominiert
-        # NEUE LOGIK: Wenn BEIDE Richtungen signifikant sind (>0), dann DIAGONAL!
-        abs_v = abs(vertical_tendency)
-        abs_h = abs(horizontal_tendency)
-        
-        # Beide Richtungen vorhanden? → Diagonal (auch wenn nicht gleich stark!)
-        if abs_v > 0 and abs_h > 0:
-            # DIAGONAL - kombiniere beide Richtungen
-            if vertical_tendency > 0 and horizontal_tendency > 0:
-                direction = "down-right"  # Nachbarn oben-links → fließt unten-rechts
-            elif vertical_tendency > 0 and horizontal_tendency < 0:
-                direction = "down-left"   # Nachbarn oben-rechts → fließt unten-links
-            elif vertical_tendency < 0 and horizontal_tendency > 0:
-                direction = "up-right"    # Nachbarn unten-links → fließt oben-rechts
-            elif vertical_tendency < 0 and horizontal_tendency < 0:
-                direction = "up-left"     # Nachbarn unten-rechts → fließt oben-links
-            else:
-                direction = "right"  # Fallback
-                
-        # Nur eine Richtung dominant?
-        elif abs_h > abs_v:
-            # Horizontaler Fluss dominiert
-            direction = "right" if horizontal_tendency > 0 else "left"
-        elif abs_v > abs_h:
-            # Vertikaler Fluss dominiert
-            direction = "down" if vertical_tendency > 0 else "up"
-        else:
-            # Beide 0 - Default
+        # Fall 1: NUR EINE kardinale Richtung hat Nachbarn → Fluss in Gegenrichtung
+        if right_count > 0 and left_count == 0 and up_count == 0 and down_count == 0:
+            # User platzierte RECHTS von Wasser → Fluss nach links (vom Nachbarn weg)
+            # ABER: Spezifikation sagt "rechts davon platziert → links nach rechts"
+            # Das bedeutet: Nachbar ist links, neues Tile rechts, Fluss geht nach rechts!
             direction = "right"
+        elif left_count > 0 and right_count == 0 and up_count == 0 and down_count == 0:
+            # Nachbar ist rechts, neues Tile links → Fluss nach links
+            direction = "left"
+        elif down_count > 0 and up_count == 0 and left_count == 0 and right_count == 0:
+            # Nachbar ist unten, neues Tile oben → Fluss nach oben
+            direction = "up"
+        elif up_count > 0 and down_count == 0 and left_count == 0 and right_count == 0:
+            # Nachbar ist oben, neues Tile unten → Fluss nach unten
+            direction = "down"
+        
+        # Fall 2: Diagonal - wenn hauptsächlich diagonale Nachbarn
+        elif diagonal_count > 0 and (up_count + down_count + left_count + right_count) == 0:
+            # Nur diagonale Nachbarn → erkenne Diagonal-Muster
+            # Finde dominante diagonale Richtung
+            has_upleft = any(dx < 0 and dy < 0 for dx, dy in neighbors)
+            has_upright = any(dx > 0 and dy < 0 for dx, dy in neighbors)
+            has_downleft = any(dx < 0 and dy > 0 for dx, dy in neighbors)
+            has_downright = any(dx > 0 and dy > 0 for dx, dy in neighbors)
+            
+            # Dreieck-Muster: User platziert Diagonale
+            # Beispiel: Tile oben-links → Fluss nach unten-rechts
+            if has_upleft and not has_downright:
+                direction = "down-right"
+            elif has_upright and not has_downleft:
+                direction = "down-left"
+            elif has_downleft and not has_upright:
+                direction = "up-right"
+            elif has_downright and not has_upleft:
+                direction = "up-left"
+            else:
+                # Mehrere diagonale Nachbarn - nutze Schwerpunkt
+                avg_dx = sum(dx for dx, dy in neighbors) / len(neighbors)
+                avg_dy = sum(dy for dx, dy in neighbors) / len(neighbors)
+                
+                # Fluss geht in Gegenrichtung zum Schwerpunkt
+                if avg_dx < 0 and avg_dy < 0:
+                    direction = "down-right"
+                elif avg_dx > 0 and avg_dy < 0:
+                    direction = "down-left"
+                elif avg_dx < 0 and avg_dy > 0:
+                    direction = "up-right"
+                else:
+                    direction = "up-left"
+        
+        # Fall 3: Gemischte Nachbarn (horizontal + vertikal oder + diagonal)
+        else:
+            # Berechne Schwerpunkt aller Nachbarn
+            avg_dx = sum(dx for dx, dy in neighbors) / len(neighbors)
+            avg_dy = sum(dy for dx, dy in neighbors) / len(neighbors)
+            
+            # Schwelle für "stark ausgeprägt"
+            threshold = 0.3
+            
+            # Beide Richtungen ausgeprägt → DIAGONAL
+            if abs(avg_dx) > threshold and abs(avg_dy) > threshold:
+                # Fluss in Gegenrichtung zum Schwerpunkt
+                if avg_dx < 0 and avg_dy < 0:
+                    direction = "down-right"
+                elif avg_dx > 0 and avg_dy < 0:
+                    direction = "down-left"
+                elif avg_dx < 0 and avg_dy > 0:
+                    direction = "up-right"
+                else:
+                    direction = "up-left"
+            
+            # Horizontal dominiert
+            elif abs(avg_dx) > abs(avg_dy):
+                direction = "right" if avg_dx < 0 else "left"
+            
+            # Vertikal dominiert
+            else:
+                direction = "down" if avg_dy < 0 else "up"
         
         coord_key = f"{x},{y}"
         self.river_directions[coord_key] = direction

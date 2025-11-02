@@ -751,14 +751,13 @@ class AdvancedTextureRenderer:
         img = Image.new('RGBA', (extended_size, extended_size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        # Bodentextur NUR im UNTERSTEN Bereich
-        # Muss so positioniert sein, dass er nach 2*size Offset im richtigen Tile landet
+        # WICHTIG: Bodentextur GANZ UNTEN platzieren (letztes Tile im 3x Canvas)
+        # Das Boden-Tile muss bei y = 2*size beginnen und genau 1*size hoch sein
         random.seed(size * 7000)
-        # Boden startet bei 2*size (wird dann an Position 0 im Tile gerendert nach Offset)
-        # und füllt den Bereich von 2*size bis 3*size (= 1 Tile Höhe)
-        boden_start_y = int(size * 2)  # Beginnt bei 2x size
+        boden_start_y = int(size * 2)  # Beginnt bei 2x size (letztes Drittel)
+        
         for y in range(boden_start_y, extended_size, 2):
-            for x in range(0, size, 2):  # Nur original width
+            for x in range(0, size, 2):  # Nur original width (nicht extended!)
                 variation = random.randint(-10, 10)
                 color = (
                     max(135, min(165, 150 + variation)),
@@ -770,9 +769,9 @@ class AdvancedTextureRenderer:
         
         # GRÖSSERES PSEUDO-3D GEBÄUDE (70% der ORIGINAL size)
         building_size = int(size * 0.7)
-        # Gebäude ganz UNTEN positioniert (im Boden-Bereich)
+        # Gebäude positioniert: Unterkante GENAU bei boden_start_y (am Bodenanfang)
         building_x = size // 6
-        building_y = extended_size - building_size - int(size * 0.1)  # Fast ganz unten
+        building_y = boden_start_y + int(size * 0.05)  # Leicht in den Boden eingelassen
         
         # 3D-Schatten (KLEINER und dezenter)
         shadow_offset = 2
