@@ -51,7 +51,8 @@ class DerEineRingProApp(tk.Tk):
             ("📺 Projektor-Modus", self.start_projector, "#2a5d8d"),
             ("🎮 Gamemaster Panel", self.start_gm_panel, "#8b4513"),
             ("📁 Karte laden", self.load_map, "#7d5d2a"),
-            ("📋 Karten-Liste", self.show_map_list, "#5d2a7d"),
+            ("�️ PNG-Karte importieren", self.import_png_map, "#2a7d7d"),
+            ("�📋 Karten-Liste", self.show_map_list, "#5d2a7d"),
             ("❓ Hilfe", self.show_help, "#555555"),
         ]
         
@@ -75,7 +76,7 @@ class DerEineRingProApp(tk.Tk):
     def start_editor(self):
         """Editor-Fenster öffnen"""
         try:
-            from main import MapEditor
+            from map_editor import MapEditor
             
             editor_win = tk.Toplevel(self)
             editor_win.title("Map Editor - Der Eine Ring")
@@ -339,6 +340,226 @@ class DerEineRingProApp(tk.Tk):
         
         tk.Button(help_win, text="OK", bg="#2a7d2a", fg="white",
                  padx=30, command=help_win.destroy).pack(pady=10)
+    
+    def import_png_map(self):
+        """PNG-Karte importieren mit Dialog"""
+        # PNG-Datei auswählen
+        png_path = filedialog.askopenfilename(
+            title="PNG-Karte auswählen",
+            filetypes=[("PNG Bilder", "*.png"), ("Alle Dateien", "*.*")]
+        )
+        
+        if not png_path:
+            return
+        
+        # Import-Dialog erstellen
+        dialog = tk.Toplevel(self)
+        dialog.title("PNG-Karte importieren")
+        dialog.geometry("750x700")
+        dialog.configure(bg="#1a1a1a")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(True, True)
+        
+        # Canvas + Scrollbar für scrollbaren Inhalt
+        main_canvas = tk.Canvas(dialog, bg="#1a1a1a", highlightthickness=0)
+        scrollbar = tk.Scrollbar(dialog, orient="vertical", command=main_canvas.yview)
+        scrollable_frame = tk.Frame(main_canvas, bg="#1a1a1a")
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: main_canvas.configure(scrollregion=main_canvas.bbox("all"))
+        )
+        
+        main_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        main_canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Mausrad-Scrolling
+        def _on_mousewheel(event):
+            main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        main_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        main_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Header (in scrollable_frame)
+        tk.Label(scrollable_frame, text="🖼️ PNG-Karte importieren",
+                font=("Arial", 18, "bold"),
+                bg="#1a1a1a", fg="#d4af37").pack(pady=10)
+        
+        # Dateiinfo
+        info_frame = tk.LabelFrame(scrollable_frame, text="Datei-Info", 
+                                  bg="#2a2a2a", fg="white", 
+                                  font=("Arial", 10, "bold"))
+        info_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        tk.Label(info_frame, text=f"📁 {os.path.basename(png_path)}",
+                bg="#2a2a2a", fg="white", 
+                font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=5)
+        
+        # Bild laden für Info
+        from PIL import Image, ImageTk
+        img = Image.open(png_path)
+        img_w, img_h = img.size
+        
+        tk.Label(info_frame, text=f"📐 Größe: {img_w} x {img_h} Pixel",
+                bg="#2a2a2a", fg="white",
+                font=("Arial", 10)).pack(anchor=tk.W, padx=10, pady=2)
+        
+        # Import-Optionen
+        options_frame = tk.LabelFrame(scrollable_frame, text="Import-Optionen",
+                                     bg="#2a2a2a", fg="white",
+                                     font=("Arial", 10, "bold"))
+        options_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        # Import-Modus
+        mode_frame = tk.Frame(options_frame, bg="#2a2a2a")
+        mode_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(mode_frame, text="Import-Modus:",
+                bg="#2a2a2a", fg="white",
+                font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        
+        import_mode = tk.StringVar(value="grid")
+        
+        tk.Radiobutton(mode_frame, text="🔲 Grid-Modus (PNG in Tiles aufteilen)",
+                      variable=import_mode, value="grid",
+                      bg="#2a2a2a", fg="white", selectcolor="#1a1a1a",
+                      font=("Arial", 9)).pack(anchor=tk.W, padx=20, pady=2)
+        
+        tk.Radiobutton(mode_frame, text="🖼️ Single-Modus (PNG als eine Textur)",
+                      variable=import_mode, value="single",
+                      bg="#2a2a2a", fg="white", selectcolor="#1a1a1a",
+                      font=("Arial", 9)).pack(anchor=tk.W, padx=20, pady=2)
+        
+        # Tile-Größe (nur für Grid-Modus)
+        tile_frame = tk.Frame(options_frame, bg="#2a2a2a")
+        tile_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(tile_frame, text="Tile-Größe (Grid-Modus):",
+                bg="#2a2a2a", fg="white",
+                font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        
+        tile_size_var = tk.IntVar(value=64)
+        
+        tile_size_frame = tk.Frame(tile_frame, bg="#2a2a2a")
+        tile_size_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Scale(tile_size_frame, from_=32, to=256, orient=tk.HORIZONTAL,
+                variable=tile_size_var, bg="#2a2a2a", fg="white",
+                font=("Arial", 9), length=300).pack(side=tk.LEFT)
+        
+        tile_info_label = tk.Label(tile_size_frame, text=f"64px → {img_w//64}x{img_h//64} Tiles",
+                                   bg="#2a2a2a", fg="#aaaaaa",
+                                   font=("Arial", 9))
+        tile_info_label.pack(side=tk.LEFT, padx=10)
+        
+        def update_tile_info(*args):
+            ts = tile_size_var.get()
+            grid_w = img_w // ts
+            grid_h = img_h // ts
+            tile_info_label.config(text=f"{ts}px → {grid_w}x{grid_h} Tiles")
+        
+        tile_size_var.trace('w', update_tile_info)
+        
+        # Map-Name
+        name_frame = tk.Frame(options_frame, bg="#2a2a2a")
+        name_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(name_frame, text="Map-Name:",
+                bg="#2a2a2a", fg="white",
+                font=("Arial", 10, "bold")).pack(anchor=tk.W)
+        
+        map_name_var = tk.StringVar(value=os.path.splitext(os.path.basename(png_path))[0])
+        tk.Entry(name_frame, textvariable=map_name_var,
+                bg="#3a3a3a", fg="white", font=("Arial", 10),
+                width=40).pack(anchor=tk.W, padx=20, pady=5)
+        
+        # Preview
+        preview_frame = tk.LabelFrame(scrollable_frame, text="Vorschau",
+                                     bg="#2a2a2a", fg="white",
+                                     font=("Arial", 10, "bold"))
+        preview_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        preview_label = tk.Label(preview_frame, bg="#1a1a1a")
+        preview_label.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        def update_preview(*args):
+            from png_map_importer import PNGMapImporter
+            importer = PNGMapImporter()
+            
+            if import_mode.get() == "grid":
+                preview_img = importer.get_import_preview(png_path, tile_size_var.get(), preview_size=400)
+            else:
+                preview_img = Image.open(png_path)
+                preview_img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+            
+            if preview_img:
+                photo = ImageTk.PhotoImage(preview_img)
+                preview_label.config(image=photo)
+                preview_label.image = photo
+        
+        import_mode.trace('w', update_preview)
+        tile_size_var.trace('w', update_preview)
+        update_preview()
+        
+        # Buttons (AUSSERHALB scrollable_frame, fixiert am unteren Rand)
+        button_frame = tk.Frame(dialog, bg="#1a1a1a")
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
+        
+        def do_import():
+            try:
+                from png_map_importer import PNGMapImporter
+                importer = PNGMapImporter()
+                
+                map_name = map_name_var.get()
+                
+                if import_mode.get() == "grid":
+                    # Grid-Import
+                    self.current_map_data = importer.import_png_map(
+                        png_path, 
+                        tile_size=tile_size_var.get(),
+                        map_name=map_name
+                    )
+                    msg = f"✅ Map importiert: {self.current_map_data['width']}x{self.current_map_data['height']} Tiles"
+                else:
+                    # Single-Texture-Import
+                    self.current_map_data = importer.import_png_as_single_texture(
+                        png_path,
+                        map_width=50,
+                        map_height=50
+                    )
+                    msg = f"✅ Map als einzelne Textur importiert"
+                
+                messagebox.showinfo("Erfolg", 
+                                   f"{msg}\n\n"
+                                   f"Du kannst die Map jetzt:\n"
+                                   f"• Im Editor bearbeiten\n"
+                                   f"• Als SVG exportieren\n"
+                                   f"• Im Projektor anzeigen")
+                main_canvas.unbind_all("<MouseWheel>")
+                dialog.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Fehler", f"Import fehlgeschlagen:\n{e}")
+        
+        def on_dialog_close():
+            main_canvas.unbind_all("<MouseWheel>")
+            dialog.destroy()
+        
+        dialog.protocol("WM_DELETE_WINDOW", on_dialog_close)
+        
+        tk.Button(button_frame, text="✅ Importieren",
+                 font=("Arial", 12, "bold"),
+                 bg="#2a7d2a", fg="white",
+                 padx=30, pady=10,
+                 command=do_import).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(button_frame, text="❌ Abbrechen",
+                 font=("Arial", 12, "bold"),
+                 bg="#7d2a2a", fg="white",
+                 padx=30, pady=10,
+                 command=on_dialog_close).pack(side=tk.LEFT, padx=10)
     
     def destroy(self):
         """Aufräumen beim Schließen"""
