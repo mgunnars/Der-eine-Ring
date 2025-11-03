@@ -16,15 +16,25 @@ import time
 import xml.etree.ElementTree as ET
 import base64
 
-# cairosvg ist optional (benötigt Cairo-DLLs unter Windows)
+# cairosvg ist für High-Quality Vektor-Rendering erforderlich
 try:
     import cairosvg
     HAS_CAIROSVG = True
     print("✅ CairoSVG verfügbar - nutze High-Quality SVG-Rendering")
-except (ImportError, OSError) as e:
+except ImportError as e:
     HAS_CAIROSVG = False
-    print("ℹ️  CairoSVG nicht verfügbar - nutze PIL-Fallback mit Border-Removal")
-    print("   (Unter Windows benötigt CairoSVG zusätzliche DLL-Dateien)")
+    print("⚠️  CairoSVG nicht installiert - nutze PIL-Fallback")
+    print("   📦 Installiere mit: py -m pip install cairosvg")
+    print("   🔧 Unter Windows zusätzlich benötigt: GTK3 Runtime")
+    print("   📥 Download: https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases")
+    print("   ℹ️  Oder führe aus: INSTALL_CAIRO.bat")
+except OSError as e:
+    HAS_CAIROSVG = False
+    print("⚠️  CairoSVG installiert, aber Cairo-DLLs fehlen!")
+    print("   🔧 Unter Windows benötigt: GTK3 Runtime für Cairo-DLLs")
+    print("   📥 Download: https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer/releases")
+    print("   ℹ️  Oder führe aus: INSTALL_CAIRO.bat")
+    print(f"   🐛 Fehler: {e}")
 
 
 class SVGProjectorRenderer:
@@ -36,6 +46,10 @@ class SVGProjectorRenderer:
         self.cached_render = None
         self.cached_size = None
         self.render_time = 0
+        
+        # MULTI-LEVEL CACHE: Speichere mehrere Zoom-Stufen
+        self.render_cache = {}  # {(width, height): PIL.Image}
+        self.max_cache_size = 5  # Max 5 verschiedene Größen cachen
         
         # SVG laden
         self.load_svg()
@@ -87,10 +101,11 @@ class SVGProjectorRenderer:
         Returns:
             PIL Image
         """
-        # Cache prüfen
-        if cache and self.cached_render and self.cached_size == (width, height):
+        # MULTI-LEVEL CACHE prüfen
+        cache_key = (width, height)
+        if cache and cache_key in self.render_cache:
             print(f"📦 Verwende gecachtes Rendering ({width}×{height})")
-            return self.cached_render
+            return self.render_cache[cache_key]
         
         if not self.svg_data:
             print("⚠️ Keine SVG-Daten geladen!")
@@ -113,10 +128,16 @@ class SVGProjectorRenderer:
             self.render_time = time.time() - start_time
             print(f"✅ Rendering abgeschlossen in {self.render_time:.2f}s")
             
-            # Cache speichern
+            # MULTI-LEVEL CACHE speichern
             if cache:
-                self.cached_render = image
-                self.cached_size = (width, height)
+                # Cache-Größe begrenzen (FIFO)
+                if len(self.render_cache) >= self.max_cache_size:
+                    # Ältesten Eintrag entfernen
+                    oldest_key = next(iter(self.render_cache))
+                    del self.render_cache[oldest_key]
+                
+                self.render_cache[cache_key] = image
+                print(f"💾 Cached: {len(self.render_cache)} Größen im Speicher")
             
             return image
             
@@ -125,14 +146,19 @@ class SVGProjectorRenderer:
             return None
     
     def _render_with_cairosvg(self, width, height):
-        """Rendert mit cairosvg (hohe Qualität)"""
-        png_data = cairosvg.svg2png(
-            bytestring=self.svg_data.encode('utf-8'),
-            output_width=width,
-            output_height=height,
-            dpi=300
-        )
-        return Image.open(BytesIO(png_data))
+        """Rendert mit CairoSVG (hohe Qualität, echte Vektoren)"""
+        try:
+            png_data = cairosvg.svg2png(
+                bytestring=self.svg_data.encode('utf-8'),
+                output_width=width,
+                output_height=height,
+                dpi=96  # Standard-DPI für Screens
+            )
+            return Image.open(BytesIO(png_data))
+        except Exception as e:
+            print(f"⚠️ Cairo-Rendering fehlgeschlagen: {e}")
+            print("   Fallback zu PIL...")
+            return self._render_with_pil_fallback(width, height)
     
     def _render_with_pil_fallback(self, width, height):
         """
@@ -212,20 +238,8 @@ class SVGProjectorRenderer:
                         tile_img = self._remove_tile_border(tile_img)
                         
                         # Skalieren falls nötig
-                        # WICHTIG: Bei Down-Sampling (herauszoomen) NEAREST verwenden!
-                        # Das verhindert dass dunkle Border-Pixel "verschmieren"
                         if tile_img.size != (scaled_w, scaled_h):
-                            original_size = tile_img.size[0]
-                            target_size = scaled_w
-                            
-                            # Wenn wir kleiner machen (Herauszoomen): NEAREST
-                            # Wenn wir größer machen (Hineinzoomen): LANCZOS (smooth)
-                            if target_size < original_size * 0.9:  # >10% Verkleinerung
-                                # NEAREST verhindert Border-Verschmierung beim Herauszoomen!
-                                tile_img = tile_img.resize((scaled_w, scaled_h), Image.NEAREST)
-                            else:
-                                # LANCZOS für glatte Vergrößerung
-                                tile_img = tile_img.resize((scaled_w, scaled_h), Image.LANCZOS)
+                            tile_img = tile_img.resize((scaled_w, scaled_h), Image.LANCZOS)
                         
                         # Einfügen
                         composite.paste(tile_img, (scaled_x, scaled_y))

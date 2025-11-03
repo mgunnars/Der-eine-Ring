@@ -12,8 +12,8 @@ noise>=1.2.2           # Perlin-Noise für organische Texturen (optional)
 imageio>=2.31.0        # GIF-Animation Export (optional)
 scipy>=1.11.0          # Erweiterte Mathematik (optional)
 
-# SVG-Rendering (optional - benötigt unter Windows Cairo-DLLs)
-# cairosvg>=2.7.0      # High-Quality SVG (optional, Fallback mit PIL vorhanden)
+# SVG-Rendering - für echte Vektor-Qualität
+cairosvg>=2.7.0      # High-Quality SVG Rendering (empfohlen)
 
 # HINWEIS: tkinter ist standardmäßig in Python enthalten
 # Falls tkinter fehlt: sudo apt-get install python3-tk (Linux)
