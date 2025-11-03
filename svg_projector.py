@@ -238,20 +238,8 @@ class SVGProjectorRenderer:
                         tile_img = self._remove_tile_border(tile_img)
                         
                         # Skalieren falls nötig
-                        # WICHTIG: Bei Down-Sampling (herauszoomen) NEAREST verwenden!
-                        # Das verhindert dass dunkle Border-Pixel "verschmieren"
                         if tile_img.size != (scaled_w, scaled_h):
-                            original_size = tile_img.size[0]
-                            target_size = scaled_w
-                            
-                            # Wenn wir kleiner machen (Herauszoomen): NEAREST
-                            # Wenn wir größer machen (Hineinzoomen): LANCZOS (smooth)
-                            if target_size < original_size * 0.9:  # >10% Verkleinerung
-                                # NEAREST verhindert Border-Verschmierung beim Herauszoomen!
-                                tile_img = tile_img.resize((scaled_w, scaled_h), Image.NEAREST)
-                            else:
-                                # LANCZOS für glatte Vergrößerung
-                                tile_img = tile_img.resize((scaled_w, scaled_h), Image.LANCZOS)
+                            tile_img = tile_img.resize((scaled_w, scaled_h), Image.LANCZOS)
                         
                         # Einfügen
                         composite.paste(tile_img, (scaled_x, scaled_y))
