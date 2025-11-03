@@ -14192,9 +14192,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y0": {
     "name": "Hobbit Tavern Day PNG Tile (0,0)",
     "color": [
-      139,
-      116,
-      91
+      141,
+      117,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14203,9 +14203,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y0": {
     "name": "Hobbit Tavern Day PNG Tile (1,0)",
     "color": [
-      144,
-      119,
-      94
+      140,
+      116,
+      91
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14214,9 +14214,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y0": {
     "name": "Hobbit Tavern Day PNG Tile (2,0)",
     "color": [
-      140,
-      116,
-      92
+      131,
+      113,
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14225,9 +14225,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y0": {
     "name": "Hobbit Tavern Day PNG Tile (3,0)",
     "color": [
-      140,
-      116,
-      91
+      131,
+      114,
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14236,9 +14236,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y0": {
     "name": "Hobbit Tavern Day PNG Tile (4,0)",
     "color": [
-      138,
-      116,
-      93
+      136,
+      117,
+      96
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14247,9 +14247,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y0": {
     "name": "Hobbit Tavern Day PNG Tile (5,0)",
     "color": [
-      136,
-      117,
-      96
+      134,
+      115,
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14258,9 +14258,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y0": {
     "name": "Hobbit Tavern Day PNG Tile (6,0)",
     "color": [
-      137,
-      118,
-      96
+      140,
+      117,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14269,9 +14269,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y0": {
     "name": "Hobbit Tavern Day PNG Tile (7,0)",
     "color": [
-      136,
+      140,
       116,
-      94
+      91
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14280,9 +14280,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y0": {
     "name": "Hobbit Tavern Day PNG Tile (8,0)",
     "color": [
-      138,
+      141,
       117,
-      93
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14291,9 +14291,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y0": {
     "name": "Hobbit Tavern Day PNG Tile (9,0)",
     "color": [
-      142,
-      119,
-      95
+      140,
+      116,
+      91
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14423,9 +14423,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y1": {
     "name": "Hobbit Tavern Day PNG Tile (0,1)",
     "color": [
-      140,
-      115,
-      91
+      136,
+      117,
+      96
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14434,9 +14434,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y1": {
     "name": "Hobbit Tavern Day PNG Tile (1,1)",
     "color": [
-      141,
+      142,
       117,
-      93
+      96
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14445,9 +14445,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y1": {
     "name": "Hobbit Tavern Day PNG Tile (2,1)",
     "color": [
-      140,
-      116,
-      91
+      146,
+      127,
+      106
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14456,9 +14456,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y1": {
     "name": "Hobbit Tavern Day PNG Tile (3,1)",
     "color": [
-      139,
-      115,
-      91
+      141,
+      123,
+      100
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14467,9 +14467,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y1": {
     "name": "Hobbit Tavern Day PNG Tile (4,1)",
     "color": [
-      137,
-      117,
-      96
+      138,
+      122,
+      101
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14478,9 +14478,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y1": {
     "name": "Hobbit Tavern Day PNG Tile (5,1)",
     "color": [
-      110,
-      100,
-      90
+      152,
+      130,
+      105
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14489,9 +14489,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y1": {
     "name": "Hobbit Tavern Day PNG Tile (6,1)",
     "color": [
+      142,
       118,
-      105,
-      91
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14500,9 +14500,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y1": {
     "name": "Hobbit Tavern Day PNG Tile (7,1)",
     "color": [
-      132,
-      116,
-      95
+      141,
+      117,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14511,9 +14511,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y1": {
     "name": "Hobbit Tavern Day PNG Tile (8,1)",
     "color": [
-      133,
-      117,
-      97
+      143,
+      118,
+      93
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14522,9 +14522,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y1": {
     "name": "Hobbit Tavern Day PNG Tile (9,1)",
     "color": [
-      132,
+      141,
       117,
-      98
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14654,9 +14654,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y2": {
     "name": "Hobbit Tavern Day PNG Tile (0,2)",
     "color": [
-      141,
-      118,
-      94
+      132,
+      115,
+      95
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14665,9 +14665,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y2": {
     "name": "Hobbit Tavern Day PNG Tile (1,2)",
     "color": [
-      139,
-      118,
-      94
+      150,
+      124,
+      103
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14676,9 +14676,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y2": {
     "name": "Hobbit Tavern Day PNG Tile (2,2)",
     "color": [
-      139,
-      117,
-      94
+      147,
+      111,
+      93
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14687,9 +14687,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y2": {
     "name": "Hobbit Tavern Day PNG Tile (3,2)",
     "color": [
-      138,
-      118,
-      96
+      162,
+      112,
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14698,9 +14698,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y2": {
     "name": "Hobbit Tavern Day PNG Tile (4,2)",
     "color": [
-      136,
-      118,
-      97
+      137,
+      113,
+      93
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14709,9 +14709,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y2": {
     "name": "Hobbit Tavern Day PNG Tile (5,2)",
     "color": [
-      153,
-      137,
-      116
+      156,
+      138,
+      114
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14720,8 +14720,8 @@
   "Hobbit_Tavern_Day_PNG_x6_y2": {
     "name": "Hobbit Tavern Day PNG Tile (6,2)",
     "color": [
-      154,
-      127,
+      138,
+      119,
       98
     ],
     "animated": false,
@@ -14731,9 +14731,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y2": {
     "name": "Hobbit Tavern Day PNG Tile (7,2)",
     "color": [
-      123,
-      114,
-      98
+      139,
+      116,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14742,9 +14742,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y2": {
     "name": "Hobbit Tavern Day PNG Tile (8,2)",
     "color": [
-      144,
-      128,
-      108
+      140,
+      117,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14753,9 +14753,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y2": {
     "name": "Hobbit Tavern Day PNG Tile (9,2)",
     "color": [
-      131,
-      116,
-      96
+      138,
+      117,
+      93
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14886,8 +14886,8 @@
     "name": "Hobbit Tavern Day PNG Tile (0,3)",
     "color": [
       135,
-      116,
-      96
+      118,
+      98
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14896,9 +14896,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y3": {
     "name": "Hobbit Tavern Day PNG Tile (1,3)",
     "color": [
-      134,
-      119,
-      100
+      138,
+      126,
+      106
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14907,9 +14907,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y3": {
     "name": "Hobbit Tavern Day PNG Tile (2,3)",
     "color": [
-      142,
-      121,
-      101
+      148,
+      130,
+      104
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14918,9 +14918,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y3": {
     "name": "Hobbit Tavern Day PNG Tile (3,3)",
     "color": [
-      156,
-      112,
-      94
+      146,
+      119,
+      99
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14929,8 +14929,8 @@
   "Hobbit_Tavern_Day_PNG_x4_y3": {
     "name": "Hobbit Tavern Day PNG Tile (4,3)",
     "color": [
-      146,
-      117,
+      159,
+      119,
       98
     ],
     "animated": false,
@@ -14940,9 +14940,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y3": {
     "name": "Hobbit Tavern Day PNG Tile (5,3)",
     "color": [
-      156,
-      139,
-      115
+      174,
+      151,
+      122
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14951,9 +14951,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y3": {
     "name": "Hobbit Tavern Day PNG Tile (6,3)",
     "color": [
-      150,
-      127,
-      101
+      143,
+      125,
+      103
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14962,9 +14962,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y3": {
     "name": "Hobbit Tavern Day PNG Tile (7,3)",
     "color": [
-      139,
-      128,
-      106
+      126,
+      115,
+      94
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14973,9 +14973,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y3": {
     "name": "Hobbit Tavern Day PNG Tile (8,3)",
     "color": [
-      136,
-      119,
-      100
+      133,
+      115,
+      96
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -14984,9 +14984,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y3": {
     "name": "Hobbit Tavern Day PNG Tile (9,3)",
     "color": [
-      144,
-      126,
-      103
+      128,
+      129,
+      91
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15116,9 +15116,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y4": {
     "name": "Hobbit Tavern Day PNG Tile (0,4)",
     "color": [
-      134,
-      117,
-      95
+      111,
+      142,
+      81
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15127,9 +15127,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y4": {
     "name": "Hobbit Tavern Day PNG Tile (1,4)",
     "color": [
-      135,
-      118,
-      98
+      116,
+      165,
+      72
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15138,9 +15138,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y4": {
     "name": "Hobbit Tavern Day PNG Tile (2,4)",
     "color": [
-      147,
-      125,
-      105
+      115,
+      153,
+      81
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15149,9 +15149,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y4": {
     "name": "Hobbit Tavern Day PNG Tile (3,4)",
     "color": [
-      184,
-      129,
-      101
+      135,
+      121,
+      98
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15160,9 +15160,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y4": {
     "name": "Hobbit Tavern Day PNG Tile (4,4)",
     "color": [
-      164,
-      109,
-      91
+      171,
+      148,
+      119
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15171,9 +15171,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y4": {
     "name": "Hobbit Tavern Day PNG Tile (5,4)",
     "color": [
-      165,
-      91,
-      79
+      175,
+      147,
+      115
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15182,9 +15182,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y4": {
     "name": "Hobbit Tavern Day PNG Tile (6,4)",
     "color": [
-      196,
-      116,
-      93
+      187,
+      161,
+      129
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15193,9 +15193,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y4": {
     "name": "Hobbit Tavern Day PNG Tile (7,4)",
     "color": [
-      150,
-      128,
-      107
+      171,
+      151,
+      124
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15204,9 +15204,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y4": {
     "name": "Hobbit Tavern Day PNG Tile (8,4)",
     "color": [
-      134,
-      118,
-      97
+      137,
+      125,
+      104
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15215,9 +15215,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y4": {
     "name": "Hobbit Tavern Day PNG Tile (9,4)",
     "color": [
-      133,
-      114,
-      91
+      127,
+      129,
+      87
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15347,9 +15347,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y5": {
     "name": "Hobbit Tavern Day PNG Tile (0,5)",
     "color": [
-      137,
-      117,
-      95
+      82,
+      130,
+      68
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15358,9 +15358,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y5": {
     "name": "Hobbit Tavern Day PNG Tile (1,5)",
     "color": [
-      123,
-      109,
-      93
+      112,
+      158,
+      72
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15369,9 +15369,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y5": {
     "name": "Hobbit Tavern Day PNG Tile (2,5)",
     "color": [
-      139,
-      126,
-      111
+      121,
+      168,
+      75
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15380,9 +15380,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y5": {
     "name": "Hobbit Tavern Day PNG Tile (3,5)",
     "color": [
-      130,
-      114,
-      95
+      123,
+      166,
+      76
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15391,9 +15391,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y5": {
     "name": "Hobbit Tavern Day PNG Tile (4,5)",
     "color": [
-      129,
-      120,
-      97
+      139,
+      139,
+      101
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15402,9 +15402,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y5": {
     "name": "Hobbit Tavern Day PNG Tile (5,5)",
     "color": [
+      155,
       134,
-      118,
-      96
+      109
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15413,9 +15413,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y5": {
     "name": "Hobbit Tavern Day PNG Tile (6,5)",
     "color": [
-      144,
-      121,
-      100
+      159,
+      140,
+      116
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15424,9 +15424,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y5": {
     "name": "Hobbit Tavern Day PNG Tile (7,5)",
     "color": [
-      154,
-      92,
-      80
+      143,
+      130,
+      108
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15435,9 +15435,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y5": {
     "name": "Hobbit Tavern Day PNG Tile (8,5)",
     "color": [
-      154,
-      103,
-      88
+      134,
+      131,
+      92
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15446,9 +15446,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y5": {
     "name": "Hobbit Tavern Day PNG Tile (9,5)",
     "color": [
-      129,
-      113,
-      93
+      90,
+      118,
+      74
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15578,9 +15578,9 @@
   "Hobbit_Tavern_Day_PNG_x0_y6": {
     "name": "Hobbit Tavern Day PNG Tile (0,6)",
     "color": [
-      139,
-      119,
-      96
+      61,
+      111,
+      67
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15589,9 +15589,9 @@
   "Hobbit_Tavern_Day_PNG_x1_y6": {
     "name": "Hobbit Tavern Day PNG Tile (1,6)",
     "color": [
-      132,
-      120,
-      104
+      88,
+      125,
+      69
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15600,9 +15600,9 @@
   "Hobbit_Tavern_Day_PNG_x2_y6": {
     "name": "Hobbit Tavern Day PNG Tile (2,6)",
     "color": [
-      157,
-      145,
-      128
+      96,
+      129,
+      72
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15611,9 +15611,9 @@
   "Hobbit_Tavern_Day_PNG_x3_y6": {
     "name": "Hobbit Tavern Day PNG Tile (3,6)",
     "color": [
-      130,
-      115,
-      96
+      103,
+      153,
+      68
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15622,9 +15622,9 @@
   "Hobbit_Tavern_Day_PNG_x4_y6": {
     "name": "Hobbit Tavern Day PNG Tile (4,6)",
     "color": [
-      139,
-      130,
-      105
+      112,
+      163,
+      74
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15633,9 +15633,9 @@
   "Hobbit_Tavern_Day_PNG_x5_y6": {
     "name": "Hobbit Tavern Day PNG Tile (5,6)",
     "color": [
-      143,
-      122,
-      99
+      116,
+      150,
+      76
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15644,9 +15644,9 @@
   "Hobbit_Tavern_Day_PNG_x6_y6": {
     "name": "Hobbit Tavern Day PNG Tile (6,6)",
     "color": [
-      180,
-      141,
-      114
+      122,
+      142,
+      83
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15655,9 +15655,9 @@
   "Hobbit_Tavern_Day_PNG_x7_y6": {
     "name": "Hobbit Tavern Day PNG Tile (7,6)",
     "color": [
-      134,
-      118,
-      100
+      120,
+      142,
+      79
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15666,9 +15666,9 @@
   "Hobbit_Tavern_Day_PNG_x8_y6": {
     "name": "Hobbit Tavern Day PNG Tile (8,6)",
     "color": [
-      190,
-      127,
-      99
+      129,
+      135,
+      82
     ],
     "animated": false,
     "emoji": "🗺️",
@@ -15677,9 +15677,9 @@
   "Hobbit_Tavern_Day_PNG_x9_y6": {
     "name": "Hobbit Tavern Day PNG Tile (9,6)",
     "color": [
-      157,
-      99,
-      84
+      104,
+      140,
+      76
     ],
     "animated": false,
     "emoji": "🗺️",
