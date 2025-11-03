@@ -15,16 +15,32 @@ from io import BytesIO
 from PIL import Image
 import os
 
+# Import für echte Vektor-Texturen
+try:
+    from svg_texture_vectorizer import SVGTextureVectorizer
+    _vectorizer = SVGTextureVectorizer()
+except ImportError:
+    _vectorizer = None
+    print("⚠️ SVGTextureVectorizer nicht verfügbar - nutze PNG-Fallback")
+
 
 class SVGMapExporter:
     """Exportiert eine Karte als SVG mit eingebetteten Tiles"""
     
     def __init__(self, tile_size=256):
         self.tile_size = tile_size
+    
+    def _get_pattern_id(self, material_name):
+        """Erstellt eine gültige Pattern-ID aus dem Material-Namen (konsistent mit SVGTextureVectorizer)"""
+        if isinstance(material_name, str) and ('/' in material_name or '\\' in material_name):
+            # Für Dateipfade: Nutze Basename ohne Extension
+            return f'pattern_{os.path.basename(material_name).replace(".", "_").replace(" ", "_")}'
+        else:
+            return f'pattern_{material_name}'
         
     def export_map_to_svg(self, map_data, materials, renderer, output_path, 
                          embed_images=True, render_resolution="high", max_dimension=2048,
-                         use_symbols=False):
+                         use_symbols=False, use_vectors=True):
         """
         Exportiert die komplette Karte als SVG
         
@@ -33,10 +49,11 @@ class SVGMapExporter:
             materials: Dictionary mit Material-Daten
             renderer: AdvancedTextureRenderer Instanz
             output_path: Pfad zur SVG-Ausgabedatei
-            embed_images: Wenn True, werden Bilder als base64 eingebettet
+            embed_images: Wenn True, werden Bilder als base64 eingebettet (nur wenn use_vectors=False)
             render_resolution: "low" (256), "high" (512), "ultra" (1024)
             max_dimension: Maximale Pixel pro Dimension (Standard: 2048)
             use_symbols: Wenn True, nutze <symbol>+<use> (kleiner, aber PIL-inkompatibel!)
+            use_vectors: Wenn True, nutze ECHTE SVG-Vektoren statt PNG-Einbettung (empfohlen!)
         """
         # Finde Kartengrenzen
         if not map_data:
@@ -79,6 +96,7 @@ class SVGMapExporter:
         print(f"   Größe: {width_tiles}×{height_tiles} Tiles ({len(map_data)} Tiles)")
         print(f"   Auflösung: {svg_width}×{svg_height}px ({render_resolution})")
         print(f"   Tile-Größe: {render_size}px")
+        print(f"   Modus: {'ECHTE VEKTOREN ✓' if use_vectors and _vectorizer else 'PNG-Einbettung'}")
         print(f"   Eingebettete Bilder: {embed_images}")
         
         # SVG Root erstellen
@@ -139,32 +157,74 @@ class SVGMapExporter:
         unique_materials = set(map_data.values())
         print(f"   Deduplizierung: {len(map_data)} Tiles → {len(unique_materials)} einzigartige Materialien")
         
-        for material_name in unique_materials:
-            tile_data = self._render_material_for_svg(
-                material_name, materials, renderer, render_size
-            )
-            
-            if tile_data:
-                material_cache[material_name] = tile_data
+        # VEKTOR-MODUS: Erstelle Vektor-Patterns in <defs>
+        if use_vectors and _vectorizer:
+            for material_name in unique_materials:
+                # Hole texture_path aus Materials-Dictionary (für importierte Maps)
+                material_info = materials.get(material_name, {})
                 
-                # SYMBOL-MODUS (kleiner, aber PIL-inkompatibel!)
+                # ROBUST: Unterstütze verschiedene Dictionary-Formate
+                if isinstance(material_info, dict):
+                    # Format 1: {'type': 'custom', 'path': '...'}
+                    # Format 2: {'texture_path': '...', 'name': '...', ...}
+                    texture_path = material_info.get('path') or material_info.get('texture_path') or material_name
+                else:
+                    # Fallback: material_info ist selbst der Pfad
+                    texture_path = material_info if isinstance(material_info, str) else material_name
+                
+                # DEBUG: Zeige ersten Pfad
+                if material_name == list(unique_materials)[0]:
+                    print(f"   🔍 DEBUG: material_name='{material_name}'")
+                    print(f"   🔍 DEBUG: texture_path='{texture_path}'")
+                
+                # Pattern erstellen (mit echtem Dateipfad für importierte Maps)
+                pattern = _vectorizer.create_pattern_definition(texture_path, render_size)
+                defs.append(pattern)
+                
+                # Für Symbol-Modus auch Symbol erstellen
                 if use_symbols:
-                    # Symbol in <defs> erstellen für Wiederverwendung
                     symbol_id = f"mat_{material_name.replace(' ', '_').replace('.', '_')}"
                     material_symbols[material_name] = symbol_id
                     
-                    # Symbol-Definition
                     symbol = ET.SubElement(defs, 'symbol', {
                         'id': symbol_id,
-                        'viewBox': f"0 0 {tile_data['size']} {tile_data['size']}"
+                        'viewBox': f"0 0 {render_size} {render_size}"
                     })
                     
-                    if embed_images:
-                        ET.SubElement(symbol, 'image', {
-                            'width': str(tile_data['size']),
-                            'height': str(tile_data['size']),
-                            'xlink:href': tile_data['data_uri']
+                    # Rechteck mit Pattern-Fill
+                    ET.SubElement(symbol, 'rect', {
+                        'width': str(render_size),
+                        'height': str(render_size),
+                        'fill': f"url(#pattern_{material_name})"
+                    })
+        else:
+            # PNG-MODUS: Alte Methode mit Base64-Bildern
+            for material_name in unique_materials:
+                tile_data = self._render_material_for_svg(
+                    material_name, materials, renderer, render_size
+                )
+                
+                if tile_data:
+                    material_cache[material_name] = tile_data
+                    
+                    # SYMBOL-MODUS (kleiner, aber PIL-inkompatibel!)
+                    if use_symbols:
+                        # Symbol in <defs> erstellen für Wiederverwendung
+                        symbol_id = f"mat_{material_name.replace(' ', '_').replace('.', '_')}"
+                        material_symbols[material_name] = symbol_id
+                        
+                        # Symbol-Definition
+                        symbol = ET.SubElement(defs, 'symbol', {
+                            'id': symbol_id,
+                            'viewBox': f"0 0 {tile_data['size']} {tile_data['size']}"
                         })
+                        
+                        if embed_images:
+                            ET.SubElement(symbol, 'image', {
+                                'width': str(tile_data['size']),
+                                'height': str(tile_data['size']),
+                                'xlink:href': tile_data['data_uri']
+                            })
         
         # PHASE 2: Tiles platzieren (mit Overlap um Zoom-Gaps zu vermeiden)
         tile_count = 0
@@ -175,45 +235,71 @@ class SVGMapExporter:
             svg_x = (grid_x - min_x) * render_size - (overlap if grid_x > min_x else 0)
             svg_y = (grid_y - min_y) * render_size - (overlap if grid_y > min_y else 0)
             
-            tile_data = material_cache.get(material_name)
+            # Tile-Größe mit Overlap (außer am Rand)
+            tile_width = render_size + (overlap if grid_x < max_x else 0)
+            tile_height = render_size + (overlap if grid_y < max_y else 0)
             
-            if tile_data:
-                # Tile-Größe mit Overlap (außer am Rand)
-                tile_width = render_size + (overlap if grid_x < max_x else 0)
-                tile_height = render_size + (overlap if grid_y < max_y else 0)
+            # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay) - nur im PNG-Modus
+            if material_name == 'village' and not use_vectors:
+                offset_y = svg_y - (render_size * 2)
+                offset_x = svg_x
+            else:
+                offset_y = svg_y
+                offset_x = svg_x
+            
+            # VEKTOR-MODUS: Rechteck mit Pattern-Fill
+            if use_vectors and _vectorizer:
+                # Hole texture_path aus Materials-Dictionary
+                material_info = materials.get(material_name, {})
                 
-                # Für Village: 2 Tiles nach oben verschieben (Rauch-Overlay)
-                if material_name == 'village':
-                    offset_y = svg_y - (render_size * 2)
-                    offset_x = svg_x
+                # ROBUST: Unterstütze verschiedene Dictionary-Formate
+                if isinstance(material_info, dict):
+                    texture_path = material_info.get('path') or material_info.get('texture_path') or material_name
                 else:
-                    offset_y = svg_y
-                    offset_x = svg_x
+                    texture_path = material_info if isinstance(material_info, str) else material_name
                 
-                # SYMBOL-MODUS: Referenz zum Symbol
-                if use_symbols and material_name in material_symbols:
-                    ET.SubElement(map_group, 'use', {
-                        'xlink:href': f"#{material_symbols[material_name]}",
-                        'x': str(offset_x),
-                        'y': str(offset_y),
-                        'width': str(tile_width),  # Mit Overlap!
-                        'height': str(tile_height),  # Mit Overlap!
-                        'data-material': material_name,
-                        'data-grid': f"{grid_x},{grid_y}"
-                    })
-                else:
-                    # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags
-                    if embed_images:
-                        ET.SubElement(map_group, 'image', {
+                # Pattern-ID basiert auf texture_path (nicht material_name!)
+                pattern_id = self._get_pattern_id(texture_path)
+                
+                # Rechteck mit Pattern als Fill
+                ET.SubElement(map_group, 'rect', {
+                    'x': str(offset_x),
+                    'y': str(offset_y),
+                    'width': str(tile_width),
+                    'height': str(tile_height),
+                    'fill': f"url(#{pattern_id})",
+                    'data-material': material_name,
+                    'data-grid': f"{grid_x},{grid_y}"
+                })
+            else:
+                # PNG-MODUS: Alte Methode
+                tile_data = material_cache.get(material_name)
+                
+                if tile_data:
+                    # SYMBOL-MODUS: Referenz zum Symbol
+                    if use_symbols and material_name in material_symbols:
+                        ET.SubElement(map_group, 'use', {
+                            'xlink:href': f"#{material_symbols[material_name]}",
                             'x': str(offset_x),
                             'y': str(offset_y),
                             'width': str(tile_width),  # Mit Overlap!
                             'height': str(tile_height),  # Mit Overlap!
-                            'xlink:href': tile_data['data_uri'],
                             'data-material': material_name,
-                            'data-grid': f"{grid_x},{grid_y}",
-                            'preserveAspectRatio': 'none'  # Stretchable!
+                            'data-grid': f"{grid_x},{grid_y}"
                         })
+                    else:
+                        # KOMPATIBILITÄTS-MODUS: Direkte <image> Tags
+                        if embed_images:
+                            ET.SubElement(map_group, 'image', {
+                                'x': str(offset_x),
+                                'y': str(offset_y),
+                                'width': str(tile_width),  # Mit Overlap!
+                                'height': str(tile_height),  # Mit Overlap!
+                                'xlink:href': tile_data['data_uri'],
+                                'data-material': material_name,
+                                'data-grid': f"{grid_x},{grid_y}",
+                                'preserveAspectRatio': 'none'  # Stretchable!
+                            })
             
             tile_count += 1
             if tile_count % 50 == 0:
@@ -363,16 +449,17 @@ class SVGMapExporter:
     
     def _save_svg(self, svg_element, output_path):
         """Speichert SVG mit schöner Formatierung"""
-        # XML-String erstellen
-        xml_string = ET.tostring(svg_element, encoding='unicode')
+        # XML-String erstellen (als UTF-8 Bytes)
+        xml_bytes = ET.tostring(svg_element, encoding='utf-8')
         
-        # Schön formatieren
-        dom = minidom.parseString(xml_string)
-        pretty_xml = dom.toprettyxml(indent='  ')
+        # Schön formatieren (parseString akzeptiert Bytes)
+        dom = minidom.parseString(xml_bytes)
+        pretty_xml = dom.toprettyxml(indent='  ', encoding='utf-8').decode('utf-8')
         
         # XML-Deklaration nur einmal
-        pretty_xml = '\n'.join([line for line in pretty_xml.split('\n') 
-                               if line.strip() and not line.strip().startswith('<?xml')])
+        lines = [line for line in pretty_xml.split('\n') 
+                if line.strip() and not line.strip().startswith('<?xml')]
+        pretty_xml = '\n'.join(lines)
         
         # Header hinzufügen
         final_xml = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' + pretty_xml

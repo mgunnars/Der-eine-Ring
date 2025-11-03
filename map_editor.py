@@ -523,11 +523,19 @@ class MapEditor(tk.Frame):
                     
                     # Custom-Materials hinzufügen
                     if hasattr(self.texture_renderer, 'custom_textures'):
-                        for mat_name, mat_path in self.texture_renderer.custom_textures.items():
-                            materials[mat_name] = {
-                                'type': 'custom',
-                                'path': mat_path
-                            }
+                        for mat_name, mat_info in self.texture_renderer.custom_textures.items():
+                            # mat_info ist ein Dictionary mit 'texture_path', 'name', etc.
+                            if isinstance(mat_info, dict) and 'texture_path' in mat_info:
+                                materials[mat_name] = {
+                                    'type': 'custom',
+                                    'path': mat_info['texture_path']  # Extrahiere den echten Pfad!
+                                }
+                            elif isinstance(mat_info, str):
+                                # Fallback: mat_info ist direkt der Pfad (alte Struktur)
+                                materials[mat_name] = {
+                                    'type': 'custom',
+                                    'path': mat_info
+                                }
                     
                     # 3. SVG Exporter mit korrekter tile_size erstellen
                     tile_sizes = {
