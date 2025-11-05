@@ -160,13 +160,9 @@ class MaterialBundleManager:
                 bundle_id = filename[:-5]  # Ohne .json
                 self.load_bundle(bundle_id)
         
-        # Base-Bundle ist immer aktiv
+        # NUR Base-Bundle ist standardmäßig aktiv
+        self.active_bundles.clear()
         self.active_bundles.add(self.base_bundle)
-        
-        # Always-loaded Bundles aktivieren
-        for bundle_id, bundle_data in self.bundles.items():
-            if bundle_data.get("always_loaded", False):
-                self.active_bundles.add(bundle_id)
         
         print(f"📦 {len(self.bundles)} Bundles geladen")
     
@@ -195,7 +191,8 @@ class MaterialBundleManager:
     def toggle_bundle(self, bundle_id):
         """Bundle aktivieren/deaktivieren"""
         if bundle_id in self.active_bundles:
-            return self.deactivate_bundle(bundle_id)
+            success = self.deactivate_bundle(bundle_id)
+            return not success  # Return True wenn jetzt aktiv
         else:
             return self.activate_bundle(bundle_id)
     

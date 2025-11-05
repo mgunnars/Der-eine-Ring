@@ -3,7 +3,6 @@
   "description": "Standard-Terrain für alle Karten",
   "always_loaded": true,
   "materials": [
-    "empty",
     "grass",
     "dirt",
     "stone",
@@ -24,7 +23,8 @@
     "path",
     "bridge",
     "wall",
-    "door"
+    "door",
+    "empty"
   ],
   "icon": "🗺️",
   "order": 0

@@ -372,21 +372,15 @@ class MapEditor(tk.Frame):
     
     def get_active_materials(self):
         """Gibt Liste der aktiven Materialien zurück (gefiltert nach Bundles)"""
-        active_materials = set()
+        # Direkt vom Bundle-Manager holen
+        active_materials = self.bundle_manager.get_active_materials()
         
-        # Base materials immer aktiv
-        active_materials.update(["grass", "water", "forest", "mountain", "sand", 
-                                "stone", "snow", "village", "empty"])
-        
-        # Materials aus aktiven Bundles
-        for bundle_id, bundle in self.bundle_manager.bundles.items():
-            if bundle.get("active", False):
-                materials = bundle.get("materials", [])
-                active_materials.update(materials)
-        
-        # Custom materials aus Renderer
-        if hasattr(self.texture_renderer, 'custom_textures'):
-            active_materials.update(self.texture_renderer.custom_textures.keys())
+        # Debug: Zeige was geladen ist
+        if len(active_materials) == 0:
+            print("⚠️ Keine aktiven Materialien! Lade Base-Materials als Fallback...")
+            # Fallback zu Base-Materials
+            active_materials = set(["grass", "water", "forest", "mountain", "sand", 
+                                   "stone", "snow", "village", "empty", "dirt", "road"])
         
         return active_materials
     
@@ -806,20 +800,16 @@ class MapEditor(tk.Frame):
     
     def toggle_bundle(self, bundle_id):
         """Bundle aktivieren/deaktivieren"""
-        success = self.bundle_manager.toggle_bundle(bundle_id)
+        # Toggle im Manager
+        is_now_active = self.bundle_manager.toggle_bundle(bundle_id)
         
-        if success:
-            # UI aktualisieren
-            self.refresh_bundle_buttons()
-            self.filter_material_bar()
-            
-            # Feedback
-            is_active = self.bundle_manager.is_bundle_active(bundle_id)
-            bundle_info = self.bundle_manager.get_bundle_info(bundle_id)
-            name = bundle_info.get("name", bundle_id) if bundle_info else bundle_id
-            
-            status = "aktiviert" if is_active else "deaktiviert"
-            print(f"📦 Bundle '{name}' {status}")
+        # Debug
+        print(f"🔄 Toggle {bundle_id}: aktiv={is_now_active}")
+        print(f"   Aktive Bundles: {self.bundle_manager.active_bundles}")
+        
+        # UI aktualisieren
+        self.refresh_bundle_buttons()
+        self.populate_material_list()  # WICHTIG: Material-Liste neu laden!
     
     def filter_material_bar(self):
         """Filtert Material-Bar nach aktiven Bundles"""
