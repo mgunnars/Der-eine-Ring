@@ -6,6 +6,9 @@ Extrahiert aus main.py für modulare Nutzung
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
+import subprocess
+import sys
+import os
 from texture_manager import TextureManager
 from map_system import MapSystem
 from advanced_texture_renderer import AdvancedTextureRenderer
@@ -89,6 +92,11 @@ class MapEditor(tk.Frame):
         # River Direction Mode
         self.river_direction_mode = tk.StringVar(value="disabled")
         
+        # === FREEHAND DRAWING MODE ===
+        self.draw_mode = tk.StringVar(value="tile")  # "tile" oder "brush"
+        self.brush_size = 1  # Wie viele Tiles der Pinsel malt
+        self.is_drawing = False
+        
         # Tile-Size berechnen
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
@@ -162,9 +170,37 @@ class MapEditor(tk.Frame):
         tk.Label(toolbar, text="🗺️ Map Editor", font=("Arial", 16, "bold"), 
                 bg="#1a1a1a", fg="white").pack(side=tk.LEFT, padx=20, pady=10)
         
+        # === DRAW MODE SWITCHER ===
+        mode_frame = tk.LabelFrame(toolbar, text="Modus", bg="#1a1a1a", fg="white")
+        mode_frame.pack(side=tk.LEFT, padx=20)
+        
+        tk.Radiobutton(mode_frame, text="📍 Tile", variable=self.draw_mode, value="tile",
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(mode_frame, text="🖌️ Pinsel", variable=self.draw_mode, value="brush",
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
+        
+        # Brush Size Slider (nur sichtbar im Brush-Mode)
+        brush_frame = tk.LabelFrame(toolbar, text="Pinselgröße", bg="#1a1a1a", fg="white")
+        brush_frame.pack(side=tk.LEFT, padx=10)
+        
+        self.brush_size_var = tk.IntVar(value=1)
+        brush_scale = tk.Scale(brush_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+                              variable=self.brush_size_var, 
+                              command=lambda v: setattr(self, 'brush_size', int(v)),
+                              bg="#2a2a2a", fg="white", troughcolor="#1a1a1a",
+                              highlightthickness=0, length=100)
+        brush_scale.pack(side=tk.LEFT, padx=5)
+        
         # Buttons
         file_frame = tk.Frame(toolbar, bg="#1a1a1a")
         file_frame.pack(side=tk.RIGHT, padx=10)
+        
+        tk.Button(file_frame, text="🎨 MapDraw", bg="#8d5a2a", fg="white",
+                 font=("Arial", 10), padx=10, pady=5,
+                 command=self.open_map_draw).pack(side=tk.LEFT, padx=5)
         
         tk.Button(file_frame, text="💾 Speichern", bg="#2a7d2a", fg="white",
                  font=("Arial", 10), padx=10, pady=5,
@@ -239,6 +275,11 @@ class MapEditor(tk.Frame):
         # Maus-Events
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+    
+    def on_canvas_release(self, event):
+        """Maus losgelassen"""
+        self.is_drawing = False
     
     def open_material_manager(self):
         """Öffnet den Material-Manager"""
@@ -768,3 +809,29 @@ class MapEditor(tk.Frame):
         if self.animation_id:
             self.after_cancel(self.animation_id)
         super().destroy()
+    
+    def open_map_draw(self):
+        """Öffnet das MapDraw-Tool (Hand-Drawn Map Editor)"""
+        try:
+            # Starte hand_drawn_map_editor.py
+            editor_path = os.path.join(os.path.dirname(__file__), "hand_drawn_map_editor.py")
+            
+            if not os.path.exists(editor_path):
+                messagebox.showerror("Fehler", 
+                    "hand_drawn_map_editor.py nicht gefunden!\n\n"
+                    "Das MapDraw-Tool muss zuerst installiert werden.")
+                return
+            
+            # Starte als separater Prozess
+            subprocess.Popen([sys.executable, editor_path])
+            
+            messagebox.showinfo("MapDraw", 
+                "🎨 MapDraw-Tool gestartet!\n\n"
+                "Nutze es um:\n"
+                "• Karten per Hand zu zeichnen\n"
+                "• Bilder zu laden und zu bearbeiten\n"
+                "• Vintage-Karten zu erstellen\n\n"
+                "Speichere das Bild und importiere es hier als PNG.")
+            
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Konnte MapDraw nicht starten:\n{e}")
