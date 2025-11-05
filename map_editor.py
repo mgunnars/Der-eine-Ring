@@ -97,6 +97,9 @@ class MapEditor(tk.Frame):
         self.brush_size = 1  # Wie viele Tiles der Pinsel malt
         self.is_drawing = False
         
+        # Selected terrain - WICHTIG: Vor UI-Setup initialisieren!
+        self.selected_terrain = "grass"
+        
         # Tile-Size berechnen
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
@@ -178,7 +181,7 @@ class MapEditor(tk.Frame):
                  command=self.open_map_draw).pack(side=tk.RIGHT, padx=20)
         
         # =================== LEFT PANEL - MATERIALS ===================
-        left_frame = tk.Frame(self, bg="#1a1a1a", width=250)
+        left_frame = tk.Frame(self, bg="#1a1a1a", width=300)
         left_frame.pack(side=tk.LEFT, fill=tk.Y)
         left_frame.pack_propagate(False)
         
@@ -246,8 +249,6 @@ class MapEditor(tk.Frame):
         canvas_width = self.width * self.tile_size
         canvas_height = self.height * self.tile_size
         self.canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
-        
-        self.selected_terrain = "grass"
         
         # Koordinaten standardmäßig AUS bei Performance-Mode
         default_coords = not self.performance_mode
@@ -329,46 +330,233 @@ class MapEditor(tk.Frame):
                 f"Tipp: Zoome im Canvas für Details!"
             )
         
+        # Zoom-Level initialisieren
+        self.zoom_level = 1.0
+        self.min_zoom = 0.25
+        self.max_zoom = 4.0
+        
+        # Pan (Verschieben) Variablen
+        self.pan_start_x = 0
+        self.pan_start_y = 0
+        self.is_panning = False
+        
         # Maus-Events
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        
+        # Pan mit mittlerer Maustaste oder Shift+Linksklick
+        self.canvas.bind("<Button-2>", self.start_pan)  # Mittlere Maustaste
+        self.canvas.bind("<B2-Motion>", self.do_pan)
+        self.canvas.bind("<ButtonRelease-2>", self.stop_pan)
+        
+        self.canvas.bind("<Shift-Button-1>", self.start_pan)  # Shift+Linksklick
+        self.canvas.bind("<Shift-B1-Motion>", self.do_pan)
+        self.canvas.bind("<Shift-ButtonRelease-1>", self.stop_pan)
+        
+        # Zoom mit Mausrad (Strg+Scroll)
+        self.canvas.bind("<Control-MouseWheel>", self.on_zoom)
+    
+    def start_pan(self, event):
+        """Startet Pan-Modus"""
+        self.is_panning = True
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+        self.canvas.config(cursor="fleur")  # Verschiebe-Cursor
+    
+    def do_pan(self, event):
+        """Verschiebt das Canvas"""
+        if not self.is_panning:
+            return
+        
+        # Delta berechnen
+        dx = event.x - self.pan_start_x
+        dy = event.y - self.pan_start_y
+        
+        # Canvas scrollen
+        self.canvas.xview_scroll(int(-dx / 10), "units")
+        self.canvas.yview_scroll(int(-dy / 10), "units")
+        
+        # Position aktualisieren
+        self.pan_start_x = event.x
+        self.pan_start_y = event.y
+    
+    def stop_pan(self, event):
+        """Beendet Pan-Modus"""
+        self.is_panning = False
+        self.canvas.config(cursor="")  # Zurück zum Standard-Cursor
+    
+    def on_zoom(self, event):
+        """Zoom mit Strg+Mausrad"""
+        # Zoom-Faktor berechnen
+        if event.delta > 0:
+            scale = 1.1  # Zoom in
+        else:
+            scale = 0.9  # Zoom out
+        
+        new_zoom = self.zoom_level * scale
+        
+        # Limitierung prüfen
+        if new_zoom < self.min_zoom or new_zoom > self.max_zoom:
+            return
+        
+        self.zoom_level = new_zoom
+        
+        # Tile-Größe anpassen
+        self.tile_size = int(self.tile_size * scale)
+        
+        # Grid neu zeichnen
+        self.draw_grid()
+        
+        # Canvas scrollregion aktualisieren
+        canvas_width = self.width * self.tile_size
+        canvas_height = self.height * self.tile_size
+        self.canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
     
     def on_canvas_release(self, event):
         """Maus losgelassen"""
         self.is_drawing = False
     
     def populate_material_list(self):
-        """Füllt die Material-Liste links"""
+        """Füllt die Material-Liste links - gruppiert nach Bundles"""
         # Clear existing
         for widget in self.material_list_inner.winfo_children():
             widget.destroy()
         
-        # Get active materials (filtered by bundles)
-        active_materials = self.get_active_materials()
+        # Get all bundles (sorted)
+        bundles = self.bundle_manager.get_bundle_list()
         
-        # Create material buttons
-        for material_id in sorted(active_materials):
-            material_frame = tk.Frame(self.material_list_inner, bg="#2a2a2a")
-            material_frame.pack(fill=tk.X, pady=2, padx=5)
+        for bundle_id, bundle_data in bundles:
+            self.create_bundle_section(bundle_id, bundle_data)
+    
+    def create_bundle_section(self, bundle_id, bundle_data):
+        """Erstellt eine ein-/ausklappbare Bundle-Sektion"""
+        is_active = self.bundle_manager.is_bundle_active(bundle_id)
+        materials = bundle_data.get("materials", [])
+        icon = bundle_data.get("icon", "📦")
+        name = bundle_data.get("name", bundle_id)
+        is_base = bundle_id == "base"
+        
+        # Bundle Header Frame
+        header_frame = tk.Frame(self.material_list_inner, bg="#1a1a1a", cursor="hand2")
+        header_frame.pack(fill=tk.X, pady=(8, 0), padx=5)
+        
+        # Toggle-Status speichern
+        if not hasattr(self, 'bundle_collapsed'):
+            self.bundle_collapsed = {}
+        
+        is_collapsed = self.bundle_collapsed.get(bundle_id, not is_active)  # Aktive Bundles ausgeklappt
+        
+        # Arrow + Icon + Name + Count
+        arrow = "▼" if not is_collapsed else "▶"
+        header_text = f"{arrow} {icon} {name} ({len(materials)})"
+        
+        header_btn = tk.Button(
+            header_frame,
+            text=header_text,
+            bg="#2a5d8d" if is_active else "#3a3a3a",
+            fg="white",
+            font=("Arial", 10, "bold"),
+            anchor=tk.W,
+            padx=10,
+            pady=5,
+            relief=tk.RAISED if is_active else tk.FLAT,
+            command=lambda: self.toggle_bundle_section(bundle_id)
+        )
+        header_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Activate/Deactivate Button (außer für Base)
+        if not is_base:
+            toggle_text = "✓" if is_active else "○"
+            toggle_btn = tk.Button(
+                header_frame,
+                text=toggle_text,
+                bg="#2a7d2a" if is_active else "#7d2a2a",
+                fg="white",
+                font=("Arial", 10, "bold"),
+                width=3,
+                command=lambda: self.toggle_bundle(bundle_id)
+            )
+            toggle_btn.pack(side=tk.RIGHT, padx=2)
+        
+        # Materials Grid (nur wenn aktiv und nicht collapsed)
+        if is_active and not is_collapsed:
+            materials_grid = tk.Frame(self.material_list_inner, bg="#2a2a2a")
+            materials_grid.pack(fill=tk.BOTH, padx=3, pady=5)
             
-            # Texture preview
-            try:
-                texture = self.texture_renderer.get_texture(material_id, 40, 0)
-                if texture:
-                    photo = ImageTk.PhotoImage(texture)
-                    btn = tk.Button(material_frame, image=photo, bg="#3a3a3a",
-                                   command=lambda m=material_id: self.select_terrain(m),
-                                   width=40, height=40)
-                    btn.image = photo
-                    btn.pack(side=tk.LEFT, padx=5)
-            except:
-                pass
-            
-            # Material name
-            tk.Label(material_frame, text=material_id.replace('_', ' ').title(),
-                    bg="#2a2a2a", fg="white", font=("Arial", 9),
-                    anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            # Grid mit 3 kompakten Spalten
+            col = 0
+            row = 0
+            for material_id in sorted(materials):
+                # Prüfe ob Material existiert
+                try:
+                    texture = self.texture_renderer.get_texture(material_id, 48, 0)
+                    if not texture:
+                        continue
+                except:
+                    continue
+                
+                # Material Button Frame - 2x größer
+                mat_frame = tk.Frame(materials_grid, bg="#3a3a3a", 
+                                    relief=tk.RAISED if material_id == self.selected_terrain else tk.FLAT,
+                                    bd=2, cursor="hand2", width=130, height=140)
+                mat_frame.grid(row=row, column=col, padx=2, pady=2)
+                mat_frame.grid_propagate(False)  # Feste Größe
+                
+                # Click handler
+                def select_material(m=material_id, f=mat_frame):
+                    self.select_terrain(m)
+                    # Highlight
+                    for child in materials_grid.winfo_children():
+                        child.configure(relief=tk.FLAT, bd=1)
+                    f.configure(relief=tk.RAISED, bd=3)
+                
+                mat_frame.bind("<Button-1>", lambda e, m=material_id, f=mat_frame: select_material(m, f))
+                
+                # Preview Image - 2x größer
+                texture_small = texture.resize((100, 100), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(texture_small)
+                img_label = tk.Label(mat_frame, image=photo, bg="#3a3a3a")
+                img_label.image = photo  # Keep reference
+                img_label.pack(pady=(2, 0))
+                img_label.bind("<Button-1>", lambda e, m=material_id, f=mat_frame: select_material(m, f))
+                
+                # Name Label - größer
+                name_text = material_id.replace('_', ' ').title()
+                
+                # Intelligentes Kürzen
+                if len(name_text) > 14:
+                    words = name_text.split()
+                    if len(words) >= 2:
+                        # Erste 2 Wörter, je max 8 Zeichen
+                        line1 = words[0][:8]
+                        line2 = words[1][:8]
+                        name_text = f"{line1}\n{line2}"
+                    else:
+                        # Ein langes Wort in 2 Zeilen
+                        mid = len(name_text) // 2
+                        name_text = f"{name_text[:mid]}\n{name_text[mid:]}"
+                
+                name_label = tk.Label(mat_frame, text=name_text,
+                                     bg="#3a3a3a", fg="white",
+                                     font=("Arial", 9), justify=tk.CENTER,
+                                     wraplength=120)
+                name_label.pack(pady=(2, 1))
+                name_label.bind("<Button-1>", lambda e, m=material_id, f=mat_frame: select_material(m, f))
+                
+                # Grid positioning
+                col += 1
+                if col >= 2:  # 2 Spalten (wegen größeren Karten)
+                    col = 0
+                    row += 1
+    
+    def toggle_bundle_section(self, bundle_id):
+        """Klappt Bundle-Sektion ein/aus"""
+        if not hasattr(self, 'bundle_collapsed'):
+            self.bundle_collapsed = {}
+        
+        self.bundle_collapsed[bundle_id] = not self.bundle_collapsed.get(bundle_id, False)
+        self.populate_material_list()  # Neu zeichnen
     
     def get_active_materials(self):
         """Gibt Liste der aktiven Materialien zurück (gefiltert nach Bundles)"""
@@ -401,8 +589,8 @@ class MapEditor(tk.Frame):
     def select_terrain(self, terrain):
         """Terrain auswählen"""
         self.selected_terrain = terrain
-        # Highlight selected material in list
-        self.populate_material_list()
+        # Update ohne komplettes Neuladen
+        print(f"✓ Material '{terrain}' ausgewählt")
     
     def draw_grid(self):
         """Grid zeichnen"""
@@ -463,6 +651,10 @@ class MapEditor(tk.Frame):
     
     def on_canvas_click(self, event):
         """Mausklick"""
+        # Nicht zeichnen wenn gerade Pan-Modus aktiv ist
+        if self.is_panning:
+            return
+        
         x = int(self.canvas.canvasx(event.x) // self.tile_size)
         y = int(self.canvas.canvasy(event.y) // self.tile_size)
         
@@ -472,6 +664,10 @@ class MapEditor(tk.Frame):
     
     def on_canvas_drag(self, event):
         """Drag"""
+        # Nicht zeichnen wenn gerade Pan-Modus aktiv ist
+        if self.is_panning:
+            return
+        
         x = int(self.canvas.canvasx(event.x) // self.tile_size)
         y = int(self.canvas.canvasy(event.y) // self.tile_size)
         
@@ -937,3 +1133,152 @@ class MapEditor(tk.Frame):
             
         except Exception as e:
             messagebox.showerror("Fehler", f"Konnte MapDraw nicht starten:\n{e}")
+
+
+def ask_canvas_size(parent=None):
+    """Dialog zur Auswahl der Canvas-Größe vor dem Start"""
+    dialog = tk.Toplevel(parent) if parent else tk.Tk()
+    dialog.title("🗺️ Neue Karte erstellen")
+    dialog.geometry("450x500")  # Größer: 400x350 → 450x500
+    dialog.configure(bg="#1a1a1a")
+    dialog.resizable(False, False)
+    
+    if parent:
+        dialog.transient(parent)
+        dialog.grab_set()
+    
+    result = {"width": 50, "height": 50, "confirmed": False}
+    
+    tk.Label(dialog, text="🗺️ Karten-Größe wählen",
+            font=("Arial", 16, "bold"),
+            bg="#1a1a1a", fg="#d4af37").pack(pady=20)
+    
+    # Vorlagen
+    tk.Label(dialog, text="Vorlagen:",
+            bg="#1a1a1a", fg="white",
+            font=("Arial", 10, "bold")).pack(pady=(10, 5))
+    
+    presets_frame = tk.Frame(dialog, bg="#1a1a1a")
+    presets_frame.pack(pady=5)
+    
+    presets = [
+        ("Klein (20×20)", 20, 20),
+        ("Mittel (30×30)", 30, 30),
+        ("Groß (50×50)", 50, 50),
+        ("Riesig (100×100)", 100, 100)
+    ]
+    
+    width_var = tk.IntVar(value=50)
+    height_var = tk.IntVar(value=50)
+    
+    # Tile-Count Anzeige (MUSS VOR set_preset definiert werden!)
+    tile_count_label = tk.Label(dialog, text="",
+                               bg="#1a1a1a", fg="#888",
+                               font=("Arial", 9, "italic"))
+    
+    def update_tile_count():
+        try:
+            w = width_var.get()
+            h = height_var.get()
+            total = w * h
+            tile_count_label.config(text=f"Gesamt: {w}×{h} = {total:,} Tiles".replace(",", "."))
+            
+            # Warnung bei großen Maps
+            if total > 5000:
+                tile_count_label.config(fg="#ff8800")
+            else:
+                tile_count_label.config(fg="#888")
+        except:
+            pass
+    
+    def set_preset(w, h):
+        width_var.set(w)
+        height_var.set(h)
+        update_tile_count()
+    
+    for i, (name, w, h) in enumerate(presets):
+        row = i // 2
+        col = i % 2
+        tk.Button(presets_frame, text=name,
+                 bg="#2a5d8d", fg="white",
+                 font=("Arial", 9),
+                 width=15, pady=5,
+                 command=lambda w=w, h=h: set_preset(w, h)).grid(row=row, column=col, padx=5, pady=3)
+    
+    # Benutzerdefiniert
+    tk.Label(dialog, text="Benutzerdefiniert:",
+            bg="#1a1a1a", fg="white",
+            font=("Arial", 10, "bold")).pack(pady=(15, 5))
+    
+    custom_frame = tk.Frame(dialog, bg="#1a1a1a")
+    custom_frame.pack(pady=5)
+    
+    tk.Label(custom_frame, text="Breite:",
+            bg="#1a1a1a", fg="white",
+            font=("Arial", 9)).grid(row=0, column=0, padx=5)
+    
+    width_spinbox = tk.Spinbox(custom_frame, from_=5, to=200,
+                              textvariable=width_var,
+                              width=8, font=("Arial", 10),
+                              command=update_tile_count)
+    width_spinbox.grid(row=0, column=1, padx=5)
+    width_spinbox.bind("<KeyRelease>", lambda e: update_tile_count())
+    
+    tk.Label(custom_frame, text="Höhe:",
+            bg="#1a1a1a", fg="white",
+            font=("Arial", 9)).grid(row=1, column=0, padx=5, pady=5)
+    
+    height_spinbox = tk.Spinbox(custom_frame, from_=5, to=200,
+                               textvariable=height_var,
+                               width=8, font=("Arial", 10),
+                               command=update_tile_count)
+    height_spinbox.grid(row=1, column=1, padx=5, pady=5)
+    height_spinbox.bind("<KeyRelease>", lambda e: update_tile_count())
+    
+    # Label wird oberhalb bereits erstellt und angezeigt
+    tile_count_label.pack(pady=10)
+    
+    # update_tile_count bereits oben definiert
+    update_tile_count()  # Initial aufrufen
+    
+    # Buttons
+    button_frame = tk.Frame(dialog, bg="#1a1a1a")
+    button_frame.pack(pady=20)
+    
+    def confirm():
+        result["width"] = width_var.get()
+        result["height"] = height_var.get()
+        result["confirmed"] = True
+        if parent:
+            dialog.grab_release()  # WICHTIG: Grab freigeben!
+        dialog.destroy()
+    
+    def cancel():
+        result["confirmed"] = False
+        if parent:
+            dialog.grab_release()  # WICHTIG: Grab freigeben!
+        dialog.destroy()
+    
+    tk.Button(button_frame, text="✅ Erstellen",
+             bg="#2a7d2a", fg="white",
+             font=("Arial", 10, "bold"),
+             padx=20, pady=5,
+             command=confirm).pack(side=tk.LEFT, padx=10)
+    
+    tk.Button(button_frame, text="❌ Abbrechen",
+             bg="#7d2a2a", fg="white",
+             font=("Arial", 10, "bold"),
+             padx=20, pady=5,
+             command=cancel).pack(side=tk.LEFT, padx=10)
+    
+    # Auch beim X-Button Grab freigeben
+    def on_closing():
+        result["confirmed"] = False
+        if parent:
+            dialog.grab_release()
+        dialog.destroy()
+    
+    dialog.protocol("WM_DELETE_WINDOW", on_closing)
+    
+    dialog.wait_window()
+    return result

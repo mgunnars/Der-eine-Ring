@@ -76,7 +76,21 @@ class DerEineRingProApp(tk.Tk):
     def start_editor(self):
         """Editor-Fenster öffnen"""
         try:
-            from map_editor import MapEditor
+            from map_editor import MapEditor, ask_canvas_size
+            
+            # Wenn keine Map geladen ist, frage nach Größe
+            if not self.current_map_data:
+                size = ask_canvas_size(self)
+                
+                if not size["confirmed"]:
+                    return  # Benutzer hat abgebrochen
+                
+                width = size["width"]
+                height = size["height"]
+            else:
+                # Map bereits geladen, nutze deren Größe
+                width = self.current_map_data.get("width", 50)
+                height = self.current_map_data.get("height", 50)
             
             editor_win = tk.Toplevel(self)
             editor_win.title("Map Editor - Der Eine Ring")
@@ -84,7 +98,7 @@ class DerEineRingProApp(tk.Tk):
             editor_win.configure(bg="#1a1a1a")
             
             # MapEditor mit aktuellen Daten oder neu
-            editor = MapEditor(editor_win, width=50, height=50, map_data=self.current_map_data)
+            editor = MapEditor(editor_win, width=width, height=height, map_data=self.current_map_data)
             editor.pack(fill=tk.BOTH, expand=True)
             
             self.current_editor = editor
