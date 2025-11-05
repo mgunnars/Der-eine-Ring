@@ -128,51 +128,30 @@ class MapEditor(tk.Frame):
             self.map[y][x] = terrain_type
     
     def setup_ui(self):
-        """UI-Elemente erstellen"""
-        # Bundle-Switcher-Frame (GANZ OBEN)
-        bundle_frame = tk.Frame(self, bg="#0a0a0a", height=45)
-        bundle_frame.pack(side=tk.TOP, fill=tk.X)
+        """UI-Elemente erstellen - Layout wie MapDraw"""
         
-        tk.Label(bundle_frame, text="📦", font=("Arial", 14),
-                bg="#0a0a0a", fg="white").pack(side=tk.LEFT, padx=(10, 5))
+        # =================== TOP TOOLBAR ===================
+        top_frame = tk.Frame(self, bg="#1a1a1a", height=60)
+        top_frame.pack(side=tk.TOP, fill=tk.X)
+        top_frame.pack_propagate(False)
         
-        tk.Label(bundle_frame, text="Material-Bundles:", font=("Arial", 10, "bold"),
-                bg="#0a0a0a", fg="#888").pack(side=tk.LEFT, padx=5)
-        
-        # Bundle-Buttons dynamisch erstellen
-        self.bundle_button_frame = tk.Frame(bundle_frame, bg="#0a0a0a")
-        self.bundle_button_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
-        
-        self.bundle_buttons = {}
-        self.refresh_bundle_buttons()
-        
-        # Bundle-Manager öffnen
-        tk.Button(bundle_frame, text="⚙️ Verwalten",
-                 bg="#3a3a3a", fg="white", font=("Arial", 9),
-                 padx=10, pady=2, command=self.open_bundle_manager).pack(side=tk.RIGHT, padx=10)
-        
-        # Material-Leiste (gefiltert nach aktiven Bundles)
-        self.material_bar = MaterialBar(
-            self, 
-            self.texture_renderer,
-            on_material_select=self.select_terrain,
-            tile_size=self.tile_size
-        )
-        self.material_bar.pack(side=tk.TOP, fill=tk.X)
-        
-        # Initial: Material-Bar nach Bundles filtern
-        self.filter_material_bar()
-        
-        # Toolbar
-        toolbar = tk.Frame(self, bg="#1a1a1a", height=50)
-        toolbar.pack(side=tk.TOP, fill=tk.X)
-        
-        tk.Label(toolbar, text="🗺️ Map Editor", font=("Arial", 16, "bold"), 
+        tk.Label(top_frame, text="🗺️ Map Editor", font=("Arial", 16, "bold"), 
                 bg="#1a1a1a", fg="white").pack(side=tk.LEFT, padx=20, pady=10)
         
-        # === DRAW MODE SWITCHER ===
-        mode_frame = tk.LabelFrame(toolbar, text="Modus", bg="#1a1a1a", fg="white")
-        mode_frame.pack(side=tk.LEFT, padx=20)
+        # File Operations
+        file_frame = tk.LabelFrame(top_frame, text="📁 Datei", bg="#1a1a1a", fg="white", font=("Arial", 9))
+        file_frame.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.Y)
+        
+        tk.Button(file_frame, text="💾 Speichern", bg="#2a7d2a", fg="white",
+                 font=("Arial", 9), command=self.save_map).pack(side=tk.LEFT, padx=2)
+        tk.Button(file_frame, text="📁 Laden", bg="#2a5d8d", fg="white",
+                 font=("Arial", 9), command=self.load_map).pack(side=tk.LEFT, padx=2)
+        tk.Button(file_frame, text="📤 SVG", bg="#2a5d7d", fg="white",
+                 font=("Arial", 9), command=self.export_as_svg).pack(side=tk.LEFT, padx=2)
+        
+        # Draw Mode
+        mode_frame = tk.LabelFrame(top_frame, text="🖌️ Modus", bg="#1a1a1a", fg="white", font=("Arial", 9))
+        mode_frame.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.Y)
         
         tk.Radiobutton(mode_frame, text="📍 Tile", variable=self.draw_mode, value="tile",
                       bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
@@ -182,45 +161,71 @@ class MapEditor(tk.Frame):
                       bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
                       font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
         
-        # Brush Size Slider (nur sichtbar im Brush-Mode)
-        brush_frame = tk.LabelFrame(toolbar, text="Pinselgröße", bg="#1a1a1a", fg="white")
-        brush_frame.pack(side=tk.LEFT, padx=10)
-        
+        # Brush Size
         self.brush_size_var = tk.IntVar(value=1)
-        brush_scale = tk.Scale(brush_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+        tk.Label(mode_frame, text="Größe:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=(10, 2))
+        brush_scale = tk.Scale(mode_frame, from_=1, to=10, orient=tk.HORIZONTAL,
                               variable=self.brush_size_var, 
                               command=lambda v: setattr(self, 'brush_size', int(v)),
                               bg="#2a2a2a", fg="white", troughcolor="#1a1a1a",
-                              highlightthickness=0, length=100)
-        brush_scale.pack(side=tk.LEFT, padx=5)
+                              highlightthickness=0, length=80, width=10)
+        brush_scale.pack(side=tk.LEFT, padx=2)
         
-        # Buttons
-        file_frame = tk.Frame(toolbar, bg="#1a1a1a")
-        file_frame.pack(side=tk.RIGHT, padx=10)
+        # MapDraw Button
+        tk.Button(top_frame, text="🎨 MapDraw", bg="#8d5a2a", fg="white",
+                 font=("Arial", 10, "bold"), padx=15, pady=5,
+                 command=self.open_map_draw).pack(side=tk.RIGHT, padx=20)
         
-        tk.Button(file_frame, text="🎨 MapDraw", bg="#8d5a2a", fg="white",
-                 font=("Arial", 10), padx=10, pady=5,
-                 command=self.open_map_draw).pack(side=tk.LEFT, padx=5)
+        # =================== LEFT PANEL - MATERIALS ===================
+        left_frame = tk.Frame(self, bg="#1a1a1a", width=250)
+        left_frame.pack(side=tk.LEFT, fill=tk.Y)
+        left_frame.pack_propagate(False)
         
-        tk.Button(file_frame, text="💾 Speichern", bg="#2a7d2a", fg="white",
-                 font=("Arial", 10), padx=10, pady=5,
-                 command=self.save_map).pack(side=tk.LEFT, padx=5)
+        tk.Label(left_frame, text="🎨 Materialien", bg="#1a1a1a", fg="white",
+                font=("Arial", 12, "bold")).pack(pady=10)
         
-        tk.Button(file_frame, text="📁 Laden", bg="#2a5d8d", fg="white",
-                 font=("Arial", 10), padx=10, pady=5,
-                 command=self.load_map).pack(side=tk.LEFT, padx=5)
+        # Bundle Selector
+        bundle_selector_frame = tk.Frame(left_frame, bg="#1a1a1a")
+        bundle_selector_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         
-        tk.Button(file_frame, text="📤 Als SVG exportieren", bg="#2a5d7d", fg="white",
-                 font=("Arial", 10), padx=10, pady=5,
-                 command=self.export_as_svg).pack(side=tk.LEFT, padx=5)
+        tk.Label(bundle_selector_frame, text="� Bundle:", bg="#1a1a1a", fg="#888",
+                font=("Arial", 9)).pack(side=tk.LEFT)
         
-        tk.Button(file_frame, text="🎨 Material-Manager", bg="#5d2a7d", fg="white",
-                 font=("Arial", 10), padx=10, pady=5,
-                 command=self.open_material_manager).pack(side=tk.LEFT, padx=5)
+        tk.Button(bundle_selector_frame, text="⚙️", bg="#3a3a3a", fg="white",
+                 font=("Arial", 8), width=3, command=self.open_bundle_manager).pack(side=tk.RIGHT)
         
-        # Canvas
+        # Bundle buttons
+        self.bundle_button_frame = tk.Frame(left_frame, bg="#1a1a1a")
+        self.bundle_button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        self.bundle_buttons = {}
+        self.refresh_bundle_buttons()
+        
+        # Material List (scrollable)
+        material_list_frame = tk.Frame(left_frame, bg="#1a1a1a")
+        material_list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        material_canvas = tk.Canvas(material_list_frame, bg="#2a2a2a", highlightthickness=0)
+        material_scrollbar = tk.Scrollbar(material_list_frame, orient=tk.VERTICAL, 
+                                         command=material_canvas.yview)
+        
+        self.material_list_inner = tk.Frame(material_canvas, bg="#2a2a2a")
+        
+        material_canvas.create_window((0, 0), window=self.material_list_inner, anchor=tk.NW)
+        material_canvas.configure(yscrollcommand=material_scrollbar.set)
+        
+        material_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        material_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.material_list_canvas = material_canvas
+        self.material_list_inner.bind("<Configure>", 
+            lambda e: material_canvas.configure(scrollregion=material_canvas.bbox("all")))
+        
+        self.populate_material_list()
+        
+        # =================== CANVAS - CENTER ===================
         canvas_frame = tk.Frame(self, bg="#2a2a2a")
-        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         self.canvas = tk.Canvas(canvas_frame, bg="#1a1a1a", highlightthickness=0)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -248,14 +253,67 @@ class MapEditor(tk.Frame):
         default_coords = not self.performance_mode
         self.show_coordinates = tk.BooleanVar(value=default_coords)
         
-        # Koordinaten-Toggle
-        coord_check = tk.Checkbutton(toolbar, text="📍 Koordinaten", 
-                                     variable=self.show_coordinates,
-                                     bg="#1a1a1a", fg="white",
-                                     selectcolor="#2a2a2a",
-                                     font=("Arial", 9),
-                                     command=self.draw_grid)
-        coord_check.pack(side=tk.RIGHT, padx=10)
+        # =================== RIGHT PANEL - SETTINGS ===================
+        right_frame = tk.Frame(self, bg="#1a1a1a", width=200)
+        right_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        right_frame.pack_propagate(False)
+        
+        tk.Label(right_frame, text="⚙️ Einstellungen", bg="#1a1a1a", fg="white",
+                font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Map Info
+        info_frame = tk.LabelFrame(right_frame, text="📊 Karten-Info", bg="#1a1a1a", 
+                                   fg="white", font=("Arial", 9, "bold"))
+        info_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(info_frame, text=f"Größe: {self.width}×{self.height}", 
+                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
+        tk.Label(info_frame, text=f"Tiles: {self.total_tiles}", 
+                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
+        tk.Label(info_frame, text=f"Tile-Größe: {self.tile_size}px", 
+                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
+        
+        if self.performance_mode:
+            tk.Label(info_frame, text="⚡ Performance-Mode", 
+                    bg="#1a1a1a", fg="#ff8800", font=("Arial", 9, "bold")).pack(pady=2)
+        
+        # Display Options
+        display_frame = tk.LabelFrame(right_frame, text="👁️ Anzeige", bg="#1a1a1a", 
+                                      fg="white", font=("Arial", 9, "bold"))
+        display_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Checkbutton(display_frame, text="Koordinaten", variable=self.show_coordinates,
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 9), command=self.draw_grid).pack(anchor=tk.W, padx=5, pady=2)
+        
+        # River Direction
+        river_frame = tk.LabelFrame(right_frame, text="🌊 Fluss-Richtung", bg="#1a1a1a",
+                                    fg="white", font=("Arial", 9, "bold"))
+        river_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Radiobutton(river_frame, text="Aus", variable=self.river_direction_mode, value="disabled",
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 8), command=self.draw_grid).pack(anchor=tk.W, padx=5)
+        
+        for direction in ["↑ Norden", "→ Osten", "↓ Süden", "← Westen"]:
+            dir_val = direction.split()[1].lower()
+            tk.Radiobutton(river_frame, text=direction, 
+                          variable=self.river_direction_mode, value=dir_val,
+                          bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                          font=("Arial", 8), command=self.draw_grid).pack(anchor=tk.W, padx=5)
+        
+        # Tools
+        tools_frame = tk.LabelFrame(right_frame, text="🛠️ Werkzeuge", bg="#1a1a1a",
+                                    fg="white", font=("Arial", 9, "bold"))
+        tools_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Button(tools_frame, text="🎨 Material-Manager", bg="#5d2a7d", fg="white",
+                 font=("Arial", 9), width=18,
+                 command=self.open_material_manager).pack(pady=3, padx=5)
+        
+        tk.Button(tools_frame, text="🖼️ Vorschau", bg="#2a5d8d", fg="white",
+                 font=("Arial", 9), width=18,
+                 command=self.show_preview).pack(pady=3, padx=5)
         
         self.draw_grid()
         
@@ -270,7 +328,6 @@ class MapEditor(tk.Frame):
                 f"• Rendering optimiert\n\n"
                 f"Tipp: Zoome im Canvas für Details!"
             )
-            messagebox.showinfo("Performance-Mode", info_msg)
         
         # Maus-Events
         self.canvas.bind("<Button-1>", self.on_canvas_click)
@@ -281,13 +338,77 @@ class MapEditor(tk.Frame):
         """Maus losgelassen"""
         self.is_drawing = False
     
+    def populate_material_list(self):
+        """Füllt die Material-Liste links"""
+        # Clear existing
+        for widget in self.material_list_inner.winfo_children():
+            widget.destroy()
+        
+        # Get active materials (filtered by bundles)
+        active_materials = self.get_active_materials()
+        
+        # Create material buttons
+        for material_id in sorted(active_materials):
+            material_frame = tk.Frame(self.material_list_inner, bg="#2a2a2a")
+            material_frame.pack(fill=tk.X, pady=2, padx=5)
+            
+            # Texture preview
+            try:
+                texture = self.texture_renderer.get_texture(material_id, 40, 0)
+                if texture:
+                    photo = ImageTk.PhotoImage(texture)
+                    btn = tk.Button(material_frame, image=photo, bg="#3a3a3a",
+                                   command=lambda m=material_id: self.select_terrain(m),
+                                   width=40, height=40)
+                    btn.image = photo
+                    btn.pack(side=tk.LEFT, padx=5)
+            except:
+                pass
+            
+            # Material name
+            tk.Label(material_frame, text=material_id.replace('_', ' ').title(),
+                    bg="#2a2a2a", fg="white", font=("Arial", 9),
+                    anchor=tk.W).pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
+    def get_active_materials(self):
+        """Gibt Liste der aktiven Materialien zurück (gefiltert nach Bundles)"""
+        active_materials = set()
+        
+        # Base materials immer aktiv
+        active_materials.update(["grass", "water", "forest", "mountain", "sand", 
+                                "stone", "snow", "village", "empty"])
+        
+        # Materials aus aktiven Bundles
+        for bundle_id, bundle in self.bundle_manager.bundles.items():
+            if bundle.get("active", False):
+                materials = bundle.get("materials", [])
+                active_materials.update(materials)
+        
+        # Custom materials aus Renderer
+        if hasattr(self.texture_renderer, 'custom_textures'):
+            active_materials.update(self.texture_renderer.custom_textures.keys())
+        
+        return active_materials
+    
+    def filter_material_bar(self):
+        """Filtert Material-Bar nach aktiven Bundles (für Kompatibilität)"""
+        # Update material list instead
+        if hasattr(self, 'material_list_inner'):
+            self.populate_material_list()
+    
     def open_material_manager(self):
         """Öffnet den Material-Manager"""
         MaterialManagerWindow(self, self.texture_renderer)
     
+    def show_preview(self):
+        """Zeigt eine Vorschau der Karte"""
+        messagebox.showinfo("Vorschau", "Vorschau-Funktion noch nicht implementiert")
+    
     def select_terrain(self, terrain):
         """Terrain auswählen"""
         self.selected_terrain = terrain
+        # Highlight selected material in list
+        self.populate_material_list()
     
     def draw_grid(self):
         """Grid zeichnen"""
@@ -818,20 +939,11 @@ class MapEditor(tk.Frame):
             
             if not os.path.exists(editor_path):
                 messagebox.showerror("Fehler", 
-                    "hand_drawn_map_editor.py nicht gefunden!\n\n"
-                    "Das MapDraw-Tool muss zuerst installiert werden.")
+                    "hand_drawn_map_editor.py nicht gefunden!")
                 return
             
             # Starte als separater Prozess
             subprocess.Popen([sys.executable, editor_path])
-            
-            messagebox.showinfo("MapDraw", 
-                "🎨 MapDraw-Tool gestartet!\n\n"
-                "Nutze es um:\n"
-                "• Karten per Hand zu zeichnen\n"
-                "• Bilder zu laden und zu bearbeiten\n"
-                "• Vintage-Karten zu erstellen\n\n"
-                "Speichere das Bild und importiere es hier als PNG.")
             
         except Exception as e:
             messagebox.showerror("Fehler", f"Konnte MapDraw nicht starten:\n{e}")
