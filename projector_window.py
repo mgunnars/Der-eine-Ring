@@ -998,14 +998,46 @@ class ProjectorWindow(tk.Toplevel):
                 lighting_cropped = lighting_full.crop((crop_x, crop_y, full_width, full_height))
                 lighting_viewport.paste(lighting_cropped, (paste_x, paste_y))
             
-            # Composite Lighting über Map (mit Darkness-Layer)
+            # ═══════════════════════════════════════════════════════════
+            # COMPOSITE LIGHTING: TAG-MODUS = MULTIPLY, NACHT = ALPHA
+            # ═══════════════════════════════════════════════════════════
             from PIL import ImageChops
             if lighting_viewport.size == viewport_img.size:
-                viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
+                # TAG-MODUS: Multiply-Blend für physikalisch korrekte Schatten
+                if self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons:
+                    print("🌞 SVG TAG-MODUS: Verwende Multiply-Blend")
+                    
+                    # Separiere RGB und Alpha
+                    lighting_rgb = lighting_viewport.convert('RGB')
+                    lighting_alpha = lighting_viewport.split()[3]
+                    
+                    # Konvertiere viewport zu RGB
+                    viewport_rgb = viewport_img.convert('RGB')
+                    
+                    # MULTIPLY: Verdunkelt die Map (wie echte Schatten)
+                    darkened_map = ImageChops.multiply(viewport_rgb, lighting_rgb)
+                    darkened_map = darkened_map.convert('RGBA')
+                    
+                    # Wende Multiply nur in Polygon-Bereichen an
+                    viewport_img = Image.composite(darkened_map, viewport_img, lighting_alpha)
+                else:
+                    # NACHT-MODUS: Normales Alpha-Composite
+                    print("🌙 SVG NACHT-MODUS: Verwende Alpha-Composite")
+                    viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
             else:
                 # Fallback: Resize Lighting-Viewport
                 lighting_viewport = lighting_viewport.resize(viewport_img.size, Image.LANCZOS)
-                viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
+                
+                # Auch hier: Tag-Modus Check
+                if self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons:
+                    lighting_rgb = lighting_viewport.convert('RGB')
+                    lighting_alpha = lighting_viewport.split()[3]
+                    viewport_rgb = viewport_img.convert('RGB')
+                    darkened_map = ImageChops.multiply(viewport_rgb, lighting_rgb)
+                    darkened_map = darkened_map.convert('RGBA')
+                    viewport_img = Image.composite(darkened_map, viewport_img, lighting_alpha)
+                else:
+                    viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
         elif not self.lighting_enabled:
             print(f"⚠️ Lighting disabled")
         elif not self.lighting_engine.lights:

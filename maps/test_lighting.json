@@ -1,6 +1,6 @@
 {
   "version": "1.2",
-  "created": "2025-11-18T19:50:38.447254",
+  "created": "2025-11-18T20:07:16.744117",
   "width": 32,
   "height": 23,
   "tiles": [
@@ -115,42 +115,6 @@
       "grass",
       "grass",
       "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
       "torch",
       "grass",
       "grass",
@@ -172,38 +136,6 @@
       "grass",
       "grass",
       "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
       "grass",
       "grass",
       "grass"
@@ -418,6 +350,35 @@
       "grass",
       "grass",
       "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
       "grass",
       "grass",
       "grass",
@@ -441,6 +402,11 @@
       "grass",
       "grass",
       "candle",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
       "grass",
       "grass",
       "grass",
@@ -562,6 +528,40 @@
       "grass",
       "grass",
       "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "window",
       "grass",
       "grass",
       "grass",
@@ -828,8 +828,8 @@
   "lighting": {
     "lights": [
       {
-        "x": 10,
-        "y": 15,
+        "x": 12,
+        "y": 16,
         "radius": 10,
         "color": [
           220,
@@ -841,8 +841,21 @@
         "light_type": "window"
       },
       {
-        "x": 27,
-        "y": 12,
+        "x": 10,
+        "y": 14,
+        "radius": 10,
+        "color": [
+          220,
+          235,
+          255
+        ],
+        "intensity": 0.7,
+        "flicker": false,
+        "light_type": "window"
+      },
+      {
+        "x": 22,
+        "y": 11,
         "radius": 4,
         "color": [
           255,
@@ -854,8 +867,8 @@
         "light_type": "candle"
       },
       {
-        "x": 10,
-        "y": 4,
+        "x": 8,
+        "y": 3,
         "radius": 7,
         "color": [
           255,
@@ -879,12 +892,80 @@
     "darkness_polygons": [
       [
         [
-          30,
-          0
+          18,
+          2
+        ],
+        [
+          18,
+          5
+        ],
+        [
+          19,
+          7
+        ],
+        [
+          19,
+          7
+        ],
+        [
+          20,
+          8
+        ],
+        [
+          20,
+          8
+        ],
+        [
+          21,
+          8
+        ],
+        [
+          21,
+          9
+        ],
+        [
+          21,
+          9
+        ],
+        [
+          22,
+          9
+        ],
+        [
+          22,
+          10
+        ],
+        [
+          23,
+          10
+        ],
+        [
+          24,
+          10
+        ],
+        [
+          25,
+          10
+        ],
+        [
+          27,
+          10
+        ],
+        [
+          27,
+          10
+        ],
+        [
+          28,
+          10
         ],
         [
           29,
-          8
+          10
+        ],
+        [
+          29,
+          10
         ],
         [
           29,
@@ -892,19 +973,47 @@
         ],
         [
           29,
+          11
+        ],
+        [
+          29,
+          12
+        ],
+        [
+          29,
+          12
+        ],
+        [
+          29,
           13
         ],
         [
-          28,
+          29,
           14
+        ],
+        [
+          29,
+          14
+        ],
+        [
+          29,
+          15
         ],
         [
           28,
           15
         ],
         [
-          27,
+          28,
           16
+        ],
+        [
+          28,
+          16
+        ],
+        [
+          27,
+          17
         ],
         [
           26,
@@ -915,19 +1024,67 @@
           17
         ],
         [
+          25,
+          17
+        ],
+        [
+          25,
+          17
+        ],
+        [
+          25,
+          18
+        ],
+        [
           24,
           18
         ],
         [
+          24,
+          19
+        ],
+        [
           23,
-          18
+          19
+        ],
+        [
+          22,
+          19
+        ],
+        [
+          21,
+          19
         ],
         [
           20,
-          18
+          19
+        ],
+        [
+          20,
+          19
+        ],
+        [
+          19,
+          19
         ],
         [
           18,
+          19
+        ],
+        [
+          17,
+          18
+        ],
+        [
+          17,
+          18
+        ],
+        [
+          16,
+          18
+        ],
+        [
+          15,
           18
         ],
         [
@@ -936,6 +1093,22 @@
         ],
         [
           13,
+          17
+        ],
+        [
+          13,
+          17
+        ],
+        [
+          13,
+          17
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          11,
           16
         ],
         [
@@ -947,11 +1120,19 @@
           14
         ],
         [
-          8,
-          12
+          9,
+          13
         ],
         [
           7,
+          12
+        ],
+        [
+          6,
+          12
+        ],
+        [
+          5,
           12
         ],
         [
@@ -959,7 +1140,7 @@
           11
         ],
         [
-          3,
+          2,
           11
         ],
         [
@@ -968,43 +1149,119 @@
         ],
         [
           1,
+          11
+        ],
+        [
+          1,
+          10
+        ],
+        [
+          1,
+          9
+        ],
+        [
+          1,
+          8
+        ],
+        [
+          0,
+          7
+        ],
+        [
+          0,
           6
         ],
         [
-          1,
-          3
+          0,
+          5
         ],
         [
           1,
-          1
+          5
         ],
         [
-          4,
-          1
+          3,
+          5
+        ],
+        [
+          5,
+          5
+        ],
+        [
+          6,
+          5
         ],
         [
           7,
+          5
+        ],
+        [
+          7,
+          5
+        ],
+        [
+          8,
+          3
+        ],
+        [
+          8,
+          3
+        ],
+        [
+          8,
+          2
+        ],
+        [
+          9,
           1
+        ],
+        [
+          9,
+          1
+        ],
+        [
+          11,
+          2
+        ],
+        [
+          11,
+          3
+        ],
+        [
+          10,
+          4
+        ],
+        [
+          11,
+          3
+        ],
+        [
+          11,
+          2
         ],
         [
           12,
-          1
+          2
         ],
         [
-          19,
-          1
+          13,
+          2
         ],
         [
-          23,
-          1
+          14,
+          2
         ],
         [
-          28,
-          0
+          14,
+          3
         ],
         [
-          30,
-          0
+          16,
+          2
+        ],
+        [
+          18,
+          2
         ]
       ]
     ]
