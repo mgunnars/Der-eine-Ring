@@ -17,6 +17,7 @@ from material_bundle_manager import MaterialBundleManager
 from layer_manager import LayerManager, LayerPanel
 from advanced_drawing_tools import BezierCurveTool, PolygonTool, TextTool, TransformTool
 from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS
+from map_editor_extensions import SelectTool, ContextPanel, SmoothPolygonDrawer, GeometryTools
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
@@ -124,6 +125,10 @@ class MapEditor(tk.Frame):
         # === PROFESSIONAL DRAWING TOOLS ===
         self.active_tool = tk.StringVar(value="brush")  # brush, fill, eyedropper, eraser, rectangle, circle, line, select, curve, polygon, text, light
         self.shape_tool = tk.StringVar(value="rectangle")  # rectangle, circle, line
+        
+        # === OBJECT SELECTION ===
+        self.selected_light = None  # Index der ausgewählten Lichtquelle
+        self.selected_polygon = None  # Index des ausgewählten Polygons
         self.fill_connected_only = tk.BooleanVar(value=True)  # Nur verbundene Tiles füllen
         self.symmetry_mode = tk.BooleanVar(value=False)  # Symmetrisches Zeichnen
         self.symmetry_axis = tk.StringVar(value="vertical")  # vertical, horizontal, both
@@ -149,6 +154,12 @@ class MapEditor(tk.Frame):
         self.polygon_tool = PolygonTool()
         self.text_tool = TextTool()
         self.transform_tool = TransformTool()
+        
+        # NEUE EDITOR-ERWEITERUNGEN
+        self.select_tool = SelectTool(self)
+        self.smooth_polygon_drawer = SmoothPolygonDrawer()
+        self.geometry_tools = GeometryTools()
+        self.context_panel = None  # Wird im UI setup erstellt
         
         # Lighting System
         self.lighting_engine = LightingEngine()
@@ -338,22 +349,41 @@ class MapEditor(tk.Frame):
                  command=self.open_map_draw).pack(side=tk.RIGHT, padx=20)
         
         # =================== LEFT PANEL - MATERIALS ===================
-        left_frame = tk.Frame(self, bg="#1a1a1a", width=300)
+        left_frame = tk.Frame(self, bg="#1a1a1a", width=320)
         left_frame.pack(side=tk.LEFT, fill=tk.Y)
         left_frame.pack_propagate(False)
         
-        tk.Label(left_frame, text="🎨 Materialien", bg="#1a1a1a", fg="white",
-                font=("Arial", 12, "bold")).pack(pady=10)
+        # Header mit Suche
+        header_frame = tk.Frame(left_frame, bg="#1a1a1a")
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Bundle Selector
+        tk.Label(header_frame, text="🎨 Materialien", bg="#1a1a1a", fg="white",
+                font=("Arial", 12, "bold")).pack(anchor=tk.W)
+        
+        # Suchfeld
+        search_frame = tk.Frame(left_frame, bg="#1a1a1a")
+        search_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        
+        self.material_search_var = tk.StringVar()
+        self.material_search_var.trace('w', lambda *args: self.filter_materials())
+        
+        search_entry = tk.Entry(search_frame, textvariable=self.material_search_var,
+                               bg="#2a2a2a", fg="white", insertbackground="white",
+                               font=("Arial", 10), relief=tk.FLAT)
+        search_entry.pack(fill=tk.X, ipady=5)
+        
+        tk.Label(search_frame, text="🔍 Suchen...", bg="#1a1a1a", fg="#666",
+                font=("Arial", 8)).pack(anchor=tk.W, pady=2)
+        
+        # Bundle Selector (kompakter)
         bundle_selector_frame = tk.Frame(left_frame, bg="#1a1a1a")
-        bundle_selector_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        bundle_selector_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
         
-        tk.Label(bundle_selector_frame, text="� Bundle:", bg="#1a1a1a", fg="#888",
-                font=("Arial", 9)).pack(side=tk.LEFT)
+        tk.Label(bundle_selector_frame, text="📦", bg="#1a1a1a", fg="#888",
+                font=("Arial", 9)).pack(side=tk.LEFT, padx=2)
         
-        tk.Button(bundle_selector_frame, text="⚙️", bg="#3a3a3a", fg="white",
-                 font=("Arial", 8), width=3, command=self.open_bundle_manager).pack(side=tk.RIGHT)
+        tk.Button(bundle_selector_frame, text="⚙️ Bundles", bg="#3a3a3a", fg="white",
+                 font=("Arial", 8), command=self.open_bundle_manager).pack(side=tk.RIGHT)
         
         # Bundle buttons
         self.bundle_button_frame = tk.Frame(left_frame, bg="#1a1a1a")
@@ -411,12 +441,39 @@ class MapEditor(tk.Frame):
         default_coords = not self.performance_mode
         self.show_coordinates = tk.BooleanVar(value=default_coords)
         
+        # =================== CONTEXT PANEL (dynamisch) ===================
+        # Wird rechts neben right_panel eingeblendet wenn Objekt ausgewählt
+        self.context_panel = ContextPanel(self)
+        # Panel-Callbacks werden in show_light_context/show_polygon_context gesetzt
+        
         # =================== RIGHT PANEL - SETTINGS ===================
-        right_outer = tk.Frame(self, bg="#1a1a1a", width=200)
+        right_outer = tk.Frame(self, bg="#1a1a1a", width=280)
         right_outer.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
         right_outer.pack_propagate(False)
         
-        # Scrollbarer Bereich für alle Einstellungen
+        # Tabs für bessere Organisation
+        tab_header = tk.Frame(right_outer, bg="#1a1a1a", height=40)
+        tab_header.pack(side=tk.TOP, fill=tk.X)
+        tab_header.pack_propagate(False)
+        
+        self.active_tab = tk.StringVar(value="info")
+        self.tab_buttons = {}
+        
+        tab_defs = [
+            ("📊", "info", "Info"),
+            ("🎨", "layers", "Layers"),
+            ("💡", "lighting", "Licht"),
+            ("⚙️", "settings", "Settings")
+        ]
+        
+        for icon, tab_id, label in tab_defs:
+            btn = tk.Button(tab_header, text=f"{icon}", bg="#2a2a2a", fg="white",
+                          font=("Arial", 10), relief=tk.FLAT, width=4,
+                          command=lambda t=tab_id: self.switch_tab(t))
+            btn.pack(side=tk.LEFT, padx=2, pady=5, fill=tk.BOTH, expand=True)
+            self.tab_buttons[tab_id] = btn
+        
+        # Scrollbarer Bereich für Tab-Inhalte
         right_canvas = tk.Canvas(right_outer, bg="#1a1a1a", highlightthickness=0)
         right_scrollbar = tk.Scrollbar(right_outer, orient=tk.VERTICAL, command=right_canvas.yview)
         right_frame = tk.Frame(right_canvas, bg="#1a1a1a")
@@ -428,208 +485,164 @@ class MapEditor(tk.Frame):
         right_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Mausrad-Scrolling
-        def _on_mousewheel(event):
-            try:
-                right_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-            except tk.TclError:
-                pass  # Canvas wurde bereits zerstört
-        right_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        # Speichere Referenzen
+        self.right_canvas = right_canvas
+        self.right_frame_container = right_frame
         
-        tk.Label(right_frame, text="⚙️ Einstellungen", bg="#1a1a1a", fg="white",
-                font=("Arial", 12, "bold")).pack(pady=10)
+        # Tab-Container erstellen (werden per switch_tab() ein/ausgeblendet)
+        self.tab_frames = {}
         
-        # Map Info
-        info_frame = tk.LabelFrame(right_frame, text="📊 Karten-Info", bg="#1a1a1a", 
-                                   fg="white", font=("Arial", 9, "bold"))
-        info_frame.pack(fill=tk.X, padx=10, pady=10)
+        # INFO TAB
+        info_tab = tk.Frame(right_frame, bg="#1a1a1a")
+        self.tab_frames["info"] = info_tab
         
-        tk.Label(info_frame, text=f"Größe: {self.width}×{self.height}", 
-                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
-        tk.Label(info_frame, text=f"Tiles: {self.total_tiles}", 
-                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
-        tk.Label(info_frame, text=f"Tile-Größe: {self.tile_size}px", 
-                bg="#1a1a1a", fg="#aaa", font=("Arial", 9)).pack(pady=2)
+        tk.Label(info_tab, text="📊 Karten-Info", bg="#1a1a1a", fg="white",
+                font=("Arial", 11, "bold")).pack(pady=(10, 5), anchor=tk.W, padx=10)
+        
+        info_grid = tk.Frame(info_tab, bg="#1a1a1a")
+        info_grid.pack(fill=tk.X, padx=10, pady=5)
+        
+        info_items = [
+            ("Größe:", f"{self.width}×{self.height}"),
+            ("Tiles:", f"{self.total_tiles}"),
+            ("Tile-Größe:", f"{self.tile_size}px"),
+        ]
+        
+        for i, (label, value) in enumerate(info_items):
+            tk.Label(info_grid, text=label, bg="#1a1a1a", fg="#888",
+                    font=("Arial", 9)).grid(row=i, column=0, sticky=tk.W, pady=2)
+            tk.Label(info_grid, text=value, bg="#1a1a1a", fg="white",
+                    font=("Arial", 9, "bold")).grid(row=i, column=1, sticky=tk.W, padx=10, pady=2)
         
         if self.performance_mode:
-            tk.Label(info_frame, text="⚡ Performance-Mode", 
-                    bg="#1a1a1a", fg="#ff8800", font=("Arial", 9, "bold")).pack(pady=2)
+            tk.Label(info_tab, text="⚡ Performance-Mode aktiv", 
+                    bg="#1a1a1a", fg="#ff8800", font=("Arial", 9, "bold")).pack(pady=5, padx=10, anchor=tk.W)
         
-        # Layer Panel - NEU!
-        layer_panel_frame = tk.LabelFrame(right_frame, text="🎨 Layers", bg="#1a1a1a", 
-                                          fg="white", font=("Arial", 9, "bold"))
-        layer_panel_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # LAYERS TAB
+        layers_tab = tk.Frame(right_frame, bg="#1a1a1a")
+        self.tab_frames["layers"] = layers_tab
         
-        self.layer_panel = LayerPanel(layer_panel_frame, self.layer_manager, 
+        tk.Label(layers_tab, text="🎨 Layers", bg="#1a1a1a", fg="white",
+                font=("Arial", 11, "bold")).pack(pady=(10, 5), anchor=tk.W, padx=10)
+        
+        self.layer_panel = LayerPanel(layers_tab, self.layer_manager, 
                                       on_layer_change=self.on_layer_change)
-        self.layer_panel.pack(fill=tk.BOTH, expand=True)
+        self.layer_panel.pack(fill=tk.BOTH, expand=True, padx=10)
         
-        # Display Options
-        display_frame = tk.LabelFrame(right_frame, text="👁️ Anzeige", bg="#1a1a1a", 
-                                      fg="white", font=("Arial", 9, "bold"))
-        display_frame.pack(fill=tk.X, padx=10, pady=10)
+        # LIGHTING TAB
+        lighting_tab = tk.Frame(right_frame, bg="#1a1a1a")
+        self.tab_frames["lighting"] = lighting_tab
         
-        tk.Checkbutton(display_frame, text="Koordinaten", variable=self.show_coordinates,
-                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 9), command=self.draw_grid).pack(anchor=tk.W, padx=5, pady=2)
+        tk.Label(lighting_tab, text="💡 Beleuchtung", bg="#1a1a1a", fg="white",
+                font=("Arial", 11, "bold")).pack(pady=(10, 5), anchor=tk.W, padx=10)
         
-        tk.Checkbutton(display_frame, text="💡 Dynamic Lighting", variable=self.show_lighting,
-                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 9), command=self.toggle_lighting).pack(anchor=tk.W, padx=5, pady=2)
-        
-        # Lighting Panel
-        lighting_frame = tk.LabelFrame(right_frame, text="💡 Beleuchtung", bg="#1a1a1a",
-                                      fg="white", font=("Arial", 9, "bold"))
-        lighting_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        tk.Label(lighting_frame, text="Licht-Typ:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=2)
+        # Licht-Typen
+        tk.Label(lighting_tab, text="Licht-Typ:", bg="#1a1a1a", fg="#888",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=10, pady=(5, 2))
         
         light_presets = ["torch", "candle", "window", "magic", "fire", "moonlight"]
+        icons = {"torch": "🔥", "candle": "🕯️", "window": "🪟", 
+                "magic": "✨", "fire": "🔥", "moonlight": "🌙"}
+        
         for preset in light_presets:
-            icons = {"torch": "🔥", "candle": "🕯️", "window": "🪟", 
-                    "magic": "✨", "fire": "🔥", "moonlight": "🌙"}
-            tk.Radiobutton(lighting_frame, text=f"{icons.get(preset, '💡')} {preset.title()}",
+            tk.Radiobutton(lighting_tab, text=f"{icons.get(preset, '💡')} {preset.title()}",
                           variable=tk.StringVar(value=self.selected_light_preset),
                           value=preset, bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
                           font=("Arial", 8),
                           command=lambda p=preset: setattr(self, 'selected_light_preset', p)
-                          ).pack(anchor=tk.W, padx=10)
+                          ).pack(anchor=tk.W, padx=15)
         
-        tk.Button(lighting_frame, text="🗑️ Alle Lichter löschen", bg="#7d2a2a", fg="white",
-                 font=("Arial", 8), command=self.clear_all_lights).pack(pady=5, padx=5)
+        # Separator
+        tk.Frame(lighting_tab, bg="#333", height=1).pack(fill=tk.X, padx=10, pady=10)
         
-        # Lighting-Mode Auswahl
-        tk.Label(lighting_frame, text="Szenen-Modus:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        # Szenen-Modus
+        tk.Label(lighting_tab, text="Szenen-Modus:", bg="#1a1a1a", fg="white",
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=(5, 2))
         
         self.lighting_mode_var = tk.StringVar(value="night")
-        mode_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
-        mode_frame.pack(fill=tk.X, padx=5, pady=2)
         
-        tk.Radiobutton(mode_frame, text="☀️ Tag (Innenräume dunkel)", variable=self.lighting_mode_var, 
+        tk.Radiobutton(lighting_tab, text="☀️ Tag (Innenräume dunkel)", variable=self.lighting_mode_var, 
                       value="day", bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W)
-        tk.Radiobutton(mode_frame, text="🌙 Nacht (komplett dunkel)", variable=self.lighting_mode_var,
+                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W, padx=15)
+        tk.Radiobutton(lighting_tab, text="🌙 Nacht (komplett dunkel)", variable=self.lighting_mode_var,
                       value="night", bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W)
+                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W, padx=15)
         
-        # Darkness Opacity (nur für Tag-Modus relevant)
-        tk.Label(lighting_frame, text="Dunkelheit (Innenräume):", bg="#1a1a1a", fg="white",
-                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        # Dunkelheit-Slider
+        tk.Label(lighting_tab, text="Dunkelheit:", bg="#1a1a1a", fg="#888",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=10, pady=(10, 2))
         
-        darkness_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
-        darkness_frame.pack(fill=tk.X, padx=5, pady=2)
+        darkness_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        darkness_frame.pack(fill=tk.X, padx=10, pady=2)
         
         self.darkness_opacity_var = tk.DoubleVar(value=0.85)
         tk.Scale(darkness_frame, from_=0.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL,
                 variable=self.darkness_opacity_var, command=self.update_darkness_opacity,
-                bg="#2a2a2a", fg="white", highlightthickness=0,
+                bg="#2a2a2a", fg="white", highlightthickness=0, showvalue=False,
                 troughcolor="#404040", activebackground="#3a3a3a").pack(side=tk.LEFT, fill=tk.X, expand=True)
         
         self.darkness_label = tk.Label(darkness_frame, text="85%", bg="#1a1a1a", fg="white",
                                       font=("Arial", 9, "bold"), width=5)
         self.darkness_label.pack(side=tk.LEFT, padx=5)
         
-        # Darkness-Polygone (Innenräume definieren)
-        tk.Label(lighting_frame, text="🏚️ Dunkel-Bereiche:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        # Separator
+        tk.Frame(lighting_tab, bg="#333", height=1).pack(fill=tk.X, padx=10, pady=10)
         
-        polygon_controls = tk.Frame(lighting_frame, bg="#1a1a1a")
-        polygon_controls.pack(fill=tk.X, padx=5, pady=2)
+        # Dunkel-Bereiche
+        tk.Label(lighting_tab, text="🏚️ Dunkel-Bereiche:", bg="#1a1a1a", fg="white",
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=(5, 2))
         
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
         
-        tk.Button(polygon_controls, text="✏️ Polygon zeichnen", bg="#2a4a2a", fg="white",
-                 font=("Arial", 8), command=self.start_darkness_polygon).pack(side=tk.LEFT, padx=2)
+        polygon_controls = tk.Frame(lighting_tab, bg="#1a1a1a")
+        polygon_controls.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Button(polygon_controls, text="✏️ Zeichnen", bg="#2a4a2a", fg="white",
+                 font=("Arial", 8), width=10, command=self.start_darkness_polygon).grid(row=0, column=0, padx=2)
         tk.Button(polygon_controls, text="❌ Abbrechen", bg="#4a2a2a", fg="white",
-                 font=("Arial", 8), command=self.cancel_darkness_polygon).pack(side=tk.LEFT, padx=2)
+                 font=("Arial", 8), width=10, command=self.cancel_darkness_polygon).grid(row=0, column=1, padx=2)
         tk.Button(polygon_controls, text="🗑️ Alle löschen", bg="#7d2a2a", fg="white",
-                 font=("Arial", 8), command=self.clear_darkness_polygons).pack(side=tk.LEFT, padx=2)
+                 font=("Arial", 8), width=22, command=self.clear_darkness_polygons).grid(row=1, column=0, columnspan=2, padx=2, pady=2)
         
-        self.polygon_info_label = tk.Label(lighting_frame, text="0 Polygone | 0 Punkte", 
-                                          bg="#1a1a1a", fg="#888888", font=("Arial", 7))
-        self.polygon_info_label.pack(anchor=tk.W, padx=5, pady=2)
+        self.polygon_info_label = tk.Label(lighting_tab, text="0 Polygone | 0 Punkte", 
+                                          bg="#1a1a1a", fg="#888888", font=("Arial", 8))
+        self.polygon_info_label.pack(anchor=tk.W, padx=10, pady=2)
         
-        # Radius-Skalierung
-        tk.Label(lighting_frame, text="Licht-Radius:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        # Separator
+        tk.Frame(lighting_tab, bg="#333", height=1).pack(fill=tk.X, padx=10, pady=10)
         
-        radius_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
-        radius_frame.pack(fill=tk.X, padx=5, pady=2)
+        # Buttons
+        btn_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        self.radius_scale_var = tk.DoubleVar(value=1.0)
-        tk.Scale(radius_frame, from_=0.3, to=3.0, resolution=0.1, orient=tk.HORIZONTAL,
-                variable=self.radius_scale_var, command=self.update_radius_scale,
-                bg="#2a2a2a", fg="white", highlightthickness=0,
-                troughcolor="#404040", activebackground="#3a3a3a").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(btn_frame, text="🗑️ Alle Lichter löschen", bg="#7d2a2a", fg="white",
+                 font=("Arial", 9), command=self.clear_all_lights).pack(fill=tk.X)
         
-        self.radius_label = tk.Label(radius_frame, text="1.0x", bg="#1a1a1a", fg="white",
-                                    font=("Arial", 9, "bold"), width=5)
-        self.radius_label.pack(side=tk.LEFT, padx=5)
+        # SETTINGS TAB
+        settings_tab = tk.Frame(right_frame, bg="#1a1a1a")
+        self.tab_frames["settings"] = settings_tab
         
-        # Individueller Radius für ausgewählte Lichtquelle
-        tk.Label(lighting_frame, text="🎯 Einzelne Lichtquelle:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        tk.Label(settings_tab, text="⚙️ Einstellungen", bg="#1a1a1a", fg="white",
+                font=("Arial", 11, "bold")).pack(pady=(10, 5), anchor=tk.W, padx=10)
         
-        # Hinweis zur Bedienung
-        tk.Label(lighting_frame, text="💡 Klick auf Licht = Auswählen", bg="#1a1a1a", fg="#4a4",
-                font=("Arial", 7, "italic")).pack(anchor=tk.W, padx=5)
+        # Display Options
+        tk.Label(settings_tab, text="👁️ Anzeige:", bg="#1a1a1a", fg="white",
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=(5, 2))
         
-        self.selected_light_info = tk.Label(lighting_frame, text="Keine ausgewählt", 
-                                           bg="#1a1a1a", fg="#888", font=("Arial", 7))
-        self.selected_light_info.pack(anchor=tk.W, padx=5, pady=2)
-        
-        individual_radius_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
-        individual_radius_frame.pack(fill=tk.X, padx=5, pady=2)
-        
-        tk.Label(individual_radius_frame, text="Radius:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
-        
-        self.individual_radius_var = tk.DoubleVar(value=5.0)
-        self.individual_radius_slider = tk.Scale(individual_radius_frame, from_=1, to=15, resolution=0.5, 
-                orient=tk.HORIZONTAL, variable=self.individual_radius_var, 
-                command=self.update_individual_radius, bg="#2a2a2a", fg="white", 
-                highlightthickness=0, troughcolor="#404040", activebackground="#3a3a3a",
-                state=tk.DISABLED)
-        self.individual_radius_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        self.individual_radius_label = tk.Label(individual_radius_frame, text="5.0", 
-                                               bg="#1a1a1a", fg="white", font=("Arial", 9, "bold"), width=4)
-        self.individual_radius_label.pack(side=tk.LEFT, padx=2)
-        
-        tk.Button(lighting_frame, text="❌ Auswahl aufheben", bg="#4a2a2a", fg="white",
-                 font=("Arial", 8), command=self.deselect_light).pack(pady=5, padx=5)
-        
-        # River Direction
-        river_frame = tk.LabelFrame(right_frame, text="🌊 Fluss-Richtung", bg="#1a1a1a",
-                                    fg="white", font=("Arial", 9, "bold"))
-        river_frame.pack(fill=tk.X, padx=10, pady=10)
-        
-        tk.Radiobutton(river_frame, text="Aus", variable=self.river_direction_mode, value="disabled",
+        tk.Checkbutton(settings_tab, text="Koordinaten anzeigen", variable=self.show_coordinates,
                       bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 8), command=self.draw_grid).pack(anchor=tk.W, padx=5)
+                      font=("Arial", 9), command=self.draw_grid).pack(anchor=tk.W, padx=15, pady=2)
         
-        for direction in ["↑ Norden", "→ Osten", "↓ Süden", "← Westen"]:
-            dir_val = direction.split()[1].lower()
-            tk.Radiobutton(river_frame, text=direction, 
-                          variable=self.river_direction_mode, value=dir_val,
-                          bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                          font=("Arial", 8), command=self.draw_grid).pack(anchor=tk.W, padx=5)
+        tk.Checkbutton(settings_tab, text="💡 Dynamic Lighting", variable=self.show_lighting,
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 9), command=self.toggle_lighting).pack(anchor=tk.W, padx=15, pady=2)
         
-        # Tools
-        tools_frame = tk.LabelFrame(right_frame, text="🛠️ Werkzeuge", bg="#1a1a1a",
-                                    fg="white", font=("Arial", 9, "bold"))
-        tools_frame.pack(fill=tk.X, padx=10, pady=10)
+        # Aktiviere Info-Tab als Standard
+        self.switch_tab("info")
         
-        tk.Button(tools_frame, text="🎨 Material-Manager", bg="#5d2a7d", fg="white",
-                 font=("Arial", 9), width=18,
-                 command=self.open_material_manager).pack(pady=3, padx=5)
-        
-        tk.Button(tools_frame, text="🖼️ Vorschau", bg="#2a5d8d", fg="white",
-                 font=("Arial", 9), width=18,
-                 command=self.show_preview).pack(pady=3, padx=5)
+        # River Direction - ins Settings Tab verschieben (später)
+        # Tools - in eigene Toolbar verschieben (später)
         
         self.draw_grid()
         
@@ -733,6 +746,32 @@ class MapEditor(tk.Frame):
         btn.bind("<Leave>", lambda e: btn.config(cursor=""))
         
         return btn
+    
+    def switch_tab(self, tab_id):
+        """Wechselt zwischen Tabs im Right Panel"""
+        self.active_tab.set(tab_id)
+        
+        # Verstecke alle Tabs
+        for tid, frame in self.tab_frames.items():
+            frame.pack_forget()
+        
+        # Zeige aktiven Tab
+        if tab_id in self.tab_frames:
+            self.tab_frames[tab_id].pack(fill=tk.BOTH, expand=True)
+        
+        # Update Button-Farben
+        for tid, btn in self.tab_buttons.items():
+            if tid == tab_id:
+                btn.config(bg="#2a5d8d", relief=tk.SUNKEN)
+            else:
+                btn.config(bg="#2a2a2a", relief=tk.FLAT)
+    
+    def filter_materials(self):
+        """Filtert Material-Liste nach Suchbegriff"""
+        search_term = self.material_search_var.get().lower()
+        
+        # Refresh der Material-Liste mit Filter
+        self.populate_material_list(filter_text=search_term)
     
     def select_tool(self, tool):
         """Wählt ein Zeichentool aus"""
@@ -913,7 +952,7 @@ class MapEditor(tk.Frame):
         if self.drawing_darkness_polygon:
             self.finish_darkness_polygon()
     
-    def populate_material_list(self):
+    def populate_material_list(self, filter_text=""):
         """Füllt die Material-Liste links - gruppiert nach Bundles"""
         # Clear existing
         for widget in self.material_list_inner.winfo_children():
@@ -923,12 +962,19 @@ class MapEditor(tk.Frame):
         bundles = self.bundle_manager.get_bundle_list()
         
         for bundle_id, bundle_data in bundles:
-            self.create_bundle_section(bundle_id, bundle_data)
+            self.create_bundle_section(bundle_id, bundle_data, filter_text)
     
-    def create_bundle_section(self, bundle_id, bundle_data):
+    def create_bundle_section(self, bundle_id, bundle_data, filter_text=""):
         """Erstellt eine ein-/ausklappbare Bundle-Sektion"""
         is_active = self.bundle_manager.is_bundle_active(bundle_id)
         materials = bundle_data.get("materials", [])
+        
+        # Filter materials wenn Suchbegriff vorhanden
+        if filter_text:
+            materials = [m for m in materials if filter_text in m.lower()]
+            if not materials:  # Überspringe Bundle wenn kein Material matched
+                return
+        
         icon = bundle_data.get("icon", "📦")
         name = bundle_data.get("name", bundle_id)
         is_base = bundle_id == "base"
@@ -1247,6 +1293,10 @@ class MapEditor(tk.Frame):
                                   py * self.tile_size + self.tile_size // 2])
                 self.canvas.create_line(coords, fill="#ff00ff", width=2, tags="darkness_polygon")
         
+        # === SELECTION MARKERS ===
+        # Zeichne Auswahl-Marker für ausgewählte Objekte
+        self.select_tool.draw_selection_markers(self.canvas, self.tile_size)
+        
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def on_canvas_click(self, event):
@@ -1348,6 +1398,16 @@ class MapEditor(tk.Frame):
         
         # === SELECT TOOL ===
         if tool == "select":
+            # NEUE IMPLEMENTIERUNG: Objekt-Auswahl (Lichter, Polygone)
+            canvas_x = self.canvas.canvasx(event.x)
+            canvas_y = self.canvas.canvasy(event.y)
+            
+            # Versuche Objekt auszuwählen
+            if self.select_tool.handle_click(x, y):
+                # Objekt wurde ausgewählt
+                return
+            
+            # Fallback: Flächen-Auswahl für Tiles
             if not self.selection_area:
                 self.selection_area = [x, y, x, y]
                 self.is_drawing = True
@@ -2515,3 +2575,115 @@ def ask_canvas_size(parent=None):
     
     dialog.wait_window()
     return result
+
+    # ===========================
+    # NEUE CONTEXT-PANEL METHODEN
+    # ===========================
+    
+    def show_light_context(self, light_index):
+        """Zeige Context-Panel für ausgewählte Lichtquelle"""
+        if light_index >= len(self.lighting_engine.lights):
+            return
+        
+        light = self.lighting_engine.lights[light_index]
+        
+        # Context-Panel erstellen falls noch nicht vorhanden
+        if not self.context_panel:
+            self.context_panel = ContextPanel(self)
+            
+            # Callbacks setzen
+            self.context_panel.on_radius_change = self._on_light_radius_change
+            self.context_panel.on_intensity_change = self._on_light_intensity_change
+            self.context_panel.on_delete_light = self._on_delete_light
+            self.context_panel.on_duplicate_light = self._on_duplicate_light
+        
+        self.context_panel.show_light_context(light)
+        self.selected_light_index = light_index
+    
+    def show_polygon_context(self, polygon_index):
+        """Zeige Context-Panel für ausgewähltes Polygon"""
+        if polygon_index >= len(self.lighting_engine.darkness_polygons):
+            return
+        
+        polygon = self.lighting_engine.darkness_polygons[polygon_index]
+        
+        # Context-Panel erstellen falls noch nicht vorhanden
+        if not self.context_panel:
+            self.context_panel = ContextPanel(self)
+            
+            # Callbacks setzen
+            self.context_panel.on_edit_polygon = self._on_edit_polygon
+            self.context_panel.on_delete_polygon = self._on_delete_polygon
+        
+        self.context_panel.show_polygon_context(polygon)
+    
+    def hide_context_panel(self):
+        """Verstecke Context-Panel"""
+        if self.context_panel:
+            self.context_panel.hide()
+        self.selected_light_index = None
+    
+    def _on_light_radius_change(self, new_radius):
+        """Callback: Radius der ausgewählten Lichtquelle ändern"""
+        if self.selected_light_index is not None and self.selected_light_index < len(self.lighting_engine.lights):
+            light = self.lighting_engine.lights[self.selected_light_index]
+            light.radius = new_radius
+            print(f"💡 Radius geändert: {new_radius}")
+            if self.show_lighting.get():
+                self.draw_grid()
+    
+    def _on_light_intensity_change(self, new_intensity):
+        """Callback: Intensität der ausgewählten Lichtquelle ändern"""
+        if self.selected_light_index is not None and self.selected_light_index < len(self.lighting_engine.lights):
+            light = self.lighting_engine.lights[self.selected_light_index]
+            light.intensity = new_intensity
+            print(f"💡 Intensität geändert: {new_intensity}")
+            if self.show_lighting.get():
+                self.draw_grid()
+    
+    def _on_delete_light(self):
+        """Callback: Lichtquelle löschen"""
+        if self.selected_light_index is not None and self.selected_light_index < len(self.lighting_engine.lights):
+            self.lighting_engine.lights.pop(self.selected_light_index)
+            print(f"🗑️ Lichtquelle gelöscht")
+            self.hide_context_panel()
+            self.select_tool.deselect_all()
+            if self.show_lighting.get():
+                self.draw_grid()
+    
+    def _on_duplicate_light(self):
+        """Callback: Lichtquelle duplizieren"""
+        if self.selected_light_index is not None and self.selected_light_index < len(self.lighting_engine.lights):
+            original = self.lighting_engine.lights[self.selected_light_index]
+            # Erstelle Kopie mit leichtem Offset
+            duplicate = LightSource(
+                x=original.x + 1,
+                y=original.y + 1,
+                radius=original.radius,
+                color=original.color,
+                intensity=original.intensity,
+                light_type=original.light_type,
+                flicker=original.flicker
+            )
+            self.lighting_engine.lights.append(duplicate)
+            print(f"📋 Lichtquelle dupliziert")
+            if self.show_lighting.get():
+                self.draw_grid()
+    
+    def _on_edit_polygon(self):
+        """Callback: Polygon bearbeiten"""
+        # TODO: Implementierung für Polygon-Edit-Modus
+        print("✏️ Polygon-Bearbeitung (noch nicht implementiert)")
+    
+    def _on_delete_polygon(self):
+        """Callback: Polygon löschen"""
+        if self.select_tool.selected_polygon is not None:
+            index = self.select_tool.selected_polygon
+            if index < len(self.lighting_engine.darkness_polygons):
+                self.lighting_engine.darkness_polygons.pop(index)
+                print(f"🗑️ Polygon gelöscht")
+                self.hide_context_panel()
+                self.select_tool.deselect_all()
+                if self.show_lighting.get():
+                    self.draw_grid()
+

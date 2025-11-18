@@ -1,6 +1,6 @@
 {
   "version": "1.2",
-  "created": "2025-11-18T20:07:16.744117",
+  "created": "2025-11-18T20:37:18.635967",
   "width": 32,
   "height": 23,
   "tiles": [
@@ -115,6 +115,82 @@
       "grass",
       "grass",
       "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
       "torch",
       "grass",
       "grass",
@@ -130,14 +206,6 @@
       "grass",
       "grass",
       "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
       "grass"
     ],
     [
@@ -243,159 +311,6 @@
       "grass"
     ],
     [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
       "grass",
       "grass",
       "grass",
@@ -410,6 +325,57 @@
       "grass",
       "grass",
       "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
       "grass"
     ],
     [
@@ -481,6 +447,182 @@
       "grass"
     ],
     [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass"
+    ],
+    [
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
+      "grass",
       "grass",
       "grass",
       "grass",
@@ -492,148 +634,6 @@
       "grass",
       "grass",
       "window",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "window",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass"
-    ],
-    [
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
-      "grass",
       "grass",
       "grass",
       "grass",
@@ -828,8 +828,8 @@
   "lighting": {
     "lights": [
       {
-        "x": 12,
-        "y": 16,
+        "x": 16,
+        "y": 18,
         "radius": 10,
         "color": [
           220,
@@ -841,34 +841,8 @@
         "light_type": "window"
       },
       {
-        "x": 10,
-        "y": 14,
-        "radius": 10,
-        "color": [
-          220,
-          235,
-          255
-        ],
-        "intensity": 0.7,
-        "flicker": false,
-        "light_type": "window"
-      },
-      {
-        "x": 22,
-        "y": 11,
-        "radius": 4,
-        "color": [
-          255,
-          230,
-          180
-        ],
-        "intensity": 0.8,
-        "flicker": true,
-        "light_type": "candle"
-      },
-      {
-        "x": 8,
-        "y": 3,
+        "x": 16,
+        "y": 5,
         "radius": 7,
         "color": [
           255,
@@ -878,6 +852,19 @@
         "intensity": 1.0,
         "flicker": true,
         "light_type": "torch"
+      },
+      {
+        "x": 5,
+        "y": 9,
+        "radius": 4,
+        "color": [
+          255,
+          230,
+          180
+        ],
+        "intensity": 0.8,
+        "flicker": true,
+        "light_type": "candle"
       }
     ],
     "ambient_color": [
@@ -892,112 +879,16 @@
     "darkness_polygons": [
       [
         [
-          18,
-          2
-        ],
-        [
-          18,
-          5
-        ],
-        [
-          19,
-          7
-        ],
-        [
-          19,
-          7
-        ],
-        [
-          20,
-          8
-        ],
-        [
-          20,
-          8
-        ],
-        [
-          21,
-          8
-        ],
-        [
-          21,
+          30,
           9
         ],
         [
-          21,
-          9
-        ],
-        [
-          22,
-          9
-        ],
-        [
-          22,
-          10
-        ],
-        [
-          23,
-          10
-        ],
-        [
-          24,
-          10
-        ],
-        [
-          25,
-          10
-        ],
-        [
-          27,
-          10
-        ],
-        [
-          27,
-          10
-        ],
-        [
-          28,
-          10
-        ],
-        [
-          29,
-          10
-        ],
-        [
-          29,
-          10
-        ],
-        [
-          29,
+          30,
           11
         ],
         [
           29,
-          11
-        ],
-        [
-          29,
-          12
-        ],
-        [
-          29,
-          12
-        ],
-        [
-          29,
-          13
-        ],
-        [
-          29,
           14
-        ],
-        [
-          29,
-          14
-        ],
-        [
-          29,
-          15
         ],
         [
           28,
@@ -1029,10 +920,18 @@
         ],
         [
           25,
-          17
+          18
         ],
         [
-          25,
+          24,
+          18
+        ],
+        [
+          24,
+          18
+        ],
+        [
+          24,
           18
         ],
         [
@@ -1052,16 +951,36 @@
           19
         ],
         [
+          22,
+          19
+        ],
+        [
+          22,
+          18
+        ],
+        [
           21,
-          19
+          17
+        ],
+        [
+          21,
+          17
+        ],
+        [
+          21,
+          17
         ],
         [
           20,
-          19
+          18
         ],
         [
           20,
-          19
+          18
+        ],
+        [
+          19,
+          18
         ],
         [
           19,
@@ -1076,10 +995,6 @@
           18
         ],
         [
-          17,
-          18
-        ],
-        [
           16,
           18
         ],
@@ -1088,20 +1003,12 @@
           18
         ],
         [
-          15,
+          14,
           17
         ],
         [
           13,
-          17
-        ],
-        [
-          13,
-          17
-        ],
-        [
-          13,
-          17
+          16
         ],
         [
           12,
@@ -1109,10 +1016,10 @@
         ],
         [
           11,
-          16
+          15
         ],
         [
-          10,
+          11,
           15
         ],
         [
@@ -1124,11 +1031,19 @@
           13
         ],
         [
+          9,
+          13
+        ],
+        [
+          8,
+          13
+        ],
+        [
           7,
           12
         ],
         [
-          6,
+          5,
           12
         ],
         [
@@ -1137,6 +1052,10 @@
         ],
         [
           4,
+          12
+        ],
+        [
+          2,
           11
         ],
         [
@@ -1145,23 +1064,7 @@
         ],
         [
           1,
-          11
-        ],
-        [
-          1,
-          11
-        ],
-        [
-          1,
           10
-        ],
-        [
-          1,
-          9
-        ],
-        [
-          1,
-          8
         ],
         [
           0,
@@ -1172,71 +1075,39 @@
           6
         ],
         [
-          0,
-          5
-        ],
-        [
           1,
           5
         ],
         [
-          3,
-          5
-        ],
-        [
-          5,
-          5
-        ],
-        [
-          6,
-          5
-        ],
-        [
-          7,
-          5
-        ],
-        [
-          7,
-          5
-        ],
-        [
-          8,
-          3
-        ],
-        [
-          8,
-          3
-        ],
-        [
-          8,
-          2
-        ],
-        [
-          9,
-          1
-        ],
-        [
-          9,
-          1
-        ],
-        [
-          11,
-          2
-        ],
-        [
-          11,
-          3
-        ],
-        [
-          10,
+          1,
           4
         ],
         [
-          11,
-          3
+          2,
+          4
         ],
         [
-          11,
+          3,
+          4
+        ],
+        [
+          6,
+          4
+        ],
+        [
+          7,
+          4
+        ],
+        [
+          8,
+          2
+        ],
+        [
+          8,
+          0
+        ],
+        [
+          12,
           2
         ],
         [
@@ -1244,24 +1115,64 @@
           2
         ],
         [
-          13,
-          2
-        ],
-        [
           14,
           2
-        ],
-        [
-          14,
-          3
         ],
         [
           16,
           2
         ],
         [
-          18,
+          17,
           2
+        ],
+        [
+          19,
+          2
+        ],
+        [
+          19,
+          4
+        ],
+        [
+          19,
+          5
+        ],
+        [
+          20,
+          7
+        ],
+        [
+          20,
+          7
+        ],
+        [
+          20,
+          7
+        ],
+        [
+          21,
+          8
+        ],
+        [
+          22,
+          9
+        ],
+        [
+          24,
+          9
+        ],
+        [
+          27,
+          10
+        ],
+        [
+          29,
+          10
+        ],
+        [
+          30,
+          9
         ]
       ]
     ]

@@ -104,7 +104,7 @@ class DerEineRingProApp(tk.Tk):
             
             editor_win = tk.Toplevel(self)
             editor_win.title("Map Editor - Der Eine Ring")
-            editor_win.geometry("1400x900")
+            editor_win.state('zoomed')  # Fullscreen/Maximiert starten
             editor_win.configure(bg="#1a1a1a")
             
             # MapEditor mit aktuellen Daten oder neu

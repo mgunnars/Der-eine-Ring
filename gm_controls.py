@@ -14,7 +14,7 @@ class GamemasterControlPanel(tk.Toplevel):
         super().__init__(parent)
         
         self.title("Gamemaster Kontrollpanel")
-        self.geometry("800x600")
+        self.state('zoomed')  # Fullscreen/Maximiert starten
         self.configure(bg="#1e1e1e")
         
         # WICHTIG: Fenster auf primären Monitor (Laptop) platzieren
