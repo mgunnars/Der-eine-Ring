@@ -9,6 +9,8 @@ from PIL import Image, ImageTk, ImageDraw
 import subprocess
 import sys
 import os
+import math
+import math
 from texture_manager import TextureManager
 from map_system import MapSystem
 from advanced_texture_renderer import AdvancedTextureRenderer
@@ -148,6 +150,10 @@ class MapEditor(tk.Frame):
         
         # Layer-System initialisieren
         self.layer_manager = LayerManager()
+        
+        # Dedizierte Layer für Lichter und Dunkelzonen erstellen
+        self.layer_manager.add_layer("Lights", "objects")
+        self.layer_manager.add_layer("Darkness Zones", "objects")
         
         # Erweiterte Zeichentools
         self.bezier_tool = BezierCurveTool()
@@ -349,7 +355,7 @@ class MapEditor(tk.Frame):
                  command=self.open_map_draw).pack(side=tk.RIGHT, padx=20)
         
         # =================== LEFT PANEL - MATERIALS ===================
-        left_frame = tk.Frame(self, bg="#1a1a1a", width=320)
+        left_frame = tk.Frame(self, bg="#1a1a1a", width=380)  # Breiter für bessere Übersicht
         left_frame.pack(side=tk.LEFT, fill=tk.Y)
         left_frame.pack_propagate(False)
         
@@ -594,6 +600,27 @@ class MapEditor(tk.Frame):
         
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
+        
+        # Polygon-Zeichenmodus
+        tk.Label(lighting_tab, text="Zeichenmodus:", bg="#1a1a1a", fg="#888",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=10, pady=(5, 2))
+        
+        self.polygon_draw_mode = tk.StringVar(value="manual")
+        
+        polygon_mode_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        polygon_mode_frame.pack(fill=tk.X, padx=15, pady=2)
+        
+        polygon_modes = [
+            ("manual", "✏️ Manuell (Punkte klicken)"),
+            ("freehand", "🖊️ Freihand (Drag)"),
+            ("rectangle", "⬜ Rechteck"),
+            ("circle", "⭕ Kreis")
+        ]
+        
+        for mode, label in polygon_modes:
+            tk.Radiobutton(polygon_mode_frame, text=label, variable=self.polygon_draw_mode,
+                          value=mode, bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                          font=("Arial", 8)).pack(anchor=tk.W, pady=1)
         
         polygon_controls = tk.Frame(lighting_tab, bg="#1a1a1a")
         polygon_controls.pack(fill=tk.X, padx=10, pady=5)
@@ -1267,31 +1294,20 @@ class MapEditor(tk.Frame):
                 self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
         
-        # Zeichne Darkness-Polygone (gespeichert)
+        # Zeichne Darkness-Polygone (gespeichert) - PIXEL-KOORDINATEN
         for polygon in self.lighting_engine.darkness_polygons:
             if len(polygon) >= 3:
                 coords = []
                 for px, py in polygon:
-                    coords.extend([px * self.tile_size, py * self.tile_size])
+                    # Polygone sind bereits in Pixel-Koordinaten, keine Konvertierung!
+                    coords.extend([px, py])
                 self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
                                           fill="", dash=(5, 5), tags="darkness_polygon")
         
-        # Zeichne aktuelles Polygon (wird gerade gezeichnet)
-        if self.drawing_darkness_polygon and len(self.current_darkness_polygon) > 0:
-            # Zeichne Punkte
-            for px, py in self.current_darkness_polygon:
-                cx = px * self.tile_size + self.tile_size // 2
-                cy = py * self.tile_size + self.tile_size // 2
-                self.canvas.create_oval(cx-3, cy-3, cx+3, cy+3, 
-                                       fill="#ff00ff", outline="white", tags="darkness_polygon")
-            
-            # Zeichne Linien zwischen Punkten
-            if len(self.current_darkness_polygon) >= 2:
-                coords = []
-                for px, py in self.current_darkness_polygon:
-                    coords.extend([px * self.tile_size + self.tile_size // 2, 
-                                  py * self.tile_size + self.tile_size // 2])
-                self.canvas.create_line(coords, fill="#ff00ff", width=2, tags="darkness_polygon")
+        # Zeichne aktuelles Polygon (wird gerade gezeichnet) - PIXEL-GENAU
+        if self.drawing_darkness_polygon:
+            # Zeichne smooth_polygon_drawer Preview direkt
+            self.smooth_polygon_drawer.draw_preview(self.canvas, color="cyan")
         
         # === SELECTION MARKERS ===
         # Zeichne Auswahl-Marker für ausgewählte Objekte
@@ -1313,10 +1329,64 @@ class MapEditor(tk.Frame):
         
         # === DARKNESS POLYGON DRAWING ===
         if self.drawing_darkness_polygon:
-            self.current_darkness_polygon.append((x, y))
-            self.update_polygon_info()
+            mode = self.polygon_draw_mode.get()
+            
+            # Rectangle/Circle Mode: Zwei-Punkt-System
+            if mode in ["rectangle", "circle"]:
+                canvas_x = self.canvas.canvasx(event.x)
+                canvas_y = self.canvas.canvasy(event.y)
+                
+                if not hasattr(self, 'polygon_shape_start') or self.polygon_shape_start is None:
+                    # Startpunkt setzen
+                    self.polygon_shape_start = (canvas_x, canvas_y)
+                    print(f"📍 {mode.title()} Startpunkt: ({int(canvas_x)}, {int(canvas_y)})")
+                else:
+                    # Endpunkt → Form erstellen
+                    start_x, start_y = self.polygon_shape_start
+                    
+                    if mode == "rectangle":
+                        # Rechteck aus 4 Ecken
+                        polygon = [
+                            (start_x, start_y),
+                            (canvas_x, start_y),
+                            (canvas_x, canvas_y),
+                            (start_x, canvas_y)
+                        ]
+                    else:  # circle
+                        # Kreis als Polygon (~32 Punkte)
+                        radius = math.sqrt((canvas_x - start_x)**2 + (canvas_y - start_y)**2)
+                        center_x = start_x
+                        center_y = start_y
+                        
+                        polygon = []
+                        for i in range(32):
+                            angle = (i / 32) * 2 * math.pi
+                            px = center_x + radius * math.cos(angle)
+                            py = center_y + radius * math.sin(angle)
+                            polygon.append((px, py))
+                    
+                    # Speichere pixelgenaue Koordinaten (kein Tile-Snapping!)
+                    self.lighting_engine.darkness_polygons.append(polygon)
+                    
+                    print(f"✅ {mode.title()}-Polygon erstellt: {len(polygon)} Punkte")
+                    
+                    self.drawing_darkness_polygon = False
+                    self.polygon_shape_start = None
+                    self.update_polygon_info()
+                    self.draw_grid()
+                return
+            
+            # Manual/Freehand Mode: Pixel-genaues Zeichnen
+            canvas_x = self.canvas.canvasx(event.x)
+            canvas_y = self.canvas.canvasy(event.y)
+            
+            self.smooth_polygon_drawer.add_point(canvas_x, canvas_y)
+            
+            # Grid neu zeichnen um Preview zu aktualisieren
             self.draw_grid()
-            print(f"📍 Punkt hinzugefügt: ({x}, {y}) - {len(self.current_darkness_polygon)} Punkte")
+            
+            num_points = len(self.smooth_polygon_drawer.points)
+            print(f"📍 Punkt (pixelgenau): ({int(canvas_x)}, {int(canvas_y)}) - {num_points} Punkte")
             return
         
         tool = self.active_tool.get()
@@ -1349,6 +1419,18 @@ class MapEditor(tk.Frame):
         
         # === LIGHT TOOL ===
         if tool == "light":
+            # Wechsle automatisch zu "Lights" Layer
+            lights_layer_index = None
+            for i, layer in enumerate(self.layer_manager.layers):
+                if layer.name == "Lights":
+                    lights_layer_index = i
+                    break
+            
+            if lights_layer_index is not None:
+                self.layer_manager.set_active_layer(lights_layer_index)
+                if hasattr(self, 'layer_panel'):
+                    self.layer_panel.refresh()
+            
             # Prüfe ob Licht bereits existiert
             existing = self.lighting_engine.get_light_at(x, y, tolerance=0)
             if existing is not None:
@@ -1360,7 +1442,7 @@ class MapEditor(tk.Frame):
                 preset = LIGHT_PRESETS.get(self.selected_light_preset, LIGHT_PRESETS["torch"])
                 light = LightSource(x, y, **preset)
                 self.lighting_engine.add_light(light)
-                print(f"💡 {self.selected_light_preset.title()} platziert bei ({x}, {y})")
+                print(f"💡 {self.selected_light_preset.title()} platziert bei ({x}, {y}) [Layer: Lights]")
             
             # Redraw wenn Lighting aktiv
             if self.show_lighting.get():
@@ -1895,15 +1977,43 @@ class MapEditor(tk.Frame):
     
     def start_darkness_polygon(self):
         """Starte Zeichnen eines Dunkelheits-Polygons"""
+        # Wechsle automatisch zu "Darkness Zones" Layer
+        darkness_layer_index = None
+        for i, layer in enumerate(self.layer_manager.layers):
+            if layer.name == "Darkness Zones":
+                darkness_layer_index = i
+                break
+        
+        if darkness_layer_index is not None:
+            self.layer_manager.set_active_layer(darkness_layer_index)
+            if hasattr(self, 'layer_panel'):
+                self.layer_panel.refresh()
+        
         self.drawing_darkness_polygon = True
         self.current_darkness_polygon = []
+        
+        # Modus abhängiges Setup
+        mode = self.polygon_draw_mode.get()
+        
+        if mode == "manual":
+            self.smooth_polygon_drawer.start(drag_mode=False)  # Pixel-genaues Zeichnen
+            print("🖊️ Polygon-Modus: Manuell - Klicke Punkte auf der Map (Rechtsklick = fertig) [Layer: Darkness Zones]")
+        
+        elif mode == "freehand":
+            self.smooth_polygon_drawer.start(drag_mode=True)  # Drag-Modus
+            print("🖊️ Polygon-Modus: Freihand - Ziehe mit der Maus (Rechtsklick = fertig) [Layer: Darkness Zones]")
+        
+        elif mode in ["rectangle", "circle"]:
+            self.polygon_shape_start = None
+            print(f"🖊️ Polygon-Modus: {mode.title()} - Klicke Start- und Endpunkt [Layer: Darkness Zones]")
+        
         self.update_polygon_info()
-        print("🖊️ Polygon-Modus: Klicke Punkte auf der Map (Rechtsklick = fertig)")
     
     def cancel_darkness_polygon(self):
         """Abbrechen des aktuellen Polygons"""
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
+        self.smooth_polygon_drawer.cancel()  # Reset smooth drawer
         self.update_polygon_info()
         self.draw_grid()
         print("❌ Polygon-Zeichnung abgebrochen")
@@ -1918,9 +2028,17 @@ class MapEditor(tk.Frame):
     
     def finish_darkness_polygon(self):
         """Schließe das aktuelle Polygon ab"""
-        if len(self.current_darkness_polygon) >= 3:
-            self.lighting_engine.darkness_polygons.append(self.current_darkness_polygon.copy())
-            print(f"✅ Polygon gespeichert: {len(self.current_darkness_polygon)} Punkte")
+        mode = self.polygon_draw_mode.get()
+        
+        # Nutze smooth_polygon_drawer für pixelgenaue, geglättete Polygone
+        pixel_polygon = self.smooth_polygon_drawer.finish(smooth=True)
+        
+        if pixel_polygon and len(pixel_polygon) >= 3:
+            # WICHTIG: Speichere PIXEL-Koordinaten, nicht Tile-Koordinaten!
+            # Das verhindert Lag und ermöglicht präzise Polygone
+            self.lighting_engine.darkness_polygons.append(pixel_polygon)
+            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte")
+        
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
         self.update_polygon_info()
@@ -1929,8 +2047,9 @@ class MapEditor(tk.Frame):
     def update_polygon_info(self):
         """Update Polygon-Info-Label"""
         num_polygons = len(self.lighting_engine.darkness_polygons)
-        num_points = len(self.current_darkness_polygon)
         if self.drawing_darkness_polygon:
+            # Zeige Punkte aus smooth_polygon_drawer
+            num_points = len(self.smooth_polygon_drawer.points) if hasattr(self.smooth_polygon_drawer, 'points') else len(self.current_darkness_polygon)
             self.polygon_info_label.config(text=f"{num_polygons} Polygone | Aktuell: {num_points} Punkte", fg="#4a4")
         else:
             self.polygon_info_label.config(text=f"{num_polygons} Polygone gespeichert", fg="#888")
@@ -2576,9 +2695,9 @@ def ask_canvas_size(parent=None):
     dialog.wait_window()
     return result
 
-    # ===========================
+    # ===========================#
     # NEUE CONTEXT-PANEL METHODEN
-    # ===========================
+    # ===========================#
     
     def show_light_context(self, light_index):
         """Zeige Context-Panel für ausgewählte Lichtquelle"""

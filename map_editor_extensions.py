@@ -102,10 +102,11 @@ class SelectTool:
         if self.selected_polygon is not None and self.selected_polygon < len(lighting_engine.darkness_polygons):
             polygon = lighting_engine.darkness_polygons[self.selected_polygon]
             
-            # Zeichne Kontrollpunkte
+            # Zeichne Kontrollpunkte (Polygone sind bereits in Pixel-Koordinaten)
             for px, py in polygon:
-                cx = px * tile_size + tile_size // 2
-                cy = py * tile_size + tile_size // 2
+                # Keine Konvertierung mehr nötig - px, py sind bereits Pixel
+                cx = px
+                cy = py
                 
                 # Großer gelber Punkt für jeden Polygon-Punkt
                 canvas.create_oval(
@@ -238,37 +239,61 @@ class SmoothPolygonDrawer:
     def __init__(self):
         self.points = []  # Canvas-Koordinaten (float)
         self.is_drawing = False
+        self.drag_mode = False
+        self.drag_min_distance = 5  # Mindestabstand zwischen Drag-Punkten
     
-    def start(self):
+    def start(self, drag_mode=False):
         """Starte Zeichnung"""
         self.points = []
         self.is_drawing = True
+        self.drag_mode = drag_mode
     
     def add_point(self, canvas_x, canvas_y):
         """Füge Punkt hinzu (Canvas-Koordinaten)"""
+        # Im Drag-Modus: Filtere zu nahe Punkte
+        if self.drag_mode and self.points:
+            last_x, last_y = self.points[-1]
+            dist = ((canvas_x - last_x)**2 + (canvas_y - last_y)**2)**0.5
+            if dist < self.drag_min_distance:
+                return  # Punkt zu nah am letzten
+        
         self.points.append((canvas_x, canvas_y))
     
-    def finish(self, tile_size):
-        """Beende Zeichnung und konvertiere zu Tile-Koordinaten"""
+    def finish(self, smooth=True):
+        """Beende Zeichnung - gibt PIXEL-Koordinaten zurück (kein Tile-Snapping!)"""
         if len(self.points) < 3:
             return None
         
-        # Konvertiere Canvas → Tiles
-        tile_polygon = [
-            (int(cx / tile_size), int(cy / tile_size))
-            for cx, cy in self.points
-        ]
-        
-        # Entferne Duplikate
-        unique_polygon = []
-        for point in tile_polygon:
-            if not unique_polygon or point != unique_polygon[-1]:
-                unique_polygon.append(point)
+        # Optional: Chaikin-Glättung für weiche Kurven
+        polygon = self.points.copy()
+        if smooth and len(polygon) >= 4:
+            polygon = self._smooth_chaikin(polygon, iterations=2)
         
         self.is_drawing = False
         self.points = []
         
-        return unique_polygon if len(unique_polygon) >= 3 else None
+        return polygon if len(polygon) >= 3 else None
+    
+    def _smooth_chaikin(self, points, iterations=2):
+        """Chaikin's Corner Cutting Algorithmus für weiche Kurven"""
+        for _ in range(iterations):
+            if len(points) < 3:
+                break
+            
+            smoothed = []
+            for i in range(len(points)):
+                p1 = points[i]
+                p2 = points[(i + 1) % len(points)]
+                
+                # 75% zum nächsten Punkt, 25% Rückweg
+                q = (0.75 * p1[0] + 0.25 * p2[0], 0.75 * p1[1] + 0.25 * p2[1])
+                r = (0.25 * p1[0] + 0.75 * p2[0], 0.25 * p1[1] + 0.75 * p2[1])
+                
+                smoothed.extend([q, r])
+            
+            points = smoothed
+        
+        return points
     
     def cancel(self):
         """Abbrechen"""
