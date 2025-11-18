@@ -430,17 +430,49 @@ class ProjectorWindow(tk.Toplevel):
                 radius_scale=radius_scale
             )
             
-            print(f"🔍 Map-Image vor Composite: {map_image.size}, Mode={map_image.mode}")
+            print(f"🔍 Map-Image vor Lighting: {map_image.size}, Mode={map_image.mode}")
             print(f"🔍 Lighting-Overlay: {lighting_overlay.size}, Mode={lighting_overlay.mode}")
+            print(f"🔍 Lighting-Mode: {self.lighting_engine.lighting_mode}")
             
-            # WICHTIG: Map muss RGBA sein für alpha_composite!
+            # WICHTIG: Map muss RGBA sein!
             if map_image.mode != 'RGBA':
                 map_image = map_image.convert('RGBA')
             
-            # Lighting über Map compositen (mit Darkness-Layer)
-            map_image = Image.alpha_composite(map_image, lighting_overlay)
+            # ═══════════════════════════════════════════════════════════
+            # TAG-MODUS: MULTIPLY-BLEND für physikalisch korrekte Schatten
+            # ═══════════════════════════════════════════════════════════
+            if self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons:
+                print("🌞 TAG-MODUS: Verwende Multiply-Blend für Schatten")
+                
+                # Separiere RGB und Alpha aus dem Lighting-Overlay
+                lighting_rgb = lighting_overlay.convert('RGB')
+                lighting_alpha = lighting_overlay.split()[3]  # Alpha-Kanal
+                
+                # MULTIPLY-BLEND: Multipliziere Map-RGB mit Lighting-RGB
+                # Formula: result = (map * lighting) / 255
+                # Dies verdunkelt die Map wo lighting dunkel ist
+                from PIL import ImageChops
+                
+                # Konvertiere Map zu RGB für Multiply
+                map_rgb = map_image.convert('RGB')
+                
+                # Multiply: Verdunkelt die Map (wie echte Schatten)
+                darkened_map = ImageChops.multiply(map_rgb, lighting_rgb)
+                
+                # Konvertiere zurück zu RGBA
+                darkened_map = darkened_map.convert('RGBA')
+                
+                # Wende Multiply nur in Polygon-Bereichen an (mit Alpha-Maske)
+                # Erstelle Composite: Original-Map wo Alpha=0, Darkened-Map wo Alpha=255
+                map_image = Image.composite(darkened_map, map_image, lighting_alpha)
+                
+                print(f"🔍 Map nach Multiply-Blend: {map_image.size}, Mode={map_image.mode}")
+            else:
+                # NACHT-MODUS oder keine Polygone: Normales Alpha-Composite
+                print("🌙 NACHT-MODUS: Verwende Alpha-Composite")
+                map_image = Image.alpha_composite(map_image, lighting_overlay)
             
-            print(f"🔍 Map-Image nach Composite: {map_image.size}, Mode={map_image.mode}")
+            print(f"🔍 Map-Image nach Lighting: {map_image.size}, Mode={map_image.mode}")
             
             # Zurück zu RGB für Fog-Rendering
             map_image = map_image.convert('RGB')

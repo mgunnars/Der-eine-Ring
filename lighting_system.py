@@ -473,7 +473,13 @@ class LightingEngine:
         
         # TAG/NACHT-MODI: Unterschiedliche Rendering-Strategien
         if self.lighting_mode == "day":
-            # TAGESMODUS: Dunkle Polygone (Innenräume) mit Licht-Ausschnitten
+            # ════════════════════════════════════════════════════════════
+            # TAGESMODUS: Physikalisch korrekte Schatten & Beleuchtung
+            # ════════════════════════════════════════════════════════════
+            # Die Map-Texturen bleiben IMMER sichtbar!
+            # Dunkelheit = multiplikative Verdunkelung (wie echte Schatten)
+            # Licht = additive Aufhellung der dunklen Bereiche
+            
             if not self.darkness_polygons:
                 # KEINE Dunkel-Bereiche definiert = NUR Lichtquellen als Highlights
                 # Komplett transparent, keine Dunkelheit!
@@ -485,90 +491,156 @@ class LightingEngine:
                 light_rgba.putalpha(alpha)
                 return light_rgba
             
-            # Erstelle Darkness-Mask nur für definierte Polygone
-            darkness_mask = Image.new('L', (img_width, img_height), 0)  # 0 = transparent
-            draw = ImageDraw.Draw(darkness_mask)
+            # ════════════════════════════════════════════════════════════
+            # SCHRITT 1: Erstelle Shadow-Mask (Schatten-Intensität pro Pixel)
+            # ════════════════════════════════════════════════════════════
+            # Diese Maske definiert wo es dunkel ist (0=hell, 255=dunkel)
+            shadow_mask = Image.new('L', (img_width, img_height), 0)  # 0 = keine Schatten
+            draw = ImageDraw.Draw(shadow_mask)
             
-            # Zeichne Dunkelheits-Polygone (255 = opak/dunkel)
+            # Zeichne Dunkelheits-Polygone als Schatten-Bereiche
             for polygon in self.darkness_polygons:
                 # Konvertiere Tile-Koordinaten zu Pixel-Koordinaten
                 pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
-                draw.polygon(pixel_poly, fill=255)
+                # Basis-Schatten-Intensität (nie 100% schwarz wegen Ambient)
+                # darkness_opacity = 0.85 → 85% dunkel → Pixel-Wert 217 (von 255)
+                shadow_intensity = int(self.darkness_opacity * 255)
+                draw.polygon(pixel_poly, fill=shadow_intensity)
             
-            # DEBUG: Prüfe ob Polygon gezeichnet wurde
+            # ════════════════════════════════════════════════════════════
+            # SCHRITT 2: Licht reduziert Schatten (physikalisch korrekt)
+            # ════════════════════════════════════════════════════════════
+            # Konvertiere Licht zu Helligkeit (Grayscale)
+            light_brightness = light_layer.convert('L')
+            
+            # Licht subtrahiert von Schatten: Wo Licht ist, weniger Schatten
+            # ImageChops.subtract(a, b) = max(0, a - b)
+            final_shadow_mask = ImageChops.subtract(shadow_mask, light_brightness)
+            
+            # ════════════════════════════════════════════════════════════
+            # SCHRITT 3: Erstelle MULTIPLICATIVE Darkening Layer
+            # ════════════════════════════════════════════════════════════
+            # Dieser Layer wird MULTIPLIZIERT mit der Map (nicht darübergelegt!)
+            # Wert 255 = 100% hell (keine Veränderung)
+            # Wert 128 = 50% dunkel
+            # Wert 0 = 100% dunkel (schwarz)
+            
+            # Invertiere Schatten-Maske: 0→255 (dunkel→hell), 255→0 (hell→dunkel)
+            # Dann skalieren mit Ambient-Minimum (nie komplett schwarz)
             import numpy as np
-            mask_array = np.array(darkness_mask)
-            nonzero_pixels = np.count_nonzero(mask_array)
-            print(f"🔍 Darkness-Mask: {nonzero_pixels} pixels mit Dunkelheit (von {img_width}×{img_height})")
+            shadow_array = np.array(final_shadow_mask, dtype=np.float32)
             
-            # Licht "schneidet" Löcher in die Dunkelheit
-            # light_layer ist RGB - konvertiere zu Grayscale für Helligkeit
-            light_mask = light_layer.convert('L')
+            # Invertiere und normalisiere
+            # shadow_mask: 0=kein Schatten, 255=maximaler Schatten
+            # multiply_mask: 255=keine Verdunkelung, 0=maximale Verdunkelung
+            # ABER: minimum = ambient_intensity (z.B. 0.2 = 20% Helligkeit minimum)
+            ambient_min = int(self.ambient_intensity * 255)  # Minimale Helligkeit (Streulicht)
             
-            # DEBUG: Prüfe Light-Mask
-            light_array = np.array(light_mask)
-            light_bright = np.count_nonzero(light_array > 10)  # Pixels mit Helligkeit > 10
-            light_max = np.max(light_array)
-            print(f"🔍 Light-Mask: {light_bright} helle pixels, max brightness={light_max}")
+            # Formel: multiply = (255 - shadow) * (1 - ambient) + ambient * 255
+            # Oder einfacher: multiply = 255 - (shadow * (1 - ambient))
+            multiply_array = 255 - (shadow_array * (1.0 - self.ambient_intensity))
+            multiply_array = np.clip(multiply_array, ambient_min, 255).astype(np.uint8)
             
-            # WICHTIG: Clamp light_mask auf darkness_mask!
-            # Subtraction soll NUR innerhalb des Polygons wirken
-            # Wo darkness_mask=0 (außerhalb Polygon) → light_mask auch 0 setzen
-            light_mask_clamped = ImageChops.multiply(
-                light_mask.convert('RGB'),
-                Image.merge('RGB', [darkness_mask]*3)
-            ).convert('L')
+            multiply_mask = Image.fromarray(multiply_array)
             
-            # Jetzt subtrahieren (nur noch innerhalb Polygon)
-            final_darkness_mask = ImageChops.subtract(darkness_mask, light_mask_clamped)
+            # ════════════════════════════════════════════════════════════
+            # SCHRITT 4: Erstelle RGBA Multiply-Layer
+            # ════════════════════════════════════════════════════════════
+            # Wir brauchen einen Layer der die Map MULTIPLIZIERT (verdunkelt)
+            # Dies wird über den Blend-Modus "multiply" erreicht
             
-            # DEBUG: Prüfe finale Maske
-            final_array = np.array(final_darkness_mask)
-            final_nonzero = np.count_nonzero(final_array)
-            final_max = np.max(final_array) if final_nonzero > 0 else 0
-            print(f"🔍 Final-Mask nach Light-Subtract: {final_nonzero} pixels dunkel (max={final_max})")
+            # PROBLEM: PIL alpha_composite unterstützt kein "multiply" direkt
+            # LÖSUNG: Wir nutzen einen Trick mit ImageChops.multiply
+            # Aber wir returnen einen Layer den der Projector anders verarbeiten muss!
             
-            # Erstelle KOMPLETT TRANSPARENTEN Layer als Basis
-            result = Image.new('RGBA', (img_width, img_height), (0, 0, 0, 0))
+            # Erstelle RGB Layer für Multiplikation (wird außerhalb angewandt)
+            # Format: RGB-Werte = Multiplikations-Faktor (0=schwarz, 255=keine Änderung)
+            multiply_layer = Image.merge('RGB', [multiply_mask, multiply_mask, multiply_mask])
             
-            print(f"🔍 Result-Layer erstellt: {result.size}, Mode={result.mode}")
+            # ════════════════════════════════════════════════════════════
+            # SCHRITT 5: Füge farbiges Licht additiv hinzu
+            # ════════════════════════════════════════════════════════════
+            # Das Licht wird NACH der Multiplikation additiv aufgehellt
+            # Nur im Polygon-Bereich sichtbar (sonst würde es die ganze Map aufhellen)
             
-            # Erstelle dunklen Layer NUR wo die finale Maske aktiv ist
-            darkness_value = int((1.0 - self.darkness_opacity) * 255)
-            darkness_layer = Image.new('RGBA', (img_width, img_height), 
-                                      (darkness_value, darkness_value, darkness_value, 255))
-            darkness_layer.putalpha(final_darkness_mask)
+            # Erstelle Polygon-Maske (wo sind die Darkness-Bereiche?)
+            polygon_mask = Image.new('L', (img_width, img_height), 0)
+            draw_poly = ImageDraw.Draw(polygon_mask)
+            for polygon in self.darkness_polygons:
+                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                draw_poly.polygon(pixel_poly, fill=255)
             
-            print(f"🔍 Darkness-Layer: RGB=({darkness_value},{darkness_value},{darkness_value}), Opacity={self.darkness_opacity}")
-            
-            # Composite: Dunkelheit über transparentem Hintergrund
-            result = Image.alpha_composite(result, darkness_layer)
-            
-            # Addiere farbiges Licht darüber - ABER NUR IM POLYGON!
-            # Clamp light auf darkness_mask Bereich
+            # Clamp Licht auf Polygon-Bereich
             light_rgba = light_layer.convert('RGBA')
+            light_alpha_original = light_rgba.split()[3]
             
-            # Erstelle Maske für Lichter: Nur innerhalb des Polygons sichtbar
-            # Erweitere darkness_mask zu RGBA für Composite
-            light_region_mask = Image.new('L', (img_width, img_height), 0)
-            light_region_mask.paste(darkness_mask, (0, 0))  # Kopiere Polygon-Bereich
-            
-            # Wende Maske auf Licht an (nur im Polygon sichtbar)
-            light_clamped = Image.new('RGBA', (img_width, img_height), (0, 0, 0, 0))
-            # Composite light mit region mask
-            light_alpha = light_rgba.split()[3]  # Original alpha
-            combined_alpha = ImageChops.multiply(
-                light_alpha.convert('RGB'),
-                Image.merge('RGB', [light_region_mask]*3)
+            # Kombiniere Original-Licht-Alpha mit Polygon-Maske
+            light_alpha_clamped = ImageChops.multiply(
+                light_alpha_original.convert('RGB'),
+                Image.merge('RGB', [polygon_mask]*3)
             ).convert('L')
-            light_rgba.putalpha(combined_alpha)
             
-            result = Image.alpha_composite(result, light_rgba)
+            light_rgba.putalpha(light_alpha_clamped)
             
-            # DEBUG: Prüfe finales Result
-            result_array = np.array(result)
-            non_transparent = np.count_nonzero(result_array[:,:,3] > 0)  # Alpha-Kanal > 0
-            print(f"🔍 Final Result: {non_transparent} nicht-transparente pixels (should be ~{nonzero_pixels})")
+            # ════════════════════════════════════════════════════════════
+            # RETURN: Spezielles Format für Projector
+            # ════════════════════════════════════════════════════════════
+            # Wir returnen ein Dict mit beiden Layern:
+            # - "multiply": RGB Layer zum Multiplizieren (Schatten)
+            # - "add": RGBA Layer zum Addieren (Licht)
+            # 
+            # ABER: render_lighting() muss Image returnen, nicht Dict!
+            # LÖSUNG: Wir encoden beide Infos in einem speziellen RGBA Image
+            # 
+            # ALTERNATIVE: Wir passen den Projector an um multiply korrekt zu handlen
+            # Für jetzt: Return RGBA mit custom Handling im Projector
+            
+            # Erstelle finales RGBA Image:
+            # - RGB Channels: Multiply-Faktor (wird für Multiplikation genutzt)
+            # - Alpha Channel: Kodiert dass dies ein Multiply-Layer ist (255=multiply mode)
+            
+            # ABER das ist zu komplex. Bessere Lösung:
+            # Return ein Layer der im Projector mit MULTIPLY statt ALPHA_COMPOSITE verarbeitet wird
+            
+            # EINFACHSTE LÖSUNG: Store Flag in LightingEngine und ändere Projector
+            # Für jetzt: Composite multiply + light direkt hier
+            
+            # ════════════════════════════════════════════════════════════
+            # FINALE COMPOSITING mit echtem MULTIPLY-BLEND
+            # ════════════════════════════════════════════════════════════
+            # PROBLEM: PIL alpha_composite kann kein Multiply!
+            # LÖSUNG: Wir returnen ein spezielles Format, das der Projector
+            #         mit ImageChops.multiply() verarbeiten kann
+            
+            # Erstelle einen RGBA Layer mit spezieller Bedeutung:
+            # - RGB: Multiply-Faktoren (255 = keine Änderung, 0 = schwarz)
+            # - Alpha: Wo der Effekt angewandt wird (Polygon-Bereiche)
+            
+            # SCHRITT 1: Erstelle Multiply-RGB Layer
+            # multiply_mask enthält bereits die richtigen Werte (0-255)
+            multiply_rgb = Image.merge('RGB', [multiply_mask, multiply_mask, multiply_mask])
+            
+            # SCHRITT 2: Erstelle Alpha-Maske (wo sind die Polygone?)
+            polygon_alpha = Image.new('L', (img_width, img_height), 0)
+            draw_alpha = ImageDraw.Draw(polygon_alpha)
+            for polygon in self.darkness_polygons:
+                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                draw_alpha.polygon(pixel_poly, fill=255)
+            
+            # SCHRITT 3: Kombiniere zu RGBA
+            # Dieser Layer enthält die Multiply-Faktoren und wird vom Projector
+            # mit ImageChops.multiply() auf die Map angewandt
+            multiply_layer = multiply_rgb.convert('RGBA')
+            multiply_layer.putalpha(polygon_alpha)
+            
+            # SCHRITT 4: Addiere farbiges Licht
+            # Das Licht wird NACH dem Multiply als normaler Alpha-Composite angewandt
+            result = Image.alpha_composite(multiply_layer, light_rgba)
+            
+            # WICHTIGER HINWEIS für Projector:
+            # Dieser Layer muss mit ImageChops.multiply() angewandt werden,
+            # NICHT mit alpha_composite!
+            # Projector muss prüfen: if lighting_mode == "day": multiply statt composite
             
             return result
             
