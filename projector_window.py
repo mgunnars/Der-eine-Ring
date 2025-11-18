@@ -118,6 +118,32 @@ class ProjectorWindow(tk.Toplevel):
             # Lade ALLE Lighting-Einstellungen (Mode, Darkness-Polygone, etc.)
             self.lighting_engine.from_dict(lighting_data)
             
+            # INTELLIGENTE KOORDINATEN-ERKENNUNG (wie im Editor)
+            # Prüfe ob Polygone bereits in Pixel-Koordinaten sind (buggy neue Maps)
+            # oder in Tile-Koordinaten (Standard, alte Maps)
+            if self.lighting_engine.darkness_polygons:
+                first_polygon = self.lighting_engine.darkness_polygons[0]
+                max_coord = max(max(abs(x), abs(y)) for x, y in first_polygon) if first_polygon else 0
+                
+                if max_coord > 100:
+                    # Bereits Pixel-Koordinaten - müssen zu Tiles konvertiert werden!
+                    print(f"   ⚠️ LEGACY: Polygon-Koordinaten in Pixeln (max: {max_coord:.1f})")
+                    print(f"   🔄 Konvertiere zu Tile-Koordinaten für Lighting-System...")
+                    
+                    # Berechne durchschnittliche Tile-Größe aus Map-Dimensionen
+                    # (Projektor weiß noch nicht seine finale tile_size)
+                    estimated_tile_size = 32  # Fallback
+                    
+                    tile_polygons = []
+                    for polygon in self.lighting_engine.darkness_polygons:
+                        tile_poly = [(px / estimated_tile_size, py / estimated_tile_size) for px, py in polygon]
+                        tile_polygons.append(tile_poly)
+                    
+                    self.lighting_engine.darkness_polygons = tile_polygons
+                    print(f"   ✅ Polygone konvertiert (Tile-Size: {estimated_tile_size}px)")
+                else:
+                    print(f"   ✅ Polygon-Koordinaten bereits in Tiles (max: {max_coord:.1f})")
+            
             # Projektor: Lighting automatisch aktivieren wenn Lichtquellen vorhanden
             if self.lighting_engine.lights:
                 self.lighting_enabled = True

@@ -1294,12 +1294,13 @@ class MapEditor(tk.Frame):
                 self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
         
-        # Zeichne Darkness-Polygone (gespeichert) - PIXEL-KOORDINATEN
+        # Zeichne Darkness-Polygone (gespeichert) - IM EDITOR PIXEL, INTERN TILES
+        # Editor arbeitet mit Pixel-Koordinaten, aber beim Laden/Speichern wird konvertiert
         for polygon in self.lighting_engine.darkness_polygons:
             if len(polygon) >= 3:
                 coords = []
                 for px, py in polygon:
-                    # Polygone sind bereits in Pixel-Koordinaten, keine Konvertierung!
+                    # Polygone sind im Editor in Pixel-Koordinaten
                     coords.extend([px, py])
                 self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
                                           fill="", dash=(5, 5), tags="darkness_polygon")
@@ -2063,6 +2064,16 @@ class MapEditor(tk.Frame):
         )
         
         if filename:
+            # Konvertiere Pixel-Polygone zu Tile-Koordinaten für Speicherung
+            pixel_polygons = self.lighting_engine.darkness_polygons.copy()
+            tile_polygons = []
+            for polygon in pixel_polygons:
+                tile_poly = [(px / self.tile_size, py / self.tile_size) for px, py in polygon]
+                tile_polygons.append(tile_poly)
+            
+            # Temporär Tile-Koordinaten setzen für Export
+            self.lighting_engine.darkness_polygons = tile_polygons
+            
             map_data = {
                 "width": self.width,
                 "height": self.height,
@@ -2071,6 +2082,9 @@ class MapEditor(tk.Frame):
                 "layers": self.layer_manager.to_dict(),  # Layer-Daten speichern
                 "lighting": self.lighting_engine.to_dict()  # Lighting speichern
             }
+            
+            # Stelle Pixel-Koordinaten wieder her
+            self.lighting_engine.darkness_polygons = pixel_polygons
             
             # SVG-Metadata behalten wenn vorhanden
             if self.is_svg_mode and self.svg_source_path:
@@ -2111,6 +2125,30 @@ class MapEditor(tk.Frame):
                     if "lighting" in map_data:
                         self.lighting_engine.from_dict(map_data["lighting"])
                         self.lighting_enabled = map_data["lighting"].get("enabled", False)
+                        
+                        # INTELLIGENTE KOORDINATEN-ERKENNUNG
+                        # Prüfe ob Polygone bereits in Pixel-Koordinaten sind (neue Maps)
+                        # oder in Tile-Koordinaten (alte Maps + Standard)
+                        tile_polygons = self.lighting_engine.darkness_polygons.copy()
+                        
+                        if tile_polygons:
+                            # Heuristik: Wenn alle Koordinaten > 100, sind es wahrscheinlich Pixel
+                            first_polygon = tile_polygons[0]
+                            max_coord = max(max(abs(x), abs(y)) for x, y in first_polygon) if first_polygon else 0
+                            
+                            if max_coord > 100:
+                                # Bereits Pixel-Koordinaten (neue Map mit Bug)
+                                print(f"   ⚠️ LEGACY: Polygon-Koordinaten bereits in Pixeln (max: {max_coord:.1f})")
+                                pixel_polygons = tile_polygons
+                            else:
+                                # Tile-Koordinaten (Standard, alte Maps)
+                                print(f"   ✅ Polygon-Koordinaten in Tiles (max: {max_coord:.1f}), konvertiere zu Pixel")
+                                pixel_polygons = []
+                                for polygon in tile_polygons:
+                                    pixel_poly = [(tx * self.tile_size, ty * self.tile_size) for tx, ty in polygon]
+                                    pixel_polygons.append(pixel_poly)
+                            
+                            self.lighting_engine.darkness_polygons = pixel_polygons
                         
                         # Synchronisiere UI mit geladenen Daten
                         self.lighting_mode_var.set(self.lighting_engine.lighting_mode)
