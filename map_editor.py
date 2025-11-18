@@ -122,7 +122,7 @@ class MapEditor(tk.Frame):
         self.is_drawing = False
         
         # === PROFESSIONAL DRAWING TOOLS ===
-        self.active_tool = tk.StringVar(value="brush")  # brush, fill, eyedropper, eraser, shape, line, select
+        self.active_tool = tk.StringVar(value="brush")  # brush, fill, eyedropper, eraser, rectangle, circle, line, select, curve, polygon, text, light
         self.shape_tool = tk.StringVar(value="rectangle")  # rectangle, circle, line
         self.fill_connected_only = tk.BooleanVar(value=True)  # Nur verbundene Tiles füllen
         self.symmetry_mode = tk.BooleanVar(value=False)  # Symmetrisches Zeichnen
@@ -154,9 +154,21 @@ class MapEditor(tk.Frame):
         self.lighting_engine = LightingEngine()
         self.show_lighting = tk.BooleanVar(value=False)
         self.selected_light_preset = "torch"
-        self.radius_scale_var = tk.DoubleVar(value=1.0)
+        self.selected_light_index = None  # Aktuell ausgewählte Lichtquelle
         self.lighting_update_id = None  # Timer für Animation
         self.lighting_time = 0.0  # Zeit für Flicker-Animation
+        
+        # Lade Lighting-Daten falls vorhanden
+        if map_data and "lighting" in map_data:
+            self.lighting_engine.from_dict(map_data["lighting"])
+            print(f"   ✅ Always-loaded: lighting_objects")
+            print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
+            print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
+            print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
+        
+        # Darkness Polygon Drawing
+        self.drawing_darkness_polygon = False
+        self.current_darkness_polygon = []
         
         # Material → Light Mapping (welche Materials erzeugen Lichtquellen)
         self.light_emitting_materials = {
@@ -201,6 +213,12 @@ class MapEditor(tk.Frame):
             self.tile_size = min(self.tile_size, 32)  # Noch kleiner bei großen Maps
         
         self.setup_ui()
+        
+        # Synchronisiere UI mit geladenen Lighting-Daten (falls vorhanden)
+        if map_data and "lighting" in map_data:
+            self.lighting_mode_var.set(self.lighting_engine.lighting_mode)
+            self.darkness_opacity_var.set(int(self.lighting_engine.darkness_opacity * 100))
+            print(f"🎚️ UI mit Lighting-Daten synchronisiert")
         
         # Starte Lighting-Animation
         self.start_lighting_animation()
@@ -394,9 +412,29 @@ class MapEditor(tk.Frame):
         self.show_coordinates = tk.BooleanVar(value=default_coords)
         
         # =================== RIGHT PANEL - SETTINGS ===================
-        right_frame = tk.Frame(self, bg="#1a1a1a", width=200)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y)
-        right_frame.pack_propagate(False)
+        right_outer = tk.Frame(self, bg="#1a1a1a", width=200)
+        right_outer.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
+        right_outer.pack_propagate(False)
+        
+        # Scrollbarer Bereich für alle Einstellungen
+        right_canvas = tk.Canvas(right_outer, bg="#1a1a1a", highlightthickness=0)
+        right_scrollbar = tk.Scrollbar(right_outer, orient=tk.VERTICAL, command=right_canvas.yview)
+        right_frame = tk.Frame(right_canvas, bg="#1a1a1a")
+        
+        right_frame.bind("<Configure>", lambda e: right_canvas.configure(scrollregion=right_canvas.bbox("all")))
+        right_canvas.create_window((0, 0), window=right_frame, anchor=tk.NW)
+        right_canvas.configure(yscrollcommand=right_scrollbar.set)
+        
+        right_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Mausrad-Scrolling
+        def _on_mousewheel(event):
+            try:
+                right_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            except tk.TclError:
+                pass  # Canvas wurde bereits zerstört
+        right_canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
         tk.Label(right_frame, text="⚙️ Einstellungen", bg="#1a1a1a", fg="white",
                 font=("Arial", 12, "bold")).pack(pady=10)
@@ -461,6 +499,59 @@ class MapEditor(tk.Frame):
         tk.Button(lighting_frame, text="🗑️ Alle Lichter löschen", bg="#7d2a2a", fg="white",
                  font=("Arial", 8), command=self.clear_all_lights).pack(pady=5, padx=5)
         
+        # Lighting-Mode Auswahl
+        tk.Label(lighting_frame, text="Szenen-Modus:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        
+        self.lighting_mode_var = tk.StringVar(value="night")
+        mode_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
+        mode_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        tk.Radiobutton(mode_frame, text="☀️ Tag (Innenräume dunkel)", variable=self.lighting_mode_var, 
+                      value="day", bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W)
+        tk.Radiobutton(mode_frame, text="🌙 Nacht (komplett dunkel)", variable=self.lighting_mode_var,
+                      value="night", bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 8), command=self.update_lighting_mode).pack(anchor=tk.W)
+        
+        # Darkness Opacity (nur für Tag-Modus relevant)
+        tk.Label(lighting_frame, text="Dunkelheit (Innenräume):", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        
+        darkness_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
+        darkness_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        self.darkness_opacity_var = tk.DoubleVar(value=0.85)
+        tk.Scale(darkness_frame, from_=0.0, to=1.0, resolution=0.05, orient=tk.HORIZONTAL,
+                variable=self.darkness_opacity_var, command=self.update_darkness_opacity,
+                bg="#2a2a2a", fg="white", highlightthickness=0,
+                troughcolor="#404040", activebackground="#3a3a3a").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.darkness_label = tk.Label(darkness_frame, text="85%", bg="#1a1a1a", fg="white",
+                                      font=("Arial", 9, "bold"), width=5)
+        self.darkness_label.pack(side=tk.LEFT, padx=5)
+        
+        # Darkness-Polygone (Innenräume definieren)
+        tk.Label(lighting_frame, text="🏚️ Dunkel-Bereiche:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        
+        polygon_controls = tk.Frame(lighting_frame, bg="#1a1a1a")
+        polygon_controls.pack(fill=tk.X, padx=5, pady=2)
+        
+        self.drawing_darkness_polygon = False
+        self.current_darkness_polygon = []
+        
+        tk.Button(polygon_controls, text="✏️ Polygon zeichnen", bg="#2a4a2a", fg="white",
+                 font=("Arial", 8), command=self.start_darkness_polygon).pack(side=tk.LEFT, padx=2)
+        tk.Button(polygon_controls, text="❌ Abbrechen", bg="#4a2a2a", fg="white",
+                 font=("Arial", 8), command=self.cancel_darkness_polygon).pack(side=tk.LEFT, padx=2)
+        tk.Button(polygon_controls, text="🗑️ Alle löschen", bg="#7d2a2a", fg="white",
+                 font=("Arial", 8), command=self.clear_darkness_polygons).pack(side=tk.LEFT, padx=2)
+        
+        self.polygon_info_label = tk.Label(lighting_frame, text="0 Polygone | 0 Punkte", 
+                                          bg="#1a1a1a", fg="#888888", font=("Arial", 7))
+        self.polygon_info_label.pack(anchor=tk.W, padx=5, pady=2)
+        
         # Radius-Skalierung
         tk.Label(lighting_frame, text="Licht-Radius:", bg="#1a1a1a", fg="white",
                 font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=(10, 2))
@@ -477,6 +568,39 @@ class MapEditor(tk.Frame):
         self.radius_label = tk.Label(radius_frame, text="1.0x", bg="#1a1a1a", fg="white",
                                     font=("Arial", 9, "bold"), width=5)
         self.radius_label.pack(side=tk.LEFT, padx=5)
+        
+        # Individueller Radius für ausgewählte Lichtquelle
+        tk.Label(lighting_frame, text="🎯 Einzelne Lichtquelle:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        
+        # Hinweis zur Bedienung
+        tk.Label(lighting_frame, text="💡 Klick auf Licht = Auswählen", bg="#1a1a1a", fg="#4a4",
+                font=("Arial", 7, "italic")).pack(anchor=tk.W, padx=5)
+        
+        self.selected_light_info = tk.Label(lighting_frame, text="Keine ausgewählt", 
+                                           bg="#1a1a1a", fg="#888", font=("Arial", 7))
+        self.selected_light_info.pack(anchor=tk.W, padx=5, pady=2)
+        
+        individual_radius_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
+        individual_radius_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        tk.Label(individual_radius_frame, text="Radius:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
+        
+        self.individual_radius_var = tk.DoubleVar(value=5.0)
+        self.individual_radius_slider = tk.Scale(individual_radius_frame, from_=1, to=15, resolution=0.5, 
+                orient=tk.HORIZONTAL, variable=self.individual_radius_var, 
+                command=self.update_individual_radius, bg="#2a2a2a", fg="white", 
+                highlightthickness=0, troughcolor="#404040", activebackground="#3a3a3a",
+                state=tk.DISABLED)
+        self.individual_radius_slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.individual_radius_label = tk.Label(individual_radius_frame, text="5.0", 
+                                               bg="#1a1a1a", fg="white", font=("Arial", 9, "bold"), width=4)
+        self.individual_radius_label.pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(lighting_frame, text="❌ Auswahl aufheben", bg="#4a2a2a", fg="white",
+                 font=("Arial", 8), command=self.deselect_light).pack(pady=5, padx=5)
         
         # River Direction
         river_frame = tk.LabelFrame(right_frame, text="🌊 Fluss-Richtung", bg="#1a1a1a",
@@ -535,6 +659,7 @@ class MapEditor(tk.Frame):
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        self.canvas.bind("<Button-3>", self.on_canvas_right_click)  # Rechtsklick
         
         # Pan mit mittlerer Maustaste oder Shift+Linksklick
         self.canvas.bind("<Button-2>", self.start_pan)  # Mittlere Maustaste
@@ -563,6 +688,9 @@ class MapEditor(tk.Frame):
         self.bind_all("<KeyPress-p>", lambda e: self.select_tool("polygon"))
         self.bind_all("<KeyPress-t>", lambda e: self.select_tool("text"))
         self.bind_all("<KeyPress-g>", lambda e: self.select_tool("light"))  # G für "Glow"
+        
+        # Delete-Taste für ausgewählte Lichtquelle
+        self.bind_all("<Delete>", self.delete_selected_light)
         
         # Curve/Polygon Finalisierung
         self.bind_all("<Return>", lambda e: self.finalize_advanced_tool())
@@ -779,6 +907,11 @@ class MapEditor(tk.Frame):
     def on_canvas_release(self, event):
         """Maus losgelassen"""
         self.is_drawing = False
+    
+    def on_canvas_right_click(self, event):
+        """Rechtsklick - Polygon abschließen"""
+        if self.drawing_darkness_polygon:
+            self.finish_darkness_polygon()
     
     def populate_material_list(self):
         """Füllt die Material-Liste links - gruppiert nach Bundles"""
@@ -1060,8 +1193,8 @@ class MapEditor(tk.Frame):
             self.canvas.create_image(0, 0, image=lighting_photo, anchor=tk.NW, tags="lighting_overlay")
             self.canvas.image_refs.append(lighting_photo)  # Referenz behalten
             
-            # Zeichne Licht-Icons
-            for light in self.lighting_engine.lights:
+            # Zeichne Licht-Icons mit Interaktions-Bereich
+            for i, light in enumerate(self.lighting_engine.lights):
                 lx = light.x * self.tile_size + self.tile_size // 2
                 ly = light.y * self.tile_size + self.tile_size // 2
                 
@@ -1070,8 +1203,49 @@ class MapEditor(tk.Frame):
                         "magic": "✨", "fire": "🔥", "moonlight": "🌙", "point": "💡"}
                 icon = icons.get(light.light_type, "💡")
                 
-                self.canvas.create_text(lx, ly, text=icon, font=("Arial", 12),
+                # Highlight ausgewählte Lichtquelle mit mehreren Ringen
+                if i == self.selected_light_index:
+                    # Doppelter Ring für bessere Sichtbarkeit
+                    self.canvas.create_oval(lx-18, ly-18, lx+18, ly+18, 
+                                          outline="#ffff00", width=3, tags="light_source")
+                    self.canvas.create_oval(lx-14, ly-14, lx+14, ly+14, 
+                                          outline="#ffaa00", width=2, tags="light_source")
+                else:
+                    # Subtiler Umriss für nicht-ausgewählte Lichter
+                    self.canvas.create_oval(lx-12, ly-12, lx+12, ly+12, 
+                                          outline="#cccccc", width=1, tags="light_source")
+                
+                # Icon mit Shadow für bessere Lesbarkeit
+                self.canvas.create_text(lx+1, ly+1, text=icon, font=("Arial", 14),
+                                       fill="black", tags="light_source")
+                self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
+        
+        # Zeichne Darkness-Polygone (gespeichert)
+        for polygon in self.lighting_engine.darkness_polygons:
+            if len(polygon) >= 3:
+                coords = []
+                for px, py in polygon:
+                    coords.extend([px * self.tile_size, py * self.tile_size])
+                self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
+                                          fill="", dash=(5, 5), tags="darkness_polygon")
+        
+        # Zeichne aktuelles Polygon (wird gerade gezeichnet)
+        if self.drawing_darkness_polygon and len(self.current_darkness_polygon) > 0:
+            # Zeichne Punkte
+            for px, py in self.current_darkness_polygon:
+                cx = px * self.tile_size + self.tile_size // 2
+                cy = py * self.tile_size + self.tile_size // 2
+                self.canvas.create_oval(cx-3, cy-3, cx+3, cy+3, 
+                                       fill="#ff00ff", outline="white", tags="darkness_polygon")
+            
+            # Zeichne Linien zwischen Punkten
+            if len(self.current_darkness_polygon) >= 2:
+                coords = []
+                for px, py in self.current_darkness_polygon:
+                    coords.extend([px * self.tile_size + self.tile_size // 2, 
+                                  py * self.tile_size + self.tile_size // 2])
+                self.canvas.create_line(coords, fill="#ff00ff", width=2, tags="darkness_polygon")
         
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
@@ -1085,6 +1259,14 @@ class MapEditor(tk.Frame):
         y = int(self.canvas.canvasy(event.y) // self.tile_size)
         
         if not (0 <= x < self.width and 0 <= y < self.height):
+            return
+        
+        # === DARKNESS POLYGON DRAWING ===
+        if self.drawing_darkness_polygon:
+            self.current_darkness_polygon.append((x, y))
+            self.update_polygon_info()
+            self.draw_grid()
+            print(f"📍 Punkt hinzugefügt: ({x}, {y}) - {len(self.current_darkness_polygon)} Punkte")
             return
         
         tool = self.active_tool.get()
@@ -1120,9 +1302,9 @@ class MapEditor(tk.Frame):
             # Prüfe ob Licht bereits existiert
             existing = self.lighting_engine.get_light_at(x, y, tolerance=0)
             if existing is not None:
-                # Licht entfernen
-                self.lighting_engine.remove_light(existing)
-                print(f"💡 Licht entfernt bei ({x}, {y})")
+                # Lichtquelle auswählen
+                self.select_light(existing)
+                print(f"💡 Lichtquelle #{existing} ausgewählt")
             else:
                 # Neues Licht hinzufügen
                 preset = LIGHT_PRESETS.get(self.selected_light_preset, LIGHT_PRESETS["torch"])
@@ -1598,6 +1780,101 @@ class MapEditor(tk.Frame):
         self.radius_label.config(text=f"{scale:.1f}x")
         self.draw_grid()
     
+    def update_lighting_mode(self):
+        """Update Lighting Mode (Day/Night)"""
+        mode = self.lighting_mode_var.get()
+        self.lighting_engine.lighting_mode = mode
+        self.draw_grid()
+        mode_names = {"day": "Tag (Innenräume dunkel)", "night": "Nacht (komplett dunkel)"}
+        print(f"☀️ Lighting-Mode: {mode_names.get(mode, mode)}")
+    
+    def update_darkness_opacity(self, value):
+        """Update Darkness Opacity (für Tag-Modus)"""
+        opacity = float(value)
+        self.lighting_engine.darkness_opacity = opacity
+        self.darkness_label.config(text=f"{int(opacity*100)}%")
+        self.draw_grid()
+    
+    def select_light(self, index):
+        """Wähle eine Lichtquelle aus"""
+        if 0 <= index < len(self.lighting_engine.lights):
+            self.selected_light_index = index
+            light = self.lighting_engine.lights[index]
+            
+            # Update UI
+            self.selected_light_info.config(text=f"🔥 {light.light_type.title()} @ ({light.x},{light.y})", fg="#4a4")
+            self.individual_radius_var.set(light.radius)
+            self.individual_radius_slider.config(state=tk.NORMAL)
+            self.individual_radius_label.config(text=f"{light.radius:.1f}")
+            
+            self.draw_grid()
+    
+    def deselect_light(self):
+        """Hebe Lichtquellen-Auswahl auf"""
+        self.selected_light_index = None
+        self.selected_light_info.config(text="Keine ausgewählt", fg="#888")
+        self.individual_radius_slider.config(state=tk.DISABLED)
+        self.draw_grid()
+    
+    def update_individual_radius(self, value):
+        """Update Radius der ausgewählten Lichtquelle"""
+        if self.selected_light_index is not None and 0 <= self.selected_light_index < len(self.lighting_engine.lights):
+            radius = float(value)
+            light = self.lighting_engine.lights[self.selected_light_index]
+            light.radius = int(radius)
+            self.individual_radius_label.config(text=f"{radius:.1f}")
+            self.draw_grid()
+    
+    def delete_selected_light(self, event=None):
+        """Lösche die ausgewählte Lichtquelle (Entf-Taste)"""
+        if self.selected_light_index is not None:
+            light = self.lighting_engine.lights[self.selected_light_index]
+            self.lighting_engine.remove_light(self.selected_light_index)
+            print(f"💡 Lichtquelle {light.light_type} bei ({light.x},{light.y}) gelöscht")
+            self.deselect_light()
+    
+    def start_darkness_polygon(self):
+        """Starte Zeichnen eines Dunkelheits-Polygons"""
+        self.drawing_darkness_polygon = True
+        self.current_darkness_polygon = []
+        self.update_polygon_info()
+        print("🖊️ Polygon-Modus: Klicke Punkte auf der Map (Rechtsklick = fertig)")
+    
+    def cancel_darkness_polygon(self):
+        """Abbrechen des aktuellen Polygons"""
+        self.drawing_darkness_polygon = False
+        self.current_darkness_polygon = []
+        self.update_polygon_info()
+        self.draw_grid()
+        print("❌ Polygon-Zeichnung abgebrochen")
+    
+    def clear_darkness_polygons(self):
+        """Lösche alle Darkness-Polygone"""
+        if messagebox.askyesno("Bestätigen", "Alle Dunkel-Bereiche löschen?"):
+            self.lighting_engine.darkness_polygons.clear()
+            self.update_polygon_info()
+            self.draw_grid()
+            print("🗑️ Alle Dunkel-Polygone gelöscht")
+    
+    def finish_darkness_polygon(self):
+        """Schließe das aktuelle Polygon ab"""
+        if len(self.current_darkness_polygon) >= 3:
+            self.lighting_engine.darkness_polygons.append(self.current_darkness_polygon.copy())
+            print(f"✅ Polygon gespeichert: {len(self.current_darkness_polygon)} Punkte")
+        self.drawing_darkness_polygon = False
+        self.current_darkness_polygon = []
+        self.update_polygon_info()
+        self.draw_grid()
+    
+    def update_polygon_info(self):
+        """Update Polygon-Info-Label"""
+        num_polygons = len(self.lighting_engine.darkness_polygons)
+        num_points = len(self.current_darkness_polygon)
+        if self.drawing_darkness_polygon:
+            self.polygon_info_label.config(text=f"{num_polygons} Polygone | Aktuell: {num_points} Punkte", fg="#4a4")
+        else:
+            self.polygon_info_label.config(text=f"{num_polygons} Polygone gespeichert", fg="#888")
+    
     def save_map(self):
         """Karte speichern"""
         filename = filedialog.asksaveasfilename(
@@ -1655,7 +1932,14 @@ class MapEditor(tk.Frame):
                     if "lighting" in map_data:
                         self.lighting_engine.from_dict(map_data["lighting"])
                         self.lighting_enabled = map_data["lighting"].get("enabled", False)
+                        
+                        # Synchronisiere UI mit geladenen Daten
+                        self.lighting_mode_var.set(self.lighting_engine.lighting_mode)
+                        self.darkness_opacity_var.set(int(self.lighting_engine.darkness_opacity * 100))
+                        
                         print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
+                        print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
+                        print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
                     
                     # SVG-Metadata laden
                     if map_data.get("is_svg_mode"):

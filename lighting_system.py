@@ -289,6 +289,13 @@ class LightingEngine:
         self.time_offset = 0.0  # Für Animationen
         self.global_radius_scale = 1.0  # Manueller Radius-Multiplikator
         
+        # Tag/Nacht-System
+        self.lighting_mode = "night"  # "day", "night", "custom"
+        self.darkness_opacity = 0.85  # Wie dunkel sind unbeleuchtete Bereiche (0=hell, 1=schwarz)
+        
+        # Darkness-Polygone (für Tag-Modus: definiere Innenräume)
+        self.darkness_polygons: List[List[Tuple[int, int]]] = []  # Liste von Polygon-Punkten [(x,y), ...]
+        
     def add_light(self, light: LightSource):
         """Füge Lichtquelle hinzu"""
         self.lights.append(light)
@@ -322,14 +329,16 @@ class LightingEngine:
         img_width = width * tile_size
         img_height = height * tile_size
         
-        # Schwarzes Basis-Bild (Dunkelheit)
-        base_darkness = Image.new('RGB', (img_width, img_height), (0, 0, 0))
-        
         if not self.enabled or not self.lights:
-            # Nur Ambient Light
-            ambient = int(self.ambient_intensity * 255)
-            base_darkness = Image.new('RGB', (img_width, img_height), (ambient, ambient, ambient))
-            return base_darkness.convert('RGBA')
+            # Keine Beleuchtung aktiv
+            if self.lighting_mode == "day":
+                # Tagesszene ohne Lichter = normal sichtbar
+                return Image.new('RGBA', (img_width, img_height), (255, 255, 255, 0))
+            else:
+                # Nachtszene ohne Lichter = ambient darkness
+                ambient = int(self.ambient_intensity * 255)
+                darkness = Image.new('RGB', (img_width, img_height), (ambient, ambient, ambient))
+                return darkness.convert('RGBA')
         
         # Erstelle Licht-Layer (additiv)
         light_layer = Image.new('RGB', (img_width, img_height), (0, 0, 0))
@@ -462,16 +471,112 @@ class LightingEngine:
             # Kombiniere: max(ambient, light)
             light_layer = ImageChops.lighter(light_layer, ambient_layer)
         
-        # Konvertiere zu RGBA mit Alpha-Kanal für Multiply-Blending
-        # Helle Bereiche = Licht (sichtbar), dunkle Bereiche = transparent (Map durchsichtig)
-        light_rgba = light_layer.convert('RGBA')
-        
-        # Erstelle Alpha-Kanal basierend auf Helligkeit
-        # Je heller das Licht, desto mehr wird die Map aufgehellt (additive)
-        alpha_channel = light_layer.convert('L')  # Graustufenversion als Alpha
-        light_rgba.putalpha(alpha_channel)
-        
-        return light_rgba
+        # TAG/NACHT-MODI: Unterschiedliche Rendering-Strategien
+        if self.lighting_mode == "day":
+            # TAGESMODUS: Dunkle Polygone (Innenräume) mit Licht-Ausschnitten
+            if not self.darkness_polygons:
+                # KEINE Dunkel-Bereiche definiert = NUR Lichtquellen als Highlights
+                # Komplett transparent, keine Dunkelheit!
+                light_rgba = light_layer.convert('RGBA')
+                # Mache Lichtquellen sichtbar aber nicht zu dominant
+                alpha = light_layer.convert('L')
+                # Reduziere Alpha für subtileren Effekt im Tag-Modus
+                alpha = alpha.point(lambda p: int(p * 0.3))  # 30% Intensität
+                light_rgba.putalpha(alpha)
+                return light_rgba
+            
+            # Erstelle Darkness-Mask nur für definierte Polygone
+            darkness_mask = Image.new('L', (img_width, img_height), 0)  # 0 = transparent
+            draw = ImageDraw.Draw(darkness_mask)
+            
+            # Zeichne Dunkelheits-Polygone (255 = opak/dunkel)
+            for polygon in self.darkness_polygons:
+                # Konvertiere Tile-Koordinaten zu Pixel-Koordinaten
+                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                draw.polygon(pixel_poly, fill=255)
+            
+            # DEBUG: Prüfe ob Polygon gezeichnet wurde
+            import numpy as np
+            mask_array = np.array(darkness_mask)
+            nonzero_pixels = np.count_nonzero(mask_array)
+            print(f"🔍 Darkness-Mask: {nonzero_pixels} pixels mit Dunkelheit (von {img_width}×{img_height})")
+            
+            # Licht "schneidet" Löcher in die Dunkelheit
+            # light_layer ist RGB - konvertiere zu Grayscale für Helligkeit
+            light_mask = light_layer.convert('L')
+            
+            # DEBUG: Prüfe Light-Mask
+            light_array = np.array(light_mask)
+            light_bright = np.count_nonzero(light_array > 10)  # Pixels mit Helligkeit > 10
+            light_max = np.max(light_array)
+            print(f"🔍 Light-Mask: {light_bright} helle pixels, max brightness={light_max}")
+            
+            # WICHTIG: Clamp light_mask auf darkness_mask!
+            # Subtraction soll NUR innerhalb des Polygons wirken
+            # Wo darkness_mask=0 (außerhalb Polygon) → light_mask auch 0 setzen
+            light_mask_clamped = ImageChops.multiply(
+                light_mask.convert('RGB'),
+                Image.merge('RGB', [darkness_mask]*3)
+            ).convert('L')
+            
+            # Jetzt subtrahieren (nur noch innerhalb Polygon)
+            final_darkness_mask = ImageChops.subtract(darkness_mask, light_mask_clamped)
+            
+            # DEBUG: Prüfe finale Maske
+            final_array = np.array(final_darkness_mask)
+            final_nonzero = np.count_nonzero(final_array)
+            final_max = np.max(final_array) if final_nonzero > 0 else 0
+            print(f"🔍 Final-Mask nach Light-Subtract: {final_nonzero} pixels dunkel (max={final_max})")
+            
+            # Erstelle KOMPLETT TRANSPARENTEN Layer als Basis
+            result = Image.new('RGBA', (img_width, img_height), (0, 0, 0, 0))
+            
+            print(f"🔍 Result-Layer erstellt: {result.size}, Mode={result.mode}")
+            
+            # Erstelle dunklen Layer NUR wo die finale Maske aktiv ist
+            darkness_value = int((1.0 - self.darkness_opacity) * 255)
+            darkness_layer = Image.new('RGBA', (img_width, img_height), 
+                                      (darkness_value, darkness_value, darkness_value, 255))
+            darkness_layer.putalpha(final_darkness_mask)
+            
+            print(f"🔍 Darkness-Layer: RGB=({darkness_value},{darkness_value},{darkness_value}), Opacity={self.darkness_opacity}")
+            
+            # Composite: Dunkelheit über transparentem Hintergrund
+            result = Image.alpha_composite(result, darkness_layer)
+            
+            # Addiere farbiges Licht darüber - ABER NUR IM POLYGON!
+            # Clamp light auf darkness_mask Bereich
+            light_rgba = light_layer.convert('RGBA')
+            
+            # Erstelle Maske für Lichter: Nur innerhalb des Polygons sichtbar
+            # Erweitere darkness_mask zu RGBA für Composite
+            light_region_mask = Image.new('L', (img_width, img_height), 0)
+            light_region_mask.paste(darkness_mask, (0, 0))  # Kopiere Polygon-Bereich
+            
+            # Wende Maske auf Licht an (nur im Polygon sichtbar)
+            light_clamped = Image.new('RGBA', (img_width, img_height), (0, 0, 0, 0))
+            # Composite light mit region mask
+            light_alpha = light_rgba.split()[3]  # Original alpha
+            combined_alpha = ImageChops.multiply(
+                light_alpha.convert('RGB'),
+                Image.merge('RGB', [light_region_mask]*3)
+            ).convert('L')
+            light_rgba.putalpha(combined_alpha)
+            
+            result = Image.alpha_composite(result, light_rgba)
+            
+            # DEBUG: Prüfe finales Result
+            result_array = np.array(result)
+            non_transparent = np.count_nonzero(result_array[:,:,3] > 0)  # Alpha-Kanal > 0
+            print(f"🔍 Final Result: {non_transparent} nicht-transparente pixels (should be ~{nonzero_pixels})")
+            
+            return result
+            
+        else:
+            # NACHTMODUS: Nur additive Lichtquellen, KEIN Darkness-Overlay
+            # Die Map bleibt sichtbar, nur Lichtquellen werden hinzugefügt
+            light_rgba = light_layer.convert('RGBA')
+            return light_rgba
     
     def update_animation(self, delta_time: float = 0.016):
         """
@@ -491,7 +596,10 @@ class LightingEngine:
             "lights": [light.to_dict() for light in self.lights],
             "ambient_color": self.ambient_color,
             "ambient_intensity": self.ambient_intensity,
-            "enabled": self.enabled
+            "enabled": self.enabled,
+            "lighting_mode": self.lighting_mode,
+            "darkness_opacity": self.darkness_opacity,
+            "darkness_polygons": self.darkness_polygons
         }
         
     def from_dict(self, data: Dict):
@@ -500,6 +608,9 @@ class LightingEngine:
         self.ambient_color = tuple(data.get("ambient_color", [30, 30, 40]))
         self.ambient_intensity = data.get("ambient_intensity", 0.2)
         self.enabled = data.get("enabled", True)
+        self.lighting_mode = data.get("lighting_mode", "night")
+        self.darkness_opacity = data.get("darkness_opacity", 0.85)
+        self.darkness_polygons = data.get("darkness_polygons", [])
 
 
 # Preset Lichtquellen mit optimierten physikalischen Parametern

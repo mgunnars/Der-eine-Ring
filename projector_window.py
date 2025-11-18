@@ -114,23 +114,19 @@ class ProjectorWindow(tk.Toplevel):
             print(f"🔍 DEBUG: 'lighting' key gefunden in map_data")
             lighting_data = self.map_data["lighting"]
             print(f"🔍 DEBUG: lighting_data keys = {lighting_data.keys()}")
-            if "lights" in lighting_data:
-                print(f"🔍 DEBUG: Lade {len(lighting_data['lights'])} Lichter...")
-                from lighting_system import LightSource
-                for i, light_dict in enumerate(lighting_data["lights"]):
-                    print(f"   Light {i}: {light_dict}")
-                    try:
-                        light = LightSource.from_dict(light_dict)
-                        self.lighting_engine.add_light(light)
-                        print(f"   ✅ Light {i} geladen: pos=({light.x},{light.y}), type={light.light_type}")
-                    except Exception as e:
-                        print(f"   ❌ Fehler bei Light {i}: {e}")
+            
+            # Lade ALLE Lighting-Einstellungen (Mode, Darkness-Polygone, etc.)
+            self.lighting_engine.from_dict(lighting_data)
+            
             # Projektor: Lighting automatisch aktivieren wenn Lichtquellen vorhanden
             if self.lighting_engine.lights:
                 self.lighting_enabled = True
             else:
                 self.lighting_enabled = lighting_data.get("enabled", False)
+            
             print(f"💡 Projektor: {len(self.lighting_engine.lights)} Lichtquellen geladen")
+            print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
+            print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
         
         # Auto-Switch für Detail-Maps
         self.auto_detail_switch = True
@@ -434,13 +430,18 @@ class ProjectorWindow(tk.Toplevel):
                 radius_scale=radius_scale
             )
             
-            # Lighting über Map compositen (Screen/Add Blending für leuchtende Bereiche)
-            # Verwende ImageChops.screen für additives Licht das die Map aufhellt
-            from PIL import ImageChops
-            map_rgb = map_image.convert('RGB')
-            light_rgb = lighting_overlay.convert('RGB')
-            lit_map = ImageChops.screen(map_rgb, light_rgb)  # Additive Blending
-            map_image = lit_map.convert('RGBA')
+            print(f"🔍 Map-Image vor Composite: {map_image.size}, Mode={map_image.mode}")
+            print(f"🔍 Lighting-Overlay: {lighting_overlay.size}, Mode={lighting_overlay.mode}")
+            
+            # WICHTIG: Map muss RGBA sein für alpha_composite!
+            if map_image.mode != 'RGBA':
+                map_image = map_image.convert('RGBA')
+            
+            # Lighting über Map compositen (mit Darkness-Layer)
+            map_image = Image.alpha_composite(map_image, lighting_overlay)
+            
+            print(f"🔍 Map-Image nach Composite: {map_image.size}, Mode={map_image.mode}")
+            
             # Zurück zu RGB für Fog-Rendering
             map_image = map_image.convert('RGB')
         
@@ -965,20 +966,14 @@ class ProjectorWindow(tk.Toplevel):
                 lighting_cropped = lighting_full.crop((crop_x, crop_y, full_width, full_height))
                 lighting_viewport.paste(lighting_cropped, (paste_x, paste_y))
             
-            # Composite Lighting über Map (Screen Blending für leuchtende Bereiche)
+            # Composite Lighting über Map (mit Darkness-Layer)
             from PIL import ImageChops
             if lighting_viewport.size == viewport_img.size:
-                map_rgb = viewport_img.convert('RGB')
-                light_rgb = lighting_viewport.convert('RGB')
-                lit_map = ImageChops.screen(map_rgb, light_rgb)
-                viewport_img = lit_map.convert('RGBA')
+                viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
             else:
                 # Fallback: Resize Lighting-Viewport
                 lighting_viewport = lighting_viewport.resize(viewport_img.size, Image.LANCZOS)
-                map_rgb = viewport_img.convert('RGB')
-                light_rgb = lighting_viewport.convert('RGB')
-                lit_map = ImageChops.screen(map_rgb, light_rgb)
-                viewport_img = lit_map.convert('RGBA')
+                viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
         elif not self.lighting_enabled:
             print(f"⚠️ Lighting disabled")
         elif not self.lighting_engine.lights:
