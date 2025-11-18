@@ -41,7 +41,16 @@ class TextureManager:
             "stone": "#9e8b7c",      # Stein-Pfad
             "dirt": "#a08567",       # Erdweg
             "road": "#8a7560",       # Gepflasterter Weg
-            "village": "#c4a574"     # Gebäude-Farbe
+            "village": "#c4a574",    # Gebäude-Farbe
+            # Light-Emitting Objects
+            "torch": "#ff6600",      # 🔥 Orange Fackel
+            "candle": "#ffe066",     # 🕯️ Gelbe Kerze
+            "lantern": "#ffd966",    # 🏮 Laterne
+            "fire": "#ff4400",       # 🔥 Helles Feuer
+            "campfire": "#ff5522",   # 🔥 Lagerfeuer
+            "window": "#c8dcff",     # 🪟 Fenster (Tageslicht)
+            "magic_circle": "#9966ff", # ✨ Magischer Kreis
+            "crystal": "#aa99ff"     # 💎 Kristall
         }
     
     def get_color(self, terrain_type):
@@ -84,7 +93,16 @@ class TextureManager:
             "dirt": self.generate_dirt_texture,
             "road": self.generate_road_texture,
             "village": self.generate_village_texture,
-            "empty": self.generate_empty_texture
+            "empty": self.generate_empty_texture,
+            # Light-Emitting Objects
+            "torch": self.generate_torch_texture,
+            "candle": self.generate_candle_texture,
+            "lantern": self.generate_lantern_texture,
+            "fire": self.generate_fire_texture,
+            "campfire": self.generate_campfire_texture,
+            "window": self.generate_window_texture,
+            "magic_circle": self.generate_magic_circle_texture,
+            "crystal": self.generate_crystal_texture
         }
         
         generator = generators.get(terrain_type, self.generate_empty_texture)
@@ -478,6 +496,223 @@ class TextureManager:
                       fill=(60, 40, 25))
         
         random.seed()  # Reset
+        
+        return img
+    
+    # ========== LIGHT-EMITTING TEXTURES ==========
+    
+    def generate_torch_texture(self, size):
+        """🔥 Fackel mit warmem Orange-Glow"""
+        img = Image.new('RGB', (size, size), (40, 30, 20))  # Dunkler Hintergrund
+        draw = ImageDraw.Draw(img)
+        
+        # Fackel-Halter (Holz)
+        holder_x = size // 2 - size // 8
+        holder_width = size // 4
+        draw.rectangle([holder_x, size // 2, holder_x + holder_width, size - size // 6],
+                      fill=(80, 60, 30))
+        
+        # Flamme (orange-gelb Gradient)
+        flame_center_x = size // 2
+        flame_center_y = size // 3
+        
+        # Outer Glow (orange)
+        for radius in range(size // 3, 0, -2):
+            intensity = radius / (size // 3)
+            r = int(255 * intensity)
+            g = int(100 * intensity)
+            draw.ellipse([flame_center_x - radius, flame_center_y - radius,
+                         flame_center_x + radius, flame_center_y + radius],
+                        fill=(r, g, 0))
+        
+        # Inner Core (bright yellow)
+        core_radius = size // 6
+        draw.ellipse([flame_center_x - core_radius, flame_center_y - core_radius,
+                     flame_center_x + core_radius, flame_center_y + core_radius],
+                    fill=(255, 220, 100))
+        
+        return img
+    
+    def generate_candle_texture(self, size):
+        """🕯️ Kerze mit sanftem gelben Licht"""
+        img = Image.new('RGB', (size, size), (30, 25, 20))
+        draw = ImageDraw.Draw(img)
+        
+        # Kerzen-Körper (weiß)
+        candle_x = size // 2 - size // 6
+        candle_width = size // 3
+        draw.rectangle([candle_x, size // 2, candle_x + candle_width, size - size // 8],
+                      fill=(240, 235, 220))
+        
+        # Flamme (kleiner als Fackel)
+        flame_x = size // 2
+        flame_y = size // 3
+        
+        for radius in range(size // 4, 0, -2):
+            intensity = radius / (size // 4)
+            r = int(255 * intensity)
+            g = int(220 * intensity)
+            b = int(150 * intensity)
+            draw.ellipse([flame_x - radius, flame_y - radius,
+                         flame_x + radius, flame_y + radius],
+                        fill=(r, g, b))
+        
+        return img
+    
+    def generate_lantern_texture(self, size):
+        """🏮 Laterne mit Metallrahmen"""
+        img = Image.new('RGB', (size, size), (30, 25, 20))
+        draw = ImageDraw.Draw(img)
+        
+        # Laternen-Rahmen (Metall)
+        frame_inset = size // 4
+        draw.rectangle([frame_inset, frame_inset, size - frame_inset, size - frame_inset],
+                      outline=(120, 100, 70), width=2)
+        
+        # Glas-Fenster (leicht transparent wirkend)
+        draw.rectangle([frame_inset + 2, frame_inset + 2, 
+                       size - frame_inset - 2, size - frame_inset - 2],
+                      fill=(80, 70, 50))
+        
+        # Kerzen-Licht innen
+        center = size // 2
+        for radius in range(size // 3, 0, -2):
+            intensity = radius / (size // 3)
+            r = int(255 * intensity)
+            g = int(200 * intensity)
+            draw.ellipse([center - radius, center - radius,
+                         center + radius, center + radius],
+                        fill=(r, g, 100))
+        
+        return img
+    
+    def generate_fire_texture(self, size):
+        """🔥 Feuer (Lagerfeuer, intensiv)"""
+        img = Image.new('RGB', (size, size), (20, 15, 10))
+        draw = ImageDraw.Draw(img)
+        
+        # Holzscheite
+        random.seed(size)
+        for i in range(3):
+            x = random.randint(size // 6, size - size // 3)
+            y = size - size // 4 + i * 3
+            draw.rectangle([x, y, x + size // 3, y + 4], fill=(60, 40, 20))
+        
+        # Große Flammen (orange-rot)
+        center = size // 2
+        for radius in range(size // 2, 0, -3):
+            intensity = radius / (size // 2)
+            r = 255
+            g = int(80 * intensity)
+            draw.ellipse([center - radius, center - radius,
+                         center + radius, center + radius],
+                        fill=(r, g, 0))
+        
+        # Heiße Kern (gelb)
+        core = size // 5
+        draw.ellipse([center - core, center - core, center + core, center + core],
+                    fill=(255, 200, 50))
+        
+        random.seed()
+        return img
+    
+    def generate_campfire_texture(self, size):
+        """🔥 Lagerfeuer mit Steinen"""
+        img = self.generate_fire_texture(size)
+        draw = ImageDraw.Draw(img)
+        
+        # Steine drum herum
+        random.seed(size + 1)
+        for i in range(6):
+            angle = i * 60
+            rad = math.radians(angle)
+            x = int(size // 2 + math.cos(rad) * size // 3)
+            y = int(size // 2 + math.sin(rad) * size // 3)
+            stone_size = size // 8
+            draw.ellipse([x, y, x + stone_size, y + stone_size],
+                        fill=(100, 90, 80))
+        
+        random.seed()
+        return img
+    
+    def generate_window_texture(self, size):
+        """🪟 Fenster mit Tageslicht"""
+        img = Image.new('RGB', (size, size), (50, 45, 40))
+        draw = ImageDraw.Draw(img)
+        
+        # Fensterrahmen (Holz)
+        frame_width = 3
+        draw.rectangle([0, 0, size, size], outline=(80, 60, 40), width=frame_width)
+        
+        # Kreuz in der Mitte
+        draw.line([size // 2, 0, size // 2, size], fill=(80, 60, 40), width=frame_width)
+        draw.line([0, size // 2, size, size // 2], fill=(80, 60, 40), width=frame_width)
+        
+        # Himmelslicht (hellblau)
+        light_inset = frame_width + 2
+        draw.rectangle([light_inset, light_inset, size - light_inset, size - light_inset],
+                      fill=(200, 220, 255))
+        
+        return img
+    
+    def generate_magic_circle_texture(self, size):
+        """✨ Magischer Kreis mit violettem Glühen"""
+        img = Image.new('RGB', (size, size), (20, 15, 25))
+        draw = ImageDraw.Draw(img)
+        
+        center = size // 2
+        
+        # Äußerer Glow (violett)
+        for radius in range(size // 2, 0, -2):
+            intensity = radius / (size // 2)
+            r = int(150 * intensity)
+            g = int(100 * intensity)
+            b = int(255 * intensity)
+            draw.ellipse([center - radius, center - radius,
+                         center + radius, center + radius],
+                        fill=(r, g, b))
+        
+        # Magische Runen (Linien)
+        for angle in range(0, 360, 45):
+            rad = math.radians(angle)
+            x1 = int(center + math.cos(rad) * size // 4)
+            y1 = int(center + math.sin(rad) * size // 4)
+            x2 = int(center + math.cos(rad) * size // 2.5)
+            y2 = int(center + math.sin(rad) * size // 2.5)
+            draw.line([x1, y1, x2, y2], fill=(200, 150, 255), width=2)
+        
+        # Heller Kern
+        core = size // 6
+        draw.ellipse([center - core, center - core, center + core, center + core],
+                    fill=(220, 180, 255))
+        
+        return img
+    
+    def generate_crystal_texture(self, size):
+        """💎 Kristall mit magischem Glühen"""
+        img = Image.new('RGB', (size, size), (25, 20, 30))
+        draw = ImageDraw.Draw(img)
+        
+        center = size // 2
+        
+        # Kristall-Form (Diamant)
+        points = [
+            (center, size // 6),              # Top
+            (size - size // 6, center),       # Right
+            (center, size - size // 6),       # Bottom
+            (size // 6, center)               # Left
+        ]
+        draw.polygon(points, fill=(170, 150, 230), outline=(200, 180, 255))
+        
+        # Inner Glow
+        for radius in range(size // 3, 0, -2):
+            intensity = radius / (size // 3)
+            r = int(200 * intensity)
+            g = int(180 * intensity)
+            b = 255
+            draw.ellipse([center - radius, center - radius,
+                         center + radius, center + radius],
+                        fill=(r, g, b))
         
         return img
     

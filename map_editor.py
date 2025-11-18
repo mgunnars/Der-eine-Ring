@@ -1,11 +1,11 @@
 """
 Map Editor für "Der Eine Ring"
-Vollständiger Karten-Editor mit Material-Manager und River-Direktions-System
+Vollständiger Karten-Editor mit Material-Manager, River-Direktions-System und Layer-System
 Extrahiert aus main.py für modulare Nutzung
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from PIL import Image, ImageTk
+from tkinter import ttk, messagebox, filedialog, simpledialog
+from PIL import Image, ImageTk, ImageDraw
 import subprocess
 import sys
 import os
@@ -14,10 +14,22 @@ from map_system import MapSystem
 from advanced_texture_renderer import AdvancedTextureRenderer
 from material_manager import MaterialBar, MaterialManagerWindow
 from material_bundle_manager import MaterialBundleManager
+from layer_manager import LayerManager, LayerPanel
+from advanced_drawing_tools import BezierCurveTool, PolygonTool, TextTool, TransformTool
+from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
         super().__init__(parent, bg="#2a2a2a")
+        
+        # DEBUG: Zeige was übergeben wurde
+        print(f"\n🔍 MapEditor.__init__ aufgerufen:")
+        print(f"   width={width}, height={height}")
+        print(f"   map_data={'vorhanden' if map_data else 'None'}")
+        if map_data:
+            print(f"   map_data.keys() = {list(map_data.keys())}")
+            print(f"   tiles vorhanden: {'tiles' in map_data}")
+        
         self.width = width
         self.height = height
         
@@ -27,15 +39,27 @@ class MapEditor(tk.Frame):
         # Bundle Manager initialisieren
         self.bundle_manager = MaterialBundleManager()
         
+        # SVG-Mode Support
+        self.is_svg_mode = False
+        self.svg_source_path = None
+        
         # Wenn Map-Daten übergeben wurden, diese laden
         if map_data:
+            # Prüfe ob SVG-Mode
+            if map_data.get("is_svg_mode"):
+                self.is_svg_mode = True
+                self.svg_source_path = map_data.get("svg_path")
+                print(f"📐 SVG-Mode aktiviert: {self.svg_source_path}")
+            
             self.width = map_data.get("width", width)
             self.height = map_data.get("height", height)
             self.map = map_data.get("tiles", self.create_empty_map())
             self.river_directions = map_data.get("river_directions", {})
+            print(f"✅ Map-Daten geladen: {self.width}×{self.height}, {len(self.map)} Zeilen")
         else:
             self.map = self.create_empty_map()
             self.river_directions = {}
+            print(f"🆕 Neue leere Map erstellt: {self.width}×{self.height}")
         
         # Advanced Texture Renderer
         self.texture_renderer = AdvancedTextureRenderer()
@@ -97,6 +121,55 @@ class MapEditor(tk.Frame):
         self.brush_size = 1  # Wie viele Tiles der Pinsel malt
         self.is_drawing = False
         
+        # === PROFESSIONAL DRAWING TOOLS ===
+        self.active_tool = tk.StringVar(value="brush")  # brush, fill, eyedropper, eraser, shape, line, select
+        self.shape_tool = tk.StringVar(value="rectangle")  # rectangle, circle, line
+        self.fill_connected_only = tk.BooleanVar(value=True)  # Nur verbundene Tiles füllen
+        self.symmetry_mode = tk.BooleanVar(value=False)  # Symmetrisches Zeichnen
+        self.symmetry_axis = tk.StringVar(value="vertical")  # vertical, horizontal, both
+        
+        # Shape drawing state
+        self.shape_start = None
+        self.shape_preview = []  # Liste der Preview-Tiles
+        
+        # Selection state
+        self.selection_area = None  # (x1, y1, x2, y2)
+        self.selection_content = None  # Kopierte Tiles
+        
+        # Undo/Redo
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_undo = 50
+        
+        # Layer-System initialisieren
+        self.layer_manager = LayerManager()
+        
+        # Erweiterte Zeichentools
+        self.bezier_tool = BezierCurveTool()
+        self.polygon_tool = PolygonTool()
+        self.text_tool = TextTool()
+        self.transform_tool = TransformTool()
+        
+        # Lighting System
+        self.lighting_engine = LightingEngine()
+        self.show_lighting = tk.BooleanVar(value=False)
+        self.selected_light_preset = "torch"
+        self.radius_scale_var = tk.DoubleVar(value=1.0)
+        self.lighting_update_id = None  # Timer für Animation
+        self.lighting_time = 0.0  # Zeit für Flicker-Animation
+        
+        # Material → Light Mapping (welche Materials erzeugen Lichtquellen)
+        self.light_emitting_materials = {
+            "torch": {"preset": "torch", "icon": "🔥"},
+            "candle": {"preset": "candle", "icon": "🕯️"},
+            "lantern": {"preset": "candle", "icon": "🏮"},
+            "fire": {"preset": "fire", "icon": "🔥"},
+            "campfire": {"preset": "fire", "icon": "🔥"},
+            "window": {"preset": "window", "icon": "🪟"},
+            "magic_circle": {"preset": "magic", "icon": "✨"},
+            "crystal": {"preset": "magic", "icon": "💎"}
+        }
+        
         # Selected terrain - WICHTIG: Vor UI-Setup initialisieren!
         self.selected_terrain = "grass"
         
@@ -109,19 +182,28 @@ class MapEditor(tk.Frame):
         tile_height = available_height / self.height
         self.tile_size = int(min(tile_width, tile_height))
         self.tile_size = max(self.tile_size, 16)
-        self.tile_size = min(self.tile_size, 64)
+        
+        # Im SVG-Mode: Größere Tiles erlauben für bessere Darstellung
+        if self.is_svg_mode:
+            self.tile_size = min(self.tile_size, 128)  # Bis zu 128px für SVG
+            print(f"   SVG-Mode: Tile-Größe = {self.tile_size}px")
+        else:
+            self.tile_size = min(self.tile_size, 64)
         
         # Performance-Mode bei großen Maps (>1000 Tiles)
         self.total_tiles = self.width * self.height
         self.performance_mode = self.total_tiles > 1000
         
-        if self.performance_mode:
+        if self.performance_mode and not self.is_svg_mode:  # Nicht im SVG-Mode!
             print(f"⚡ Performance-Mode aktiviert ({self.total_tiles} Tiles)")
             print(f"   - Kleinere Tile-Größe (max 32px)")
             print(f"   - Koordinaten standardmäßig aus")
             self.tile_size = min(self.tile_size, 32)  # Noch kleiner bei großen Maps
         
         self.setup_ui()
+        
+        # Starte Lighting-Animation
+        self.start_lighting_animation()
 
     def create_empty_map(self):
         return [["empty" for _ in range(self.width)] for _ in range(self.height)]
@@ -152,28 +234,85 @@ class MapEditor(tk.Frame):
         tk.Button(file_frame, text="📤 SVG", bg="#2a5d7d", fg="white",
                  font=("Arial", 9), command=self.export_as_svg).pack(side=tk.LEFT, padx=2)
         
-        # Draw Mode
-        mode_frame = tk.LabelFrame(top_frame, text="🖌️ Modus", bg="#1a1a1a", fg="white", font=("Arial", 9))
-        mode_frame.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.Y)
+        # Edit Operations
+        edit_frame = tk.LabelFrame(top_frame, text="✏️ Bearbeiten", bg="#1a1a1a", fg="white", font=("Arial", 9))
+        edit_frame.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.Y)
         
-        tk.Radiobutton(mode_frame, text="📍 Tile", variable=self.draw_mode, value="tile",
-                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
+        tk.Button(edit_frame, text="↶", bg="#3a3a3a", fg="white",
+                 font=("Arial", 12, "bold"), width=3,
+                 command=self.undo).pack(side=tk.LEFT, padx=2)
+        tk.Button(edit_frame, text="↷", bg="#3a3a3a", fg="white",
+                 font=("Arial", 12, "bold"), width=3,
+                 command=self.redo).pack(side=tk.LEFT, padx=2)
         
-        tk.Radiobutton(mode_frame, text="🖌️ Pinsel", variable=self.draw_mode, value="brush",
-                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
-                      font=("Arial", 9)).pack(side=tk.LEFT, padx=5)
+        # === TOOL PALETTE - Professional VTT Style ===
+        tool_frame = tk.LabelFrame(top_frame, text="🛠️ Werkzeuge", bg="#1a1a1a", fg="white", font=("Arial", 9, "bold"))
+        tool_frame.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.Y)
         
-        # Brush Size
+        # Tool-Buttons (2 Reihen)
+        tool_row1 = tk.Frame(tool_frame, bg="#1a1a1a")
+        tool_row1.pack(padx=3, pady=2)
+        
+        tools_top = [
+            ("🖌️", "brush", "Pinsel (B)"),
+            ("🪣", "fill", "Füllen (F)"),
+            ("💧", "eyedropper", "Pipette (I)"),
+            ("🧹", "eraser", "Radierer (E)")
+        ]
+        
+        for icon, tool, tooltip in tools_top:
+            self._create_tool_button(tool_row1, icon, tool, tooltip)
+        
+        tool_row2 = tk.Frame(tool_frame, bg="#1a1a1a")
+        tool_row2.pack(padx=3, pady=2)
+        
+        tools_bottom = [
+            ("⬜", "rectangle", "Rechteck (R)"),
+            ("⭕", "circle", "Kreis (C)"),
+            ("📏", "line", "Linie (L)"),
+            ("✂️", "select", "Auswahl (S)")
+        ]
+        
+        for icon, tool, tooltip in tools_bottom:
+            self._create_tool_button(tool_row2, icon, tool, tooltip)
+        
+        # Tool Row 3 - NEUE ERWEITERTE TOOLS
+        tool_row3 = tk.Frame(tool_frame, bg="#1a1a1a")
+        tool_row3.pack(padx=3, pady=2)
+        
+        tools_advanced = [
+            ("🌊", "curve", "Kurve (V)"),
+            ("⬟", "polygon", "Polygon (P)"),
+            ("📝", "text", "Text (T)"),
+            ("💡", "light", "Licht (G)")
+        ]
+        
+        for icon, tool, tooltip in tools_advanced:
+            self._create_tool_button(tool_row3, icon, tool, tooltip)
+        
+        # Brush Size (nur für Pinsel/Radierer)
+        size_frame = tk.Frame(tool_frame, bg="#1a1a1a")
+        size_frame.pack(padx=5, pady=3)
+        
         self.brush_size_var = tk.IntVar(value=1)
-        tk.Label(mode_frame, text="Größe:", bg="#1a1a1a", fg="white",
-                font=("Arial", 8)).pack(side=tk.LEFT, padx=(10, 2))
-        brush_scale = tk.Scale(mode_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+        tk.Label(size_frame, text="Größe:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
+        self.brush_scale = tk.Scale(size_frame, from_=1, to=15, orient=tk.HORIZONTAL,
                               variable=self.brush_size_var, 
                               command=lambda v: setattr(self, 'brush_size', int(v)),
                               bg="#2a2a2a", fg="white", troughcolor="#1a1a1a",
-                              highlightthickness=0, length=80, width=10)
-        brush_scale.pack(side=tk.LEFT, padx=2)
+                              highlightthickness=0, length=100, width=10)
+        self.brush_scale.pack(side=tk.LEFT, padx=2)
+        
+        # Symmetrie Toggle
+        sym_frame = tk.Frame(tool_frame, bg="#1a1a1a")
+        sym_frame.pack(padx=5, pady=2)
+        
+        tk.Checkbutton(sym_frame, text="↔️", variable=self.symmetry_mode,
+                      bg="#1a1a1a", fg="white", selectcolor="#2a5d8d",
+                      font=("Arial", 10)).pack(side=tk.LEFT)
+        tk.Label(sym_frame, text="Sym.", bg="#1a1a1a", fg="#888",
+                font=("Arial", 7)).pack(side=tk.LEFT, padx=2)
         
         # MapDraw Button
         tk.Button(top_frame, text="🎨 MapDraw", bg="#8d5a2a", fg="white",
@@ -278,6 +417,15 @@ class MapEditor(tk.Frame):
             tk.Label(info_frame, text="⚡ Performance-Mode", 
                     bg="#1a1a1a", fg="#ff8800", font=("Arial", 9, "bold")).pack(pady=2)
         
+        # Layer Panel - NEU!
+        layer_panel_frame = tk.LabelFrame(right_frame, text="🎨 Layers", bg="#1a1a1a", 
+                                          fg="white", font=("Arial", 9, "bold"))
+        layer_panel_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.layer_panel = LayerPanel(layer_panel_frame, self.layer_manager, 
+                                      on_layer_change=self.on_layer_change)
+        self.layer_panel.pack(fill=tk.BOTH, expand=True)
+        
         # Display Options
         display_frame = tk.LabelFrame(right_frame, text="👁️ Anzeige", bg="#1a1a1a", 
                                       fg="white", font=("Arial", 9, "bold"))
@@ -286,6 +434,49 @@ class MapEditor(tk.Frame):
         tk.Checkbutton(display_frame, text="Koordinaten", variable=self.show_coordinates,
                       bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
                       font=("Arial", 9), command=self.draw_grid).pack(anchor=tk.W, padx=5, pady=2)
+        
+        tk.Checkbutton(display_frame, text="💡 Dynamic Lighting", variable=self.show_lighting,
+                      bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                      font=("Arial", 9), command=self.toggle_lighting).pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Lighting Panel
+        lighting_frame = tk.LabelFrame(right_frame, text="💡 Beleuchtung", bg="#1a1a1a",
+                                      fg="white", font=("Arial", 9, "bold"))
+        lighting_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(lighting_frame, text="Licht-Typ:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=2)
+        
+        light_presets = ["torch", "candle", "window", "magic", "fire", "moonlight"]
+        for preset in light_presets:
+            icons = {"torch": "🔥", "candle": "🕯️", "window": "🪟", 
+                    "magic": "✨", "fire": "🔥", "moonlight": "🌙"}
+            tk.Radiobutton(lighting_frame, text=f"{icons.get(preset, '💡')} {preset.title()}",
+                          variable=tk.StringVar(value=self.selected_light_preset),
+                          value=preset, bg="#1a1a1a", fg="white", selectcolor="#2a2a2a",
+                          font=("Arial", 8),
+                          command=lambda p=preset: setattr(self, 'selected_light_preset', p)
+                          ).pack(anchor=tk.W, padx=10)
+        
+        tk.Button(lighting_frame, text="🗑️ Alle Lichter löschen", bg="#7d2a2a", fg="white",
+                 font=("Arial", 8), command=self.clear_all_lights).pack(pady=5, padx=5)
+        
+        # Radius-Skalierung
+        tk.Label(lighting_frame, text="Licht-Radius:", bg="#1a1a1a", fg="white",
+                font=("Arial", 8)).pack(anchor=tk.W, padx=5, pady=(10, 2))
+        
+        radius_frame = tk.Frame(lighting_frame, bg="#1a1a1a")
+        radius_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        self.radius_scale_var = tk.DoubleVar(value=1.0)
+        tk.Scale(radius_frame, from_=0.3, to=3.0, resolution=0.1, orient=tk.HORIZONTAL,
+                variable=self.radius_scale_var, command=self.update_radius_scale,
+                bg="#2a2a2a", fg="white", highlightthickness=0,
+                troughcolor="#404040", activebackground="#3a3a3a").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.radius_label = tk.Label(radius_frame, text="1.0x", bg="#1a1a1a", fg="white",
+                                    font=("Arial", 9, "bold"), width=5)
+        self.radius_label.pack(side=tk.LEFT, padx=5)
         
         # River Direction
         river_frame = tk.LabelFrame(right_frame, text="🌊 Fluss-Richtung", bg="#1a1a1a",
@@ -356,6 +547,178 @@ class MapEditor(tk.Frame):
         
         # Zoom mit Mausrad (Strg+Scroll)
         self.canvas.bind("<Control-MouseWheel>", self.on_zoom)
+        
+        # === KEYBOARD SHORTCUTS ===
+        self.bind_all("<KeyPress-b>", lambda e: self.select_tool("brush"))
+        self.bind_all("<KeyPress-f>", lambda e: self.select_tool("fill"))
+        self.bind_all("<KeyPress-i>", lambda e: self.select_tool("eyedropper"))
+        self.bind_all("<KeyPress-e>", lambda e: self.select_tool("eraser"))
+        self.bind_all("<KeyPress-r>", lambda e: self.select_tool("rectangle"))
+        self.bind_all("<KeyPress-c>", lambda e: self.select_tool("circle"))
+        self.bind_all("<KeyPress-l>", lambda e: self.select_tool("line"))
+        self.bind_all("<KeyPress-s>", lambda e: self.select_tool("select"))
+        
+        # Neue erweiterte Tools
+        self.bind_all("<KeyPress-v>", lambda e: self.select_tool("curve"))
+        self.bind_all("<KeyPress-p>", lambda e: self.select_tool("polygon"))
+        self.bind_all("<KeyPress-t>", lambda e: self.select_tool("text"))
+        self.bind_all("<KeyPress-g>", lambda e: self.select_tool("light"))  # G für "Glow"
+        
+        # Curve/Polygon Finalisierung
+        self.bind_all("<Return>", lambda e: self.finalize_advanced_tool())
+        self.bind_all("<Escape>", lambda e: self.cancel_advanced_tool())
+        
+        # Undo/Redo
+        self.bind_all("<Control-z>", lambda e: self.undo())
+        self.bind_all("<Control-y>", lambda e: self.redo())
+        
+        # Brush Size
+        self.bind_all("<KeyPress-bracketleft>", lambda e: self.adjust_brush_size(-1))  # [
+        self.bind_all("<KeyPress-bracketright>", lambda e: self.adjust_brush_size(1))  # ]
+    
+    def adjust_brush_size(self, delta):
+        """Ändert Pinselgröße mit Tastatur"""
+        new_size = max(1, min(15, self.brush_size + delta))
+        self.brush_size_var.set(new_size)
+        self.brush_size = new_size
+        print(f"🖌️ Pinselgröße: {new_size}")
+    
+    def _create_tool_button(self, parent, icon, tool, tooltip):
+        """Erstellt einen Tool-Button mit Highlight"""
+        is_active = self.active_tool.get() == tool
+        
+        btn = tk.Button(
+            parent,
+            text=icon,
+            bg="#2a5d8d" if is_active else "#3a3a3a",
+            fg="white",
+            font=("Arial", 14),
+            width=3,
+            height=1,
+            relief=tk.SUNKEN if is_active else tk.RAISED,
+            command=lambda: self.select_tool(tool)
+        )
+        btn.pack(side=tk.LEFT, padx=2)
+        
+        # Tooltip (einfache Variante)
+        btn.bind("<Enter>", lambda e: btn.config(cursor="hand2"))
+        btn.bind("<Leave>", lambda e: btn.config(cursor=""))
+        
+        return btn
+    
+    def select_tool(self, tool):
+        """Wählt ein Zeichentool aus"""
+        self.active_tool.set(tool)
+        print(f"🛠️ Tool gewählt: {tool}")
+        
+        # UI-Update: Alle Tool-Buttons neu färben
+        # (wird beim nächsten setup_ui automatisch gemacht)
+        
+        # Cursor ändern
+        cursor_map = {
+            "brush": "pencil",
+            "fill": "spraycan",
+            "eyedropper": "target",
+            "eraser": "X_cursor",
+            "rectangle": "crosshair",
+            "circle": "crosshair",
+            "line": "crosshair",
+            "select": "cross"
+        }
+        self.canvas.config(cursor=cursor_map.get(tool, ""))
+    
+    def save_undo_state(self):
+        """Speichert den aktuellen Map-Zustand für Undo"""
+        # Deep copy der Map
+        import copy
+        state = copy.deepcopy(self.map)
+        
+        self.undo_stack.append(state)
+        
+        # Limit undo stack
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
+        
+        # Redo stack leeren bei neuer Aktion
+        self.redo_stack.clear()
+    
+    def finalize_advanced_tool(self):
+        """Schließt Curve oder Polygon ab (Enter)"""
+        tool = self.active_tool.get()
+        
+        if tool == "curve" and len(self.bezier_tool.points) >= 2:
+            # Zeichne Kurve auf Map
+            self.save_undo_state()
+            curve_points = self.bezier_tool.get_curve_points()
+            for x, y in curve_points:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    self.map[y][x] = self.selected_terrain
+            
+            # Lösche Vorschau und reset Tool
+            self.canvas.delete("curve_preview")
+            self.bezier_tool.clear()
+            self.draw_grid()
+            print(f"✅ Kurve gezeichnet mit {len(curve_points)} Punkten")
+            
+        elif tool == "polygon" and len(self.polygon_tool.points) >= 3:
+            # Schließe Polygon
+            self.polygon_tool.close_polygon()
+            
+            # Fülle Polygon auf Map
+            self.save_undo_state()
+            tiles = self.polygon_tool.get_tiles_inside(self.width, self.height)
+            for x, y in tiles:
+                self.map[y][x] = self.selected_terrain
+            
+            # Lösche Vorschau und reset Tool
+            self.canvas.delete("polygon_preview")
+            self.polygon_tool.clear()
+            self.draw_grid()
+            print(f"✅ Polygon gezeichnet mit {len(tiles)} Tiles gefüllt")
+    
+    def cancel_advanced_tool(self):
+        """Bricht Curve/Polygon ab (Escape)"""
+        tool = self.active_tool.get()
+        
+        if tool == "curve":
+            self.canvas.delete("curve_preview")
+            self.bezier_tool.clear()
+            print("❌ Kurve abgebrochen")
+            
+        elif tool == "polygon":
+            self.canvas.delete("polygon_preview")
+            self.polygon_tool.clear()
+            print("❌ Polygon abgebrochen")
+    
+    def undo(self):
+        """Macht die letzte Aktion rückgängig"""
+        if not self.undo_stack:
+            print("⚠️ Nichts zum Rückgängig machen")
+            return
+        
+        # Aktuellen Zustand in Redo speichern
+        import copy
+        self.redo_stack.append(copy.deepcopy(self.map))
+        
+        # Letzten Zustand wiederherstellen
+        self.map = self.undo_stack.pop()
+        self.draw_grid()
+        print("↶ Rückgängig")
+    
+    def redo(self):
+        """Stellt rückgängig gemachte Aktion wieder her"""
+        if not self.redo_stack:
+            print("⚠️ Nichts zum Wiederherstellen")
+            return
+        
+        # Aktuellen Zustand in Undo speichern
+        import copy
+        self.undo_stack.append(copy.deepcopy(self.map))
+        
+        # Redo-Zustand wiederherstellen
+        self.map = self.redo_stack.pop()
+        self.draw_grid()
+        print("↷ Wiederhergestellt")
     
     def start_pan(self, event):
         """Startet Pan-Modus"""
@@ -597,6 +960,34 @@ class MapEditor(tk.Frame):
         self.canvas.delete("all")
         self.canvas.image_refs = []
         
+        # SVG als Hintergrundbild anzeigen (falls SVG-Mode)
+        if self.is_svg_mode and self.svg_source_path and os.path.exists(self.svg_source_path):
+            try:
+                from cairosvg import svg2png
+                import io
+                
+                # SVG zu PNG konvertieren (in passender Größe)
+                target_width = self.width * self.tile_size
+                target_height = self.height * self.tile_size
+                
+                png_data = svg2png(url=self.svg_source_path, 
+                                  output_width=target_width,
+                                  output_height=target_height)
+                
+                bg_img = Image.open(io.BytesIO(png_data))
+                bg_photo = ImageTk.PhotoImage(bg_img)
+                
+                # Hintergrundbild zeichnen
+                self.canvas.create_image(0, 0, image=bg_photo, anchor=tk.NW, tags="svg_background")
+                self.canvas.image_refs.append(bg_photo)
+                
+                print(f"✅ SVG als Hintergrund geladen: {target_width}×{target_height}px")
+            except ImportError:
+                print("⚠️ cairosvg nicht installiert - SVG-Hintergrund nicht verfügbar")
+                print("   Installiere mit: pip install cairosvg")
+            except Exception as e:
+                print(f"⚠️ SVG-Hintergrund-Fehler: {e}")
+        
         for y in range(self.height):
             for x in range(self.width):
                 x1 = x * self.tile_size
@@ -604,31 +995,41 @@ class MapEditor(tk.Frame):
                 
                 terrain = self.map[y][x]
                 
-                # Textur rendern
-                texture_img = self.texture_renderer.get_texture(
-                    terrain, 
-                    self.tile_size, 
-                    0  # Statisch
-                )
-                
-                if texture_img:
-                    if terrain == 'village' and texture_img.size[0] > self.tile_size:
-                        offset_x = x1
-                        offset_y = y1 - int(self.tile_size * 2)
-                        photo = ImageTk.PhotoImage(texture_img)
-                        self.canvas.create_image(offset_x, offset_y, image=photo, anchor=tk.NW, 
-                                               tags=f"tile_{x}_{y}")
-                        self.canvas.image_refs.append(photo)
-                    else:
-                        photo = ImageTk.PhotoImage(texture_img)
-                        self.canvas.create_image(x1, y1, image=photo, anchor=tk.NW, 
-                                               tags=f"tile_{x}_{y}")
-                        self.canvas.image_refs.append(photo)
+                # Im SVG-Mode: Optional sehr dünne Grid-Linien (transparent!)
+                if self.is_svg_mode:
+                    # NUR Outline, KEIN Fill (damit SVG sichtbar bleibt)
+                    # Grid-Linien nur bei Bedarf (z.B. beim Zeichnen)
+                    if self.show_coordinates.get():  # Zeige Grid nur wenn Koordinaten aktiv
+                        self.canvas.create_rectangle(x1, y1, x1 + self.tile_size, y1 + self.tile_size,
+                                                    outline="#dddddd", width=1, fill="",
+                                                    tags=f"tile_{x}_{y}")
                 else:
-                    color = self.texture_manager.get_color(terrain)
-                    self.canvas.create_rectangle(x1, y1, x1 + self.tile_size, y1 + self.tile_size,
-                                                fill=color, outline="#333333",
-                                                tags=f"tile_{x}_{y}")
+                    # Normal-Mode: Texturen rendern
+                    # Textur rendern
+                    texture_img = self.texture_renderer.get_texture(
+                        terrain, 
+                        self.tile_size, 
+                        0  # Statisch
+                    )
+                    
+                    if texture_img:
+                        if terrain == 'village' and texture_img.size[0] > self.tile_size:
+                            offset_x = x1
+                            offset_y = y1 - int(self.tile_size * 2)
+                            photo = ImageTk.PhotoImage(texture_img)
+                            self.canvas.create_image(offset_x, offset_y, image=photo, anchor=tk.NW, 
+                                                   tags=f"tile_{x}_{y}")
+                            self.canvas.image_refs.append(photo)
+                        else:
+                            photo = ImageTk.PhotoImage(texture_img)
+                            self.canvas.create_image(x1, y1, image=photo, anchor=tk.NW, 
+                                                   tags=f"tile_{x}_{y}")
+                            self.canvas.image_refs.append(photo)
+                    else:
+                        color = self.texture_manager.get_color(terrain)
+                        self.canvas.create_rectangle(x1, y1, x1 + self.tile_size, y1 + self.tile_size,
+                                                    fill=color, outline="#333333",
+                                                    tags=f"tile_{x}_{y}")
                 
                 # Koordinaten
                 if self.show_coordinates.get():
@@ -647,10 +1048,35 @@ class MapEditor(tk.Frame):
                                           font=("Arial", 6, "bold"),
                                           tags="coordinates")
         
+        # === LIGHTING OVERLAY ===
+        if self.show_lighting.get() and self.lighting_engine.enabled:
+            # Rendere Lighting (mit time_offset für Flicker)
+            lighting_overlay = self.lighting_engine.render_lighting(
+                self.width, self.height, self.tile_size, time_offset=self.lighting_time
+            )
+            
+            # Konvertiere zu PhotoImage
+            lighting_photo = ImageTk.PhotoImage(lighting_overlay)
+            self.canvas.create_image(0, 0, image=lighting_photo, anchor=tk.NW, tags="lighting_overlay")
+            self.canvas.image_refs.append(lighting_photo)  # Referenz behalten
+            
+            # Zeichne Licht-Icons
+            for light in self.lighting_engine.lights:
+                lx = light.x * self.tile_size + self.tile_size // 2
+                ly = light.y * self.tile_size + self.tile_size // 2
+                
+                # Icon basierend auf Typ
+                icons = {"torch": "🔥", "candle": "🕯️", "window": "🪟", 
+                        "magic": "✨", "fire": "🔥", "moonlight": "🌙", "point": "💡"}
+                icon = icons.get(light.light_type, "💡")
+                
+                self.canvas.create_text(lx, ly, text=icon, font=("Arial", 12),
+                                       tags="light_source")
+        
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def on_canvas_click(self, event):
-        """Mausklick"""
+        """Mausklick - Tool-basiert"""
         # Nicht zeichnen wenn gerade Pan-Modus aktiv ist
         if self.is_panning:
             return
@@ -658,12 +1084,110 @@ class MapEditor(tk.Frame):
         x = int(self.canvas.canvasx(event.x) // self.tile_size)
         y = int(self.canvas.canvasy(event.y) // self.tile_size)
         
-        if 0 <= x < self.width and 0 <= y < self.height:
-            self.set_tile(x, y, self.selected_terrain)
-            self.update_tile(x, y)
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return
+        
+        tool = self.active_tool.get()
+        
+        # === CURVE TOOL (Bezier) ===
+        if tool == "curve":
+            self.bezier_tool.add_point(x, y)
+            self.canvas.delete("curve_preview")
+            self.bezier_tool.draw_preview(self.canvas, self.tile_size)
+            print(f"🌊 Kurven-Punkt hinzugefügt: ({x}, {y}) - {len(self.bezier_tool.points)} Punkte")
+            return
+        
+        # === POLYGON TOOL ===
+        if tool == "polygon":
+            self.polygon_tool.add_point(x, y)
+            self.canvas.delete("polygon_preview")
+            self.polygon_tool.draw_preview(self.canvas, self.tile_size)
+            print(f"⬟ Polygon-Punkt hinzugefügt: ({x}, {y}) - {len(self.polygon_tool.points)} Punkte")
+            return
+        
+        # === TEXT TOOL ===
+        if tool == "text":
+            text = tk.simpledialog.askstring("Text eingeben", "Text für Annotation:")
+            if text:
+                self.text_tool.add_text(x, y, text)
+                self.canvas.delete("text_annotation")
+                self.text_tool.draw_texts(self.canvas, self.tile_size)
+                print(f"📝 Text hinzugefügt: '{text}' bei ({x}, {y})")
+            return
+        
+        # === LIGHT TOOL ===
+        if tool == "light":
+            # Prüfe ob Licht bereits existiert
+            existing = self.lighting_engine.get_light_at(x, y, tolerance=0)
+            if existing is not None:
+                # Licht entfernen
+                self.lighting_engine.remove_light(existing)
+                print(f"💡 Licht entfernt bei ({x}, {y})")
+            else:
+                # Neues Licht hinzufügen
+                preset = LIGHT_PRESETS.get(self.selected_light_preset, LIGHT_PRESETS["torch"])
+                light = LightSource(x, y, **preset)
+                self.lighting_engine.add_light(light)
+                print(f"💡 {self.selected_light_preset.title()} platziert bei ({x}, {y})")
+            
+            # Redraw wenn Lighting aktiv
+            if self.show_lighting.get():
+                self.draw_grid()
+            return
+        
+        # === EYEDROPPER (Pipette) ===
+        if tool == "eyedropper":
+            picked_terrain = self.map[y][x]
+            if picked_terrain and picked_terrain != "empty":
+                self.selected_terrain = picked_terrain
+                print(f"💧 Material aufgenommen: {picked_terrain}")
+                # Automatisch zu Pinsel wechseln
+                self.select_tool("brush")
+            return
+        
+        # === FILL (Füllen) ===
+        if tool == "fill":
+            self.flood_fill(x, y, self.selected_terrain)
+            return
+        
+        # === SHAPE TOOLS (Rechteck, Kreis, Linie) ===
+        if tool in ["rectangle", "circle", "line"]:
+            if not self.shape_start:
+                # Startpunkt setzen
+                self.shape_start = (x, y)
+                self.is_drawing = True
+            else:
+                # Endpunkt → Form zeichnen
+                self.draw_shape(self.shape_start, (x, y), tool)
+                self.shape_start = None
+                self.is_drawing = False
+                self.clear_shape_preview()
+            return
+        
+        # === SELECT TOOL ===
+        if tool == "select":
+            if not self.selection_area:
+                self.selection_area = [x, y, x, y]
+                self.is_drawing = True
+            else:
+                # Auswahl abgeschlossen
+                self.finalize_selection()
+            return
+        
+        # === ERASER (Radierer) ===
+        if tool == "eraser":
+            self.save_undo_state()
+            self.paint_area(x, y, "empty")
+            return
+        
+        # === BRUSH (Standard) ===
+        if tool == "brush":
+            self.save_undo_state()
+            self.paint_area(x, y, self.selected_terrain)
+            self.is_drawing = True
     
     def on_canvas_drag(self, event):
-        """Drag"""
+        """Drag - Tool-basiert"""
         # Nicht zeichnen wenn gerade Pan-Modus aktiv ist
         if self.is_panning:
             return
@@ -671,10 +1195,315 @@ class MapEditor(tk.Frame):
         x = int(self.canvas.canvasx(event.x) // self.tile_size)
         y = int(self.canvas.canvasy(event.y) // self.tile_size)
         
-        if 0 <= x < self.width and 0 <= y < self.height:
-            if self.map[y][x] != self.selected_terrain:
-                self.set_tile(x, y, self.selected_terrain)
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return
+        
+        tool = self.active_tool.get()
+        
+        # === SHAPE PREVIEW ===
+        if tool in ["rectangle", "circle", "line"] and self.shape_start:
+            self.update_shape_preview(self.shape_start, (x, y), tool)
+            return
+        
+        # === SELECT DRAGGING ===
+        if tool == "select" and self.selection_area:
+            self.selection_area[2] = x
+            self.selection_area[3] = y
+            self.draw_selection_preview()
+            return
+        
+        # === BRUSH/ERASER DRAGGING ===
+        if tool == "brush" and self.is_drawing:
+            self.paint_area(x, y, self.selected_terrain)
+        elif tool == "eraser" and self.is_drawing:
+            self.paint_area(x, y, "empty")
+    
+    def paint_area(self, cx, cy, terrain):
+        """Malt einen Bereich mit Pinsel-Größe (mit Symmetrie + Auto-Lights)"""
+        brush_radius = self.brush_size // 2
+        
+        positions = []
+        
+        # Normale Position
+        for dy in range(-brush_radius, brush_radius + 1):
+            for dx in range(-brush_radius, brush_radius + 1):
+                # Kreisförmiger Pinsel
+                if dx*dx + dy*dy <= brush_radius*brush_radius + brush_radius:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < self.width and 0 <= ny < self.height:
+                        positions.append((nx, ny))
+        
+        # Symmetrie
+        if self.symmetry_mode.get():
+            sym_positions = []
+            axis = self.symmetry_axis.get()
+            
+            for x, y in positions:
+                if axis in ["vertical", "both"]:
+                    # Spiegeln an vertikaler Achse (Mitte)
+                    mirror_x = self.width - 1 - x
+                    if 0 <= mirror_x < self.width:
+                        sym_positions.append((mirror_x, y))
+                
+                if axis in ["horizontal", "both"]:
+                    # Spiegeln an horizontaler Achse
+                    mirror_y = self.height - 1 - y
+                    if 0 <= mirror_y < self.height:
+                        sym_positions.append((x, mirror_y))
+                
+                if axis == "both":
+                    # Diagonal gespiegelt
+                    mirror_x = self.width - 1 - x
+                    mirror_y = self.height - 1 - y
+                    if 0 <= mirror_x < self.width and 0 <= mirror_y < self.height:
+                        sym_positions.append((mirror_x, mirror_y))
+            
+            positions.extend(sym_positions)
+        
+        # Tiles setzen (mit Auto-Light-Logik)
+        for x, y in positions:
+            if self.map[y][x] != terrain:
+                old_material = self.map[y][x]
+                self.set_tile(x, y, terrain)
                 self.update_tile(x, y)
+                
+                # Auto-Light: Wenn neues Material Licht emittiert
+                if terrain in self.light_emitting_materials:
+                    # Prüfe ob bereits Licht an Position
+                    light_idx = self.lighting_engine.get_light_at(x, y, tolerance=0)
+                    if light_idx is None:
+                        preset_name = self.light_emitting_materials[terrain]["preset"]
+                        preset = LIGHT_PRESETS[preset_name]
+                        light = LightSource(
+                            x=x, y=y,
+                            radius=preset["radius"],
+                            color=preset["color"],
+                            intensity=preset["intensity"],
+                            flicker=preset["flicker"],
+                            light_type=preset_name
+                        )
+                        self.lighting_engine.add_light(light)
+                
+                # Auto-Light entfernen: IMMER prüfen ob Lichtquelle existiert (auch beim Eraser!)
+                else:
+                    light_idx = self.lighting_engine.get_light_at(x, y, tolerance=0)
+                    if light_idx is not None:
+                        self.lighting_engine.remove_light(light_idx)
+                        print(f"💡 Lichtquelle bei ({x},{y}) entfernt")
+    
+    def flood_fill(self, start_x, start_y, new_terrain):
+        """Füllt verbundene Tiles mit neuem Terrain (Flood Fill)"""
+        old_terrain = self.map[start_y][start_x]
+        
+        if old_terrain == new_terrain:
+            return
+        
+        self.save_undo_state()
+        
+        # Stack-basierter Flood Fill
+        stack = [(start_x, start_y)]
+        visited = set()
+        changed_tiles = []
+        
+        while stack:
+            x, y = stack.pop()
+            
+            if (x, y) in visited:
+                continue
+            
+            if not (0 <= x < self.width and 0 <= y < self.height):
+                continue
+            
+            if self.map[y][x] != old_terrain:
+                continue
+            
+            visited.add((x, y))
+            changed_tiles.append((x, y))
+            self.set_tile(x, y, new_terrain)
+            
+            # 4-Richtungen (NSWE)
+            stack.extend([(x+1, y), (x-1, y), (x, y+1), (x, y-1)])
+        
+        # Batch-Update: Nur einmal komplett neu zeichnen statt für jeden Tile
+        print(f"🪣 {len(visited)} Tiles gefüllt - Aktualisiere Ansicht...")
+        
+        if len(changed_tiles) > 100:
+            # Bei vielen Tiles: Komplettes Neuzeichnen ist schneller
+            self.draw_grid()
+        else:
+            # Bei wenigen Tiles: Einzeln updaten
+            for x, y in changed_tiles:
+                self.update_tile(x, y)
+        
+        print(f"✅ Fertig!")
+    
+    def draw_shape(self, start, end, shape_type):
+        """Zeichnet eine geometrische Form"""
+        self.save_undo_state()
+        
+        x1, y1 = start
+        x2, y2 = end
+        
+        tiles = []
+        
+        if shape_type == "rectangle":
+            # Rechteck
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                for x in range(min(x1, x2), max(x1, x2) + 1):
+                    tiles.append((x, y))
+        
+        elif shape_type == "line":
+            # Bresenham's Line Algorithm
+            tiles = self.bresenham_line(x1, y1, x2, y2)
+        
+        elif shape_type == "circle":
+            # Kreis um Startpunkt mit Radius = Distanz
+            radius = int(((x2-x1)**2 + (y2-y1)**2)**0.5)
+            
+            for y in range(max(0, y1-radius), min(self.height, y1+radius+1)):
+                for x in range(max(0, x1-radius), min(self.width, x1+radius+1)):
+                    dist = ((x-x1)**2 + (y-y1)**2)**0.5
+                    if abs(dist - radius) < 1.5:  # Ring
+                        tiles.append((x, y))
+        
+        # Tiles setzen (batch)
+        for x, y in tiles:
+            if 0 <= x < self.width and 0 <= y < self.height:
+                self.set_tile(x, y, self.selected_terrain)
+        
+        # Batch-Update: Bei vielen Tiles komplettes Neuzeichnen
+        if len(tiles) > 50:
+            self.draw_grid()
+        else:
+            for x, y in tiles:
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    self.update_tile(x, y)
+        
+        print(f"📐 {shape_type.title()} mit {len(tiles)} Tiles gezeichnet")
+    
+    def bresenham_line(self, x1, y1, x2, y2):
+        """Bresenham's Line Algorithm für Linie zwischen zwei Punkten"""
+        points = []
+        
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        err = dx - dy
+        
+        x, y = x1, y1
+        
+        while True:
+            points.append((x, y))
+            
+            if x == x2 and y == y2:
+                break
+            
+            e2 = 2 * err
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            if e2 < dx:
+                err += dx
+                y += sy
+        
+        return points
+    
+    def update_shape_preview(self, start, end, shape_type):
+        """Zeigt Shape-Preview während des Zeichnens"""
+        # Clear old preview
+        self.clear_shape_preview()
+        
+        x1, y1 = start
+        x2, y2 = end
+        
+        # Berechne Preview-Tiles (gleiche Logik wie draw_shape)
+        tiles = []
+        
+        if shape_type == "rectangle":
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                for x in range(min(x1, x2), max(x1, x2) + 1):
+                    tiles.append((x, y))
+        elif shape_type == "line":
+            tiles = self.bresenham_line(x1, y1, x2, y2)
+        elif shape_type == "circle":
+            radius = int(((x2-x1)**2 + (y2-y1)**2)**0.5)
+            for y in range(max(0, y1-radius), min(self.height, y1+radius+1)):
+                for x in range(max(0, x1-radius), min(self.width, x1+radius+1)):
+                    dist = ((x-x1)**2 + (y-y1)**2)**0.5
+                    if abs(dist - radius) < 1.5:
+                        tiles.append((x, y))
+        
+        # Preview als halbtransparentes Overlay
+        for x, y in tiles:
+            if 0 <= x < self.width and 0 <= y < self.height:
+                x1 = x * self.tile_size
+                y1 = y * self.tile_size
+                
+                preview_id = self.canvas.create_rectangle(
+                    x1, y1, x1 + self.tile_size, y1 + self.tile_size,
+                    fill="yellow", outline="orange", width=2,
+                    stipple="gray50",  # Halbtransparent-Effekt
+                    tags="shape_preview"
+                )
+                self.shape_preview.append(preview_id)
+    
+    def clear_shape_preview(self):
+        """Löscht Shape-Preview"""
+        for preview_id in self.shape_preview:
+            self.canvas.delete(preview_id)
+        self.shape_preview.clear()
+    
+    def draw_selection_preview(self):
+        """Zeigt Auswahl-Bereich als Preview"""
+        self.canvas.delete("selection_preview")
+        
+        if not self.selection_area:
+            return
+        
+        x1, y1, x2, y2 = self.selection_area
+        
+        # Sortieren
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        
+        # Rahmen zeichnen
+        px1 = x1 * self.tile_size
+        py1 = y1 * self.tile_size
+        px2 = (x2 + 1) * self.tile_size
+        py2 = (y2 + 1) * self.tile_size
+        
+        self.canvas.create_rectangle(
+            px1, py1, px2, py2,
+            outline="cyan", width=3,
+            dash=(5, 5),
+            tags="selection_preview"
+        )
+    
+    def finalize_selection(self):
+        """Schließt Auswahl ab und kopiert Inhalt"""
+        if not self.selection_area:
+            return
+        
+        x1, y1, x2, y2 = self.selection_area
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        
+        # Inhalt kopieren
+        self.selection_content = []
+        for y in range(y1, y2 + 1):
+            row = []
+            for x in range(x1, x2 + 1):
+                row.append(self.map[y][x])
+            self.selection_content.append(row)
+        
+        count = (x2 - x1 + 1) * (y2 - y1 + 1)
+        print(f"✂️ Auswahl: {x2-x1+1}×{y2-y1+1} ({count} Tiles)")
+        
+        # Zurücksetzen
+        self.selection_area = None
+        self.is_drawing = False
+        self.canvas.delete("selection_preview")
     
     def update_tile(self, x, y):
         """Einzelnes Tile aktualisieren"""
@@ -722,6 +1551,53 @@ class MapEditor(tk.Frame):
                                   font=("Arial", 6, "bold"),
                                   tags=f"tile_{x}_{y}")
     
+    def on_layer_change(self):
+        """Callback wenn Layer geändert wird"""
+        # Aktualisiere Canvas
+        self.draw_grid()
+        print(f"🎨 Layer gewechselt: {self.layer_manager.get_active_layer().name}")
+    
+    def start_lighting_animation(self):
+        """Starte Lighting-Animation-Loop"""
+        if self.lighting_update_id is None:
+            self.update_lighting_animation()
+    
+    def update_lighting_animation(self):
+        """Update Lighting (für Flicker-Animation)"""
+        # Zeit hochzählen
+        self.lighting_time += 0.1
+        
+        # Nur neu rendern wenn Lighting aktiv und Lichtquellen vorhanden
+        if self.show_lighting.get() and self.lighting_engine.enabled and len(self.lighting_engine.lights) > 0:
+            # Prüfe ob irgendein Licht flackert
+            has_flicker = any(light.flicker for light in self.lighting_engine.lights)
+            if has_flicker:
+                self.draw_grid()  # Neu rendern für Animation
+        
+        # Timer für nächstes Update (30 FPS für Flicker)
+        self.lighting_update_id = self.after(33, self.update_lighting_animation)
+    
+    def toggle_lighting(self):
+        """Toggle Lighting System"""
+        self.lighting_engine.enabled = self.show_lighting.get()
+        self.draw_grid()
+        status = "aktiviert" if self.show_lighting.get() else "deaktiviert"
+        print(f"💡 Dynamic Lighting {status}")
+    
+    def clear_all_lights(self):
+        """Entferne alle Lichtquellen"""
+        if messagebox.askyesno("Bestätigen", "Alle Lichtquellen löschen?"):
+            self.lighting_engine.clear_lights()
+            self.draw_grid()
+            print("💡 Alle Lichtquellen entfernt")
+    
+    def update_radius_scale(self, value):
+        """Update globaler Radius-Skalierungsfaktor"""
+        scale = float(value)
+        self.lighting_engine.global_radius_scale = scale
+        self.radius_label.config(text=f"{scale:.1f}x")
+        self.draw_grid()
+    
     def save_map(self):
         """Karte speichern"""
         filename = filedialog.asksaveasfilename(
@@ -735,8 +1611,18 @@ class MapEditor(tk.Frame):
                 "width": self.width,
                 "height": self.height,
                 "tiles": self.map,
-                "river_directions": self.river_directions
+                "river_directions": self.river_directions,
+                "layers": self.layer_manager.to_dict(),  # Layer-Daten speichern
+                "lighting": self.lighting_engine.to_dict()  # Lighting speichern
             }
+            
+            # SVG-Metadata behalten wenn vorhanden
+            if self.is_svg_mode and self.svg_source_path:
+                map_data["is_svg_mode"] = True
+                map_data["svg_path"] = self.svg_source_path
+                # Original SVG-Größe falls verfügbar
+                if hasattr(self, 'original_svg_size'):
+                    map_data["original_svg_size"] = self.original_svg_size
             
             try:
                 self.map_system.export_map(map_data, filename)
@@ -761,24 +1647,87 @@ class MapEditor(tk.Frame):
                     self.map = map_data["tiles"]
                     self.river_directions = map_data.get("river_directions", {})
                     
+                    # Layer-Daten laden
+                    if "layers" in map_data:
+                        self.layer_manager.from_dict(map_data["layers"])
+                    
+                    # Lighting-Daten laden
+                    if "lighting" in map_data:
+                        self.lighting_engine.from_dict(map_data["lighting"])
+                        self.lighting_enabled = map_data["lighting"].get("enabled", False)
+                        print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
+                    
+                    # SVG-Metadata laden
+                    if map_data.get("is_svg_mode"):
+                        self.is_svg_mode = True
+                        self.svg_source_path = map_data.get("svg_path")
+                        if "original_svg_size" in map_data:
+                            self.original_svg_size = map_data["original_svg_size"]
+                    
+                    # Reset tool states
+                    self.shape_start = None
+                    self.is_drawing = False
+                    self.shape_preview = []
+                    self.selection_area = None
+                    self.clear_shape_preview()
+                    
+                    # Update canvas scroll region for new map size
+                    canvas_width = self.width * self.tile_size
+                    canvas_height = self.height * self.tile_size
+                    self.canvas.configure(scrollregion=(0, 0, canvas_width, canvas_height))
+                    
+                    # Redraw map
                     self.draw_grid()
-                    messagebox.showinfo("Erfolg", f"Karte geladen:\n{filename}")
+                    
+                    # Update performance mode if needed
+                    self.total_tiles = self.width * self.height
+                    self.performance_mode = self.total_tiles > 1000
+                    
+                    messagebox.showinfo("Erfolg", f"Karte geladen:\n{filename}\nGröße: {self.width}×{self.height}")
                 else:
                     messagebox.showerror("Fehler", "Karte konnte nicht geladen werden")
             except Exception as e:
-                messagebox.showerror("Fehler", f"Fehler beim Laden:\n{e}")
+                import traceback
+                messagebox.showerror("Fehler", f"Fehler beim Laden:\n{e}\n\n{traceback.format_exc()}")
     
     def get_map_data(self):
-        """Gibt Map-Daten zurück"""
-        return {
+        """Gibt vollständige Map-Daten zurück (für Projektor, etc.)"""
+        map_data = {
             "width": self.width,
             "height": self.height,
             "tiles": self.map,
-            "river_directions": self.river_directions
+            "river_directions": self.river_directions,
+            "layers": self.layer_manager.to_dict(),
+            "lighting": self.lighting_engine.to_dict()
         }
+        
+        # SVG-Metadata falls vorhanden
+        if self.is_svg_mode and self.svg_source_path:
+            map_data["is_svg_mode"] = True
+            map_data["svg_path"] = self.svg_source_path
+            if hasattr(self, 'original_svg_size'):
+                map_data["original_svg_size"] = self.original_svg_size
+        
+        return map_data
     
     def export_as_svg(self):
         """Map als SVG exportieren mit Qualitäts-Dialog"""
+        # WARNUNG: SVG kann keine Lighting-Daten speichern!
+        if self.lighting_engine.lights:
+            warning = (
+                f"⚠️ ACHTUNG: LIGHTING-DATEN GEHEN VERLOREN!\n\n"
+                f"Diese Map hat {len(self.lighting_engine.lights)} Lichtquelle(n).\n\n"
+                f"SVG kann keine Lighting-Daten speichern!\n"
+                f"Die Lichter werden beim Export entfernt.\n\n"
+                f"Um Lighting zu behalten:\n"
+                f"1. Speichere VORHER als JSON (Datei → Speichern)\n"
+                f"2. JSON behält alle Lichtquellen und Flacker-Animationen\n"
+                f"3. JSON kann im Projektor verwendet werden\n\n"
+                f"Trotzdem SVG exportieren (Lighting geht verloren)?"
+            )
+            if not messagebox.askyesno("Lighting geht verloren", warning):
+                return
+        
         # WARNUNG bei großen Maps
         total_tiles = self.width * self.height
         non_empty_tiles = sum(1 for row in self.map for tile in row if tile and tile != "empty")

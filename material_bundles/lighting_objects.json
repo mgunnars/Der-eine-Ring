@@ -1,0 +1,25 @@
+{
+  "id": "lighting_objects",
+  "name": "🔥 Lighting Objects",
+  "description": "Leuchtende Objekte (Fackeln, Kerzen, Feuer, etc.) - Auto-Lights beim Platzieren!",
+  "icon": "🔥",
+  "version": "1.0",
+  "author": "VTT System",
+  "materials": [
+    "torch",
+    "candle",
+    "lantern",
+    "fire",
+    "campfire",
+    "window",
+    "magic_circle",
+    "crystal"
+  ],
+  "always_loaded": true,
+  "metadata": {
+    "category": "lighting",
+    "tags": ["light", "fire", "magic", "glow"],
+    "auto_light": true,
+    "info": "Diese Materials erzeugen automatisch Lichtquellen beim Platzieren!"
+  }
+}

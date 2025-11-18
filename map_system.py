@@ -23,7 +23,7 @@ class MapSystem:
         Speichert eine Karte als JSON
         
         Args:
-            map_data: Dict mit width, height, tiles
+            map_data: Dict mit width, height, tiles, lighting, layers
             filename: Optionaler Dateiname (sonst Zeitstempel)
         
         Returns:
@@ -39,14 +39,16 @@ class MapSystem:
         
         filepath = os.path.join(self.maps_folder, filename)
         
-        # Metadaten hinzufügen
+        # Metadaten hinzufügen - MIT LIGHTING + LAYERS!
         save_data = {
-            "version": "1.1",  # Version erhöht für river_directions
+            "version": "1.2",  # Version erhöht für lighting + layers
             "created": datetime.now().isoformat(),
             "width": map_data.get("width", 50),
             "height": map_data.get("height", 50),
             "tiles": map_data.get("tiles", []),
-            "river_directions": map_data.get("river_directions", {})  # Neue Eigenschaft
+            "river_directions": map_data.get("river_directions", {}),
+            "layers": map_data.get("layers", {}),
+            "lighting": map_data.get("lighting", {"enabled": False, "lights": []})
         }
         
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -87,9 +89,13 @@ class MapSystem:
                 print(f"Ungültige Kartendaten in {filepath}")
                 return None
             
-            # Rückwärtskompatibilität: river_directions hinzufügen wenn nicht vorhanden
+            # Rückwärtskompatibilität: Fehlende Daten hinzufügen
             if "river_directions" not in data:
                 data["river_directions"] = {}
+            if "layers" not in data:
+                data["layers"] = {}
+            if "lighting" not in data:
+                data["lighting"] = {"enabled": False, "lights": []}
             
             return data
         
@@ -170,16 +176,26 @@ class MapSystem:
         Exportiert eine Karte an einen beliebigen Ort
         
         Args:
-            map_data: Kartendaten
+            map_data: Kartendaten (mit lighting, layers, river_directions, optional SVG-Info)
             export_path: Ziel-Pfad
         """
         save_data = {
-            "version": "1.0",
+            "version": "1.2",  # Version erhöht für lighting + layers
             "created": datetime.now().isoformat(),
             "width": map_data.get("width", 50),
             "height": map_data.get("height", 50),
-            "tiles": map_data.get("tiles", [])
+            "tiles": map_data.get("tiles", []),
+            "river_directions": map_data.get("river_directions", {}),
+            "layers": map_data.get("layers", {}),
+            "lighting": map_data.get("lighting", {"enabled": False, "lights": []})
         }
+        
+        # SVG-Metadata übernehmen falls vorhanden
+        if map_data.get("is_svg_mode"):
+            save_data["is_svg_mode"] = True
+            save_data["svg_path"] = map_data.get("svg_path", "")
+            if "original_svg_size" in map_data:
+                save_data["original_svg_size"] = map_data["original_svg_size"]
         
         with open(export_path, 'w', encoding='utf-8') as f:
             json.dump(save_data, f, indent=2, ensure_ascii=False)

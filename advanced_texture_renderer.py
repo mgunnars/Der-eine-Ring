@@ -988,7 +988,7 @@ class AdvancedTextureRenderer:
                 draw.point((x, y), fill=color)
         
         # Steinplatten-Muster
-        plate_size = size // 4
+        plate_size = max(6, size // 4)  # Mindestens 6px groß
         for i in range(4):
             for j in range(4):
                 x1 = i * plate_size + random.randint(-2, 2)
@@ -996,11 +996,15 @@ class AdvancedTextureRenderer:
                 x2 = x1 + plate_size - 3
                 y2 = y1 + plate_size - 3
                 
-                if 0 <= x1 < size and 0 <= y1 < size:
+                # Validate rectangle coordinates STRIKT (x1 must be < x2, y1 must be < y2)
+                # UND innerhalb der Bounds
+                if (0 <= x1 < size and 0 <= y1 < size and 
+                    x2 > x1 and y2 > y1 and 
+                    x2 < size and y2 < size):
                     draw.rectangle(
-                        [(x1, y1), (min(x2, size-1), min(y2, size-1))],
+                        [(x1, y1), (x2, y2)],
                         outline=(60, 60, 60),
-                        width=2
+                        width=1 if size < 16 else 2
                     )
         
         random.seed()

@@ -160,9 +160,15 @@ class MaterialBundleManager:
                 bundle_id = filename[:-5]  # Ohne .json
                 self.load_bundle(bundle_id)
         
-        # NUR Base-Bundle ist standardmäßig aktiv
+        # Aktiviere Base-Bundle + always_loaded Bundles
         self.active_bundles.clear()
         self.active_bundles.add(self.base_bundle)
+        
+        # Aktiviere alle always_loaded Bundles
+        for bundle_id, bundle_data in self.bundles.items():
+            if bundle_data.get("always_loaded", False):
+                self.active_bundles.add(bundle_id)
+                print(f"   ✅ Always-loaded: {bundle_id}")
         
         print(f"📦 {len(self.bundles)} Bundles geladen")
     

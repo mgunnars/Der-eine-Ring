@@ -78,8 +78,12 @@ class DerEineRingProApp(tk.Tk):
         try:
             from map_editor import MapEditor, ask_canvas_size
             
+            print(f"\n🔍 DEBUG start_editor:")
+            print(f"   self.current_map_data: {'vorhanden' if self.current_map_data else 'None'}")
+            
             # Wenn keine Map geladen ist, frage nach Größe
             if not self.current_map_data:
+                print(f"   → Keine Map geladen, frage nach Größe...")
                 size = ask_canvas_size(self)
                 
                 if not size["confirmed"]:
@@ -87,10 +91,16 @@ class DerEineRingProApp(tk.Tk):
                 
                 width = size["width"]
                 height = size["height"]
+                map_data_to_pass = None
             else:
-                # Map bereits geladen, nutze deren Größe
+                # Map bereits geladen, nutze deren Größe UND Daten
                 width = self.current_map_data.get("width", 50)
                 height = self.current_map_data.get("height", 50)
+                map_data_to_pass = self.current_map_data
+                print(f"   → Map vorhanden: {width}×{height}")
+                print(f"   → map_data_to_pass wird übergeben!")
+            
+            print(f"📋 Erstelle Editor mit: width={width}, height={height}, map_data={'JA' if map_data_to_pass else 'NEIN'}")
             
             editor_win = tk.Toplevel(self)
             editor_win.title("Map Editor - Der Eine Ring")
@@ -98,7 +108,7 @@ class DerEineRingProApp(tk.Tk):
             editor_win.configure(bg="#1a1a1a")
             
             # MapEditor mit aktuellen Daten oder neu
-            editor = MapEditor(editor_win, width=width, height=height, map_data=self.current_map_data)
+            editor = MapEditor(editor_win, width=width, height=height, map_data=map_data_to_pass)
             editor.pack(fill=tk.BOTH, expand=True)
             
             self.current_editor = editor
@@ -118,31 +128,34 @@ class DerEineRingProApp(tk.Tk):
         try:
             from projector_window import ProjectorWindow
             
-            # Prüfe ob eine SVG-Datei geladen wurde
+            # Hole Map-Daten
+            map_data = self.current_map_data
+            if self.current_editor:
+                map_data = self.current_editor.get_map_data()
+            
+            # Prüfe ob SVG-Path in Map-Daten oder als loaded_svg_path
+            svg_path = None
             if hasattr(self, 'loaded_svg_path') and self.loaded_svg_path:
-                # SVG-Modus: Öffne Projektor mit SVG
+                svg_path = self.loaded_svg_path
+            elif map_data and map_data.get("svg_path"):
+                svg_path = map_data.get("svg_path")
+            
+            # SVG-Modus: Öffne Projektor mit Original-SVG
+            if svg_path:
                 if self.projector_window and self.projector_window.winfo_exists():
                     self.projector_window.destroy()
-                
-                # Map-Daten holen (für source_png Info)
-                map_data = self.current_map_data
-                if self.current_editor:
-                    map_data = self.current_editor.get_map_data()
                 
                 # Projektor mit map_data UND svg_path erstellen
                 self.projector_window = ProjectorWindow(
                     self, 
                     map_data=map_data,
-                    svg_path=self.loaded_svg_path, 
+                    svg_path=svg_path, 
                     webcam_tracker=self.webcam_tracker
                 )
                 return
             
             # JSON-Modus: Normale Tile-basierte Map
-            # Wenn kein Editor läuft, aktuelle Map-Daten nutzen
-            map_data = self.current_map_data
-            
-            # Wenn Editor läuft, dessen Daten nutzen
+            # Wenn keine Daten vorhanden, Standardkarte laden
             if self.current_editor:
                 map_data = self.current_editor.get_map_data()
             
@@ -185,28 +198,281 @@ class DerEineRingProApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
+    def parse_svg_to_map(self, svg_path):
+        """Parst SVG und erstellt Map-Daten für Editor"""
+        try:
+            import xml.etree.ElementTree as ET
+            from PIL import Image, ImageTk
+            import io
+            import base64
+            
+            print(f"🔍 Parse SVG: {svg_path}")
+            
+            # Parse SVG
+            tree = ET.parse(svg_path)
+            root = tree.getroot()
+            
+            # SVG-Dimensionen
+            svg_width = float(root.get('width', '1000').replace('px', ''))
+            svg_height = float(root.get('height', '1000').replace('px', ''))
+            
+            print(f"   SVG-Größe: {svg_width}×{svg_height}px")
+            
+            # Zähle embedded images
+            images = [elem for elem in root.iter() if 'image' in elem.tag]
+            print(f"   Gefundene <image> Elemente: {len(images)}")
+            
+            # STRATEGIE: SVGs mit vielen embedded images
+            # → Verwende FESTE Tile-Größe für bessere Auflösung (nicht Image-Größe!)
+            # Die Images in der SVG sind oft zu groß (z.B. 206px)
+            # Wir wollen aber eine editierbare Map mit vielen Tiles
+            tile_size = 64  # FESTE Tile-Größe für gute Balance zwischen Detail und Performance
+            
+            if images:
+                first_img = images[0]
+                img_width = float(first_img.get('width', 32))
+                img_height = float(first_img.get('height', 32))
+                print(f"   SVG enthält {len(images)} Images à {int(img_width)}×{int(img_height)}px")
+                print(f"   → Konvertiere zu {tile_size}px Tiles für bessere Editierbarkeit")
+            else:
+                print(f"   → Verwende {tile_size}px Tiles")
+            
+            # Berechne Grid-Größe basierend auf SVG-Dimensionen und Tile-Größe
+            # Runde auf, um sicherzustellen dass alle Tiles passen
+            import math
+            grid_width = max(10, math.ceil(svg_width / tile_size))
+            grid_height = max(7, math.ceil(svg_height / tile_size))
+            
+            print(f"   Grid: {grid_width}×{grid_height} tiles")
+            
+            # Erstelle leeres Tile-Array
+            tiles = [["empty" for _ in range(grid_width)] for _ in range(grid_height)]
+            
+            # Sammle Materials aus SVG
+            materials_found = set()
+            tiles_filled = 0
+            
+            # Tracking: Welche Tiles wurden bereits gefüllt?
+            filled_positions = set()
+            
+            # Parse alle <image> Elemente
+            for img_elem in images:
+                try:
+                    x = float(img_elem.get('x', 0))
+                    y = float(img_elem.get('y', 0))
+                    w = float(img_elem.get('width', 64))
+                    h = float(img_elem.get('height', 64))
+                    
+                    # href kann base64-kodiertes Bild sein
+                    href = img_elem.get('{http://www.w3.org/1999/xlink}href', img_elem.get('href', ''))
+                    
+                    # Versuche Material aus base64-Daten zu erraten
+                    material = 'grass'  # Default
+                    
+                    if href.startswith('data:image'):
+                        # Base64-kodiertes Bild → Analysiere Bildfarben
+                        try:
+                            # Extrahiere base64-Daten
+                            base64_data = href.split(',')[1] if ',' in href else href
+                            img_data = base64.b64decode(base64_data)
+                            pil_img = Image.open(io.BytesIO(img_data))
+                            
+                            # Analysiere dominante Farbe (vereinfacht)
+                            pil_img_small = pil_img.resize((10, 10), Image.Resampling.LANCZOS)
+                            colors = pil_img_small.convert('RGB').getcolors(maxcolors=100)
+                            if colors:
+                                # Häufigste Farbe
+                                dominant_color = max(colors, key=lambda x: x[0])[1]
+                                r, g, b = dominant_color
+                                
+                                # Material aus dominanter Farbe erraten
+                                if g > r and g > b:  # Grünlich
+                                    if g > 150:
+                                        material = 'grass'
+                                    else:
+                                        material = 'forest'
+                                elif b > r and b > g and b > 100:  # Bläulich
+                                    material = 'water'
+                                elif r > 150 and g > 150 and b < 100:  # Gelblich
+                                    material = 'sand'
+                                elif r < 100 and g < 100 and b < 100:  # Dunkel
+                                    material = 'mountain'
+                                elif r > 100 and g > 100 and b > 100:  # Hell grau
+                                    material = 'stone'
+                                elif r > 100 and g > 80 and b < 80:  # Bräunlich
+                                    material = 'road'
+                        except:
+                            pass
+                    
+                    materials_found.add(material)
+                    
+                    # Tile-Koordinaten berechnen: Ein Image deckt mehrere Tiles ab
+                    # Berechne welche Tiles von diesem Image abgedeckt werden
+                    tx_start = int(x / tile_size)
+                    ty_start = int(y / tile_size)
+                    tx_end = min(grid_width, int((x + w) / tile_size) + 1)
+                    ty_end = min(grid_height, int((y + h) / tile_size) + 1)
+                    
+                    # Fülle alle Tiles die von diesem Image abgedeckt werden
+                    for ty in range(ty_start, ty_end):
+                        for tx in range(tx_start, tx_end):
+                            if 0 <= ty < grid_height and 0 <= tx < grid_width:
+                                pos_key = (ty, tx)
+                                if pos_key not in filled_positions:
+                                    tiles[ty][tx] = material
+                                    filled_positions.add(pos_key)
+                                    tiles_filled += 1
+                
+                except Exception as e:
+                    print(f"      Fehler bei Image-Element: {e}")
+                    continue
+            
+            # Parse alle <rect> Elemente (falls vorhanden)
+            rects = [elem for elem in root.iter() if 'rect' in elem.tag]
+            for rect_elem in rects:
+                try:
+                    x = float(rect_elem.get('x', 0))
+                    y = float(rect_elem.get('y', 0))
+                    w = float(rect_elem.get('width', tile_size))
+                    h = float(rect_elem.get('height', tile_size))
+                    
+                    fill = rect_elem.get('fill', 'grass')
+                    elem_id = rect_elem.get('id', '')
+                    
+                    material = self.guess_material_from_svg(elem_id, fill)
+                    materials_found.add(material)
+                    
+                    # Tile-Koordinaten
+                    tx1 = int(x / tile_size)
+                    ty1 = int(y / tile_size)
+                    tx2 = min(grid_width, int((x + w) / tile_size) + 1)
+                    ty2 = min(grid_height, int((y + h) / tile_size) + 1)
+                    
+                    for ty in range(ty1, ty2):
+                        for tx in range(tx1, tx2):
+                            if 0 <= ty < grid_height and 0 <= tx < grid_width:
+                                tiles[ty][tx] = material
+                                tiles_filled += 1
+                except:
+                    continue
+            
+            # Fülle leere Tiles mit grass (falls SVG Lücken hat)
+            empty_count = 0
+            for ty in range(grid_height):
+                for tx in range(grid_width):
+                    if tiles[ty][tx] == "empty":
+                        tiles[ty][tx] = "grass"
+                        empty_count += 1
+            
+            print(f"   Materials gefunden: {materials_found}")
+            print(f"   Tiles gefüllt: {tiles_filled}/{grid_width * grid_height} ({empty_count} mit 'grass' aufgefüllt)")
+            print(f"   ℹ️ Hinweis: SVG-Texturen werden farbanalysiert und in Tiles konvertiert")
+            
+            return {
+                "is_svg_mode": True,
+                "svg_path": svg_path,
+                "width": grid_width,
+                "height": grid_height,
+                "tiles": tiles,
+                "river_directions": {},
+                "version": "2.0-svg",
+                "original_svg_size": (svg_width, svg_height)
+            }
+            
+        except Exception as e:
+            print(f"❌ SVG-Parse-Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def guess_material_from_svg(self, elem_id, fill_color):
+        """Errät Material aus SVG-Element-ID, Farbe oder base64 data"""
+        elem_id = elem_id.lower()
+        fill_color = fill_color.lower()
+        
+        # Material-Keywords
+        if 'grass' in elem_id or 'wiese' in elem_id or '#90ee90' in fill_color:
+            return 'grass'
+        elif 'water' in elem_id or 'wasser' in elem_id or '#4169e1' in fill_color:
+            return 'water'
+        elif 'forest' in elem_id or 'wald' in elem_id or 'tree' in elem_id or '#228b22' in fill_color:
+            return 'forest'
+        elif 'mountain' in elem_id or 'berg' in elem_id or '#808080' in fill_color:
+            return 'mountain'
+        elif 'sand' in elem_id or 'desert' in elem_id or '#f4a460' in fill_color:
+            return 'sand'
+        elif 'stone' in elem_id or 'stein' in elem_id or 'rock' in elem_id:
+            return 'stone'
+        elif 'road' in elem_id or 'weg' in elem_id or 'path' in elem_id:
+            return 'road'
+        elif 'village' in elem_id or 'dorf' in elem_id or 'town' in elem_id:
+            return 'village'
+        else:
+            return 'grass'  # Default
+    
     def load_map(self):
         """Karte laden - unterstützt JSON und SVG"""
+        print(f"\n🔍 DEBUG load_map() aufgerufen!")
+        print(f"   Vor Laden: self.current_map_data = {'vorhanden' if self.current_map_data else 'None'}")
+        
         filename = filedialog.askopenfilename(
             title="Karte laden",
             filetypes=[("Alle Dateien", "*.*"), ("JSON Dateien", "*.json"), ("SVG Dateien", "*.svg")],
             initialdir="maps"
         )
         
+        print(f"   Ausgewählte Datei: {filename if filename else 'ABGEBROCHEN'}")
+        
         if filename:
-            # SVG? → Merke Pfad und öffne im Projektor
+            # SVG? → Parse und konvertiere zu editierbarem Format
             if filename.lower().endswith('.svg'):
                 self.loaded_svg_path = filename
-                messagebox.showinfo("SVG geladen", 
-                    f"✅ SVG-Karte geladen!\n\n"
-                    f"Datei: {os.path.basename(filename)}\n\n"
-                    f"Öffne nun '📺 Projektor-Modus' um die SVG anzuzeigen.\n\n"
-                    f"Steuerung:\n"
-                    f"• Mausrad: Zoom\n"
-                    f"• Drag: Pan\n"
-                    f"• F11: Vollbild\n"
-                    f"• F: Fog of War\n"
-                    f"• ESC: Beenden")
+                print(f"📌 SVG wird geladen: {filename}")
+                
+                try:
+                    # Für komplexe SVGs: Biete zwei Optionen an
+                    choice = messagebox.askquestion(
+                        "SVG laden",
+                        f"SVG-Datei: {os.path.basename(filename)}\n\n"
+                        f"Wie möchtest du die SVG öffnen?\n\n"
+                        f"JA = Im Projektor anzeigen (empfohlen für komplexe SVGs)\n"
+                        f"NEIN = In Editor konvertieren (nur für einfache SVGs)",
+                        icon='question'
+                    )
+                    
+                    if choice == 'yes':
+                        # Projektor-Modus
+                        messagebox.showinfo("SVG geladen", 
+                            f"✅ SVG-Karte geladen!\n\n"
+                            f"Datei: {os.path.basename(filename)}\n\n"
+                            f"Öffne jetzt '📺 Projektor-Modus' um die SVG anzuzeigen.\n\n"
+                            f"Tipp: Im Projektor kannst du zoomen, pannen und Fog-of-War nutzen!")
+                        return
+                    
+                    # Editor-Modus: Parse SVG
+                    svg_map_data = self.parse_svg_to_map(filename)
+                    
+                    if svg_map_data:
+                        self.current_map_data = svg_map_data
+                        
+                        msg = (f"✅ SVG-Karte geladen!\n\n"
+                               f"Datei: {os.path.basename(filename)}\n"
+                               f"Größe: {svg_map_data.get('width')}×{svg_map_data.get('height')}\n\n"
+                               f"Die SVG wurde in ein editierbares Tile-Grid konvertiert.\n"
+                               f"Du kannst sie jetzt mit allen Tools bearbeiten!\n\n"
+                               f"Im Editor öffnen?")
+                        
+                        if messagebox.askyesno("SVG geladen", msg):
+                            self.start_editor()
+                        else:
+                            messagebox.showinfo("Info", "SVG geladen! Öffne Editor oder Projektor.")
+                    else:
+                        messagebox.showerror("Fehler", "SVG konnte nicht geparst werden")
+                        
+                except Exception as e:
+                    import traceback
+                    print(f"❌ SVG-Fehler:\n{traceback.format_exc()}")
+                    messagebox.showerror("SVG-Fehler", f"Fehler beim Laden:\n{e}")
                 return
             
             # JSON → Lade als normale Karte
@@ -215,13 +481,33 @@ class DerEineRingProApp(tk.Tk):
                 ms = MapSystem()
                 map_data = ms.load_map(filename)
                 
+                print(f"\n🔍 DEBUG load_map:")
+                print(f"   Datei: {os.path.basename(filename)}")
+                print(f"   map_data: {'vorhanden' if map_data else 'None'}")
+                if map_data:
+                    print(f"   Größe: {map_data.get('width')}×{map_data.get('height')}")
+                    print(f"   Keys: {list(map_data.keys())}")
+                
                 if map_data:
                     self.current_map_data = map_data
                     self.loaded_svg_path = None  # Reset SVG-Modus
-                    messagebox.showinfo("Erfolg", f"Karte geladen:\n{os.path.basename(filename)}")
+                    
+                    print(f"✅ self.current_map_data gesetzt!")
+                    print(f"   self.current_map_data ist: {'vorhanden' if self.current_map_data else 'None'}")
+                    
+                    # Frage ob Editor geöffnet werden soll
+                    msg = f"Karte geladen:\n{os.path.basename(filename)}\n\nGröße: {map_data.get('width')}×{map_data.get('height')}\n\nIm Editor öffnen?"
+                    
+                    if messagebox.askyesno("Karte geladen", msg):
+                        print(f"🚀 Rufe start_editor() auf...")
+                        self.start_editor()
+                    else:
+                        messagebox.showinfo("Info", "Karte geladen! Du kannst sie jetzt im Editor oder Projektor öffnen.")
                 else:
                     messagebox.showerror("Fehler", "Karte konnte nicht geladen werden")
             except Exception as e:
+                import traceback
+                print(f"❌ FEHLER beim Laden:\n{traceback.format_exc()}")
                 messagebox.showerror("Fehler", f"Fehler beim Laden:\n{e}")
     
     def show_map_list(self):

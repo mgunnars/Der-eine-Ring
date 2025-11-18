@@ -7,12 +7,43 @@ Ein professioneller Kartenprojektionssystem für Herr-der-Ringe-Tabletop-Spiele 
 
 ## ✨ Features
 
-- 🎨 **Karteneditor** - Erstelle eigene Karten mit verschiedenen Terrains
+### 🎨 Professioneller Karten-Editor
+- **Drawing Tools** wie Foundry VTT & Dynamic Dungeons:
+  - 🖌️ Pinsel mit variabler Größe (1-15 Tiles)
+  - 🪣 Füllen-Tool (Flood Fill)
+  - 💧 Pipette (Material-Picker)
+  - 🧹 Radierer mit Pinselgröße
+  - ⬜ Rechteck-Tool für Gebäude
+  - ⭕ Kreis-Tool für Plätze
+  - 📏 Linien-Tool für Straßen
+  - ✂️ Auswahl-Tool (in Entwicklung)
+- **Advanced Features**:
+  - ↔️ Symmetrie-Modus (vertikal/horizontal)
+  - 🔄 Undo/Redo (bis zu 50 Schritte)
+  - ⌨️ Tastatur-Shortcuts (B/F/I/E/R/C/L/S)
+  - 🔍 Zoom & Pan während der Bearbeitung
+- **Material-System**:
+  - 📦 Bundle-Manager für organisierte Material-Bibliothek
+  - 🎨 Custom Materials importieren
+  - 🖼️ Hochwertige prozedurale Texturen
+
+### 📺 Projektor-System
 - 📺 **Projektor-Modus** - Vollbild-Anzeige für zweiten Monitor/Beamer
-- 🖼️ **Hochwertige Texturen** - Prozedural generierte Texturen für alle Terrains
-- 💾 **Speichern/Laden** - Karten als JSON speichern und wiederverwenden
-- 🔍 **Zoom & Pan** - Kamera-Steuerung im Projektor-Modus
+- 🌫️ **Fog-of-War** - Dynamisches Aufdecken von Bereichen
+- 🎥 **Kamera-Steuerung** - Zoom & Pan im Projektor
+- 🗺️ **SVG-Support** - Vektor-basierte Maps für höchste Qualität
+- 🎮 **GM-Controls** - Separates Kontrollpanel für Spielleiter
+
+### 🗺️ Map-System
+- 💾 **Speichern/Laden** - Karten als JSON
+- 📤 **SVG-Export** - Vektorbasierte Karten exportieren
+- 📥 **PNG-Import** - Bestehende Maps importieren
+- 🏘️ **Detail-Maps** - Automatischer Wechsel bei Dörfern/Gebäuden
 - 🗺️ **Multi-Terrain** - Gras, Wasser, Wald, Berg, Sand, Schnee, Dorf, etc.
+
+📖 **Neue Guides**: 
+- [Professional Drawing Tools Guide](EDITOR_TOOLS_GUIDE.md)
+- [Quick Start für Tools](EDITOR_QUICKSTART.md)
 
 ## � Installation
 

@@ -11,6 +11,7 @@ import random
 import os
 import xml.etree.ElementTree as ET
 from fog_texture_generator import FogTextureGenerator
+from lighting_system import LightingEngine
 
 class ProjectorWindow(tk.Toplevel):
     """Vollbild-Projektor-Fenster für Spieler mit Fog-of-War"""
@@ -25,12 +26,18 @@ class ProjectorWindow(tk.Toplevel):
         self.is_svg_mode = svg_path is not None
         self.svg_path = svg_path
         self.svg_renderer = None
+        self.original_svg_size = None  # Speichere Original-SVG-Größe
         
         if self.is_svg_mode:
             # SVG-Projektor-Modus initialisieren
             from svg_projector import SVGProjectorRenderer
             self.svg_renderer = SVGProjectorRenderer(svg_path)
             self.title("Der Eine Ring - Projektor (SVG)")
+            
+            # Hole Original-SVG-Größe aus map_data falls vorhanden
+            if map_data and "original_svg_size" in map_data:
+                self.original_svg_size = map_data["original_svg_size"]
+                print(f"📐 Original SVG-Größe: {self.original_svg_size}px")
             
             # SVG-spezifisches Caching
             self.svg_static_cache = None  # Gecachte statische Tiles
@@ -97,6 +104,34 @@ class ProjectorWindow(tk.Toplevel):
         from detail_map_system import DetailMapSystem
         self.detail_system = DetailMapSystem(self.map_data)
         
+        # LIGHTING SYSTEM für Projektor
+        self.lighting_engine = LightingEngine()
+        self.lighting_enabled = False  # Standardmäßig aus
+        self.lighting_time = 0.0  # Zeit für Flicker-Animation
+        
+        # Lade Lighting-Daten aus map_data falls vorhanden
+        if "lighting" in self.map_data:
+            print(f"🔍 DEBUG: 'lighting' key gefunden in map_data")
+            lighting_data = self.map_data["lighting"]
+            print(f"🔍 DEBUG: lighting_data keys = {lighting_data.keys()}")
+            if "lights" in lighting_data:
+                print(f"🔍 DEBUG: Lade {len(lighting_data['lights'])} Lichter...")
+                from lighting_system import LightSource
+                for i, light_dict in enumerate(lighting_data["lights"]):
+                    print(f"   Light {i}: {light_dict}")
+                    try:
+                        light = LightSource.from_dict(light_dict)
+                        self.lighting_engine.add_light(light)
+                        print(f"   ✅ Light {i} geladen: pos=({light.x},{light.y}), type={light.light_type}")
+                    except Exception as e:
+                        print(f"   ❌ Fehler bei Light {i}: {e}")
+            # Projektor: Lighting automatisch aktivieren wenn Lichtquellen vorhanden
+            if self.lighting_engine.lights:
+                self.lighting_enabled = True
+            else:
+                self.lighting_enabled = lighting_data.get("enabled", False)
+            print(f"💡 Projektor: {len(self.lighting_engine.lights)} Lichtquellen geladen")
+        
         # Auto-Switch für Detail-Maps
         self.auto_detail_switch = True
         
@@ -150,6 +185,19 @@ class ProjectorWindow(tk.Toplevel):
         else:
             # JSON: Normale Tile-Prüfung
             self.check_for_animated_tiles()
+        
+        # Prüfe ob Lichtquellen mit Flacker-Animation existieren
+        # WICHTIG: Prüfe auch wenn lighting_enabled False ist, denn flackernde Lichter aktivieren Animation!
+        if self.lighting_engine.lights:
+            for light in self.lighting_engine.lights:
+                if light.flicker and light.flicker != "none":
+                    self.has_animated_tiles = True
+                    # Aktiviere Lighting automatisch wenn flackernde Lichter vorhanden
+                    if not self.lighting_enabled:
+                        self.lighting_enabled = True
+                        print(f"💡 Lighting automatisch aktiviert (flackernde Lichtquelle: {light.flicker})")
+                    print(f"💡 Flackernde Lichtquelle gefunden: {light.flicker}")
+                    break
         
         if self.has_animated_tiles:
             print(f"Animation aktiviert: {len(self.animated_positions) if not self.is_svg_mode else len(self.svg_animated_materials)} animierte Tiles")
@@ -367,6 +415,34 @@ class ProjectorWindow(tk.Toplevel):
                             if texture_img.mode != 'RGB':
                                 texture_img = texture_img.convert('RGB')
                             map_image.paste(texture_img, (paste_x, paste_y))
+        
+        # Lighting-Overlay rendern (NACH Tiles, VOR Fog!)
+        if self.lighting_enabled and self.lighting_engine.lights:
+            # Konvertiere zu RGBA für Transparenz
+            if map_image.mode != 'RGBA':
+                map_image = map_image.convert('RGBA')
+            
+            # Lighting rendern mit Animation
+            # Berechne Radius-Skalierung für JSON-Modus
+            radius_scale = current_tile_size / 25.0
+            
+            lighting_overlay = self.lighting_engine.render_lighting(
+                width=width,
+                height=height,
+                tile_size=current_tile_size,
+                time_offset=self.lighting_time,  # Für Flacker-Animation!
+                radius_scale=radius_scale
+            )
+            
+            # Lighting über Map compositen (Screen/Add Blending für leuchtende Bereiche)
+            # Verwende ImageChops.screen für additives Licht das die Map aufhellt
+            from PIL import ImageChops
+            map_rgb = map_image.convert('RGB')
+            light_rgb = lighting_overlay.convert('RGB')
+            lit_map = ImageChops.screen(map_rgb, light_rgb)  # Additive Blending
+            map_image = lit_map.convert('RGBA')
+            # Zurück zu RGB für Fog-Rendering
+            map_image = map_image.convert('RGB')
         
         # Fog-of-War über alles zeichnen
         if self.fog_enabled:
@@ -626,15 +702,32 @@ class ProjectorWindow(tk.Toplevel):
         # Frame erhöhen - 240 Frames für längere, langsamere Loops
         self.animation_frame = (self.animation_frame + 1) % 240
         
+        # Lighting-Animation (für flackernde Lichter) - WICHTIG: Immer updaten!
+        if self.lighting_enabled:
+            self.lighting_time += 0.033  # 33ms = ~30 FPS
+            # Update lighting engine time offset für Flacker-Effekt
+            self.lighting_engine.update_animation(0.033)
+            
+            # WICHTIG: Bei Lighting-Animation statischen Cache NICHT verwenden!
+            # Sonst wird nur das Base-Image cached und Lighting-Änderungen sind nicht sichtbar
+            if self.is_svg_mode and self.lighting_engine.lights:
+                # Cache NUR für das SVG-Base-Image behalten, Lighting wird jedes Mal neu gerendert
+                pass  # svg_static_cache bleibt erhalten, aber Lighting-Layer wird neu gerendert
+        
         # PERFORMANCE: Nur jeden 2. Frame tatsächlich rendern (15 FPS effektiv)
-        # Animation läuft trotzdem mit 30 FPS (frame counter erhöht sich), aber Rendering seltener
+        # Bei Lighting mit Flicker: Jeden Frame rendern für flüssiges Flackern!
         self.frame_skip_counter += 1
-        if self.frame_skip_counter >= 2:
+        
+        # Bei aktiven flackernden Lichtern: Keine Frames überspringen
+        has_flickering_lights = any(light.flicker for light in self.lighting_engine.lights) if self.lighting_enabled else False
+        skip_frames = 1 if has_flickering_lights else 2
+        
+        if self.frame_skip_counter >= skip_frames:
             self.frame_skip_counter = 0
             # Map rendern (optimiert durch Caching - nur animierte Tiles!)
             self.render_map()
         
-        # Nächster Frame nach 33ms (~30 FPS Animation, 15 FPS Rendering)
+        # Nächster Frame nach 33ms (~30 FPS Animation)
         self.animation_id = self.after(33, self.animate_tiles)
     
     def apply_fog_to_image(self, img, svg_mode=False):
@@ -705,10 +798,14 @@ class ProjectorWindow(tk.Toplevel):
         except:
             return
         
-        # SVG Original-Größe holen
-        root = ET.fromstring(self.svg_renderer.svg_data)
-        svg_width = int(root.get('width', '1000').replace('px', ''))
-        svg_height = int(root.get('height', '1000').replace('px', ''))
+        # SVG Original-Größe: Nutze original_svg_size wenn vorhanden, sonst aus File
+        if self.original_svg_size:
+            svg_width, svg_height = self.original_svg_size
+            print(f"📐 Nutze Original-SVG-Größe: {svg_width}×{svg_height}px")
+        else:
+            root = ET.fromstring(self.svg_renderer.svg_data)
+            svg_width = int(root.get('width', '1000').replace('px', ''))
+            svg_height = int(root.get('height', '1000').replace('px', ''))
         
         # Berechne Basis-Scale um ganze Map zu zeigen (nur einmal beim Start)
         if self.svg_base_scale == 1.0:
@@ -747,6 +844,8 @@ class ProjectorWindow(tk.Toplevel):
                 from texture_manager import TextureManager
                 self.texture_manager = TextureManager()
             
+            # Parse SVG für animierte Tiles
+            root = ET.fromstring(self.svg_renderer.svg_data)
             namespaces = {'svg': 'http://www.w3.org/2000/svg'}
             
             for img_elem in root.findall('.//svg:image[@data-material]', namespaces):
@@ -815,6 +914,76 @@ class ProjectorWindow(tk.Toplevel):
             cropped = rendered_full.crop((crop_x, crop_y, full_width, full_height))
             viewport_img.paste(cropped, (paste_x, paste_y))
         
+        # Konvertiere zu RGBA für Lighting/Fog
+        if viewport_img.mode != 'RGBA':
+            viewport_img = viewport_img.convert('RGBA')
+        
+        # Lighting-Overlay rendern (SVG-Modus: skaliert auf full_width/full_height)
+        if self.lighting_enabled and self.lighting_engine.lights:
+            print(f"💡 SVG-Lighting: Rendere {len(self.lighting_engine.lights)} Lichter")
+            # Berechne Tile-Größe aus SVG-Original und Fog-Grid
+            tile_width_px = (svg_width * current_scale) / self.fog.width
+            tile_height_px = (svg_height * current_scale) / self.fog.height
+            avg_tile_size = int((tile_width_px + tile_height_px) / 2)
+            print(f"💡 Tile-Size: {avg_tile_size}px, Time: {self.lighting_time:.2f}s")
+            
+            # Rendere Lighting direkt in PIXEL-Größe des gerenderten SVG (nicht in Tile-Grid!)
+            # Das verhindert Größen-Mismatches und Streifen
+            # WICHTIG: Berechne radius_scale basierend auf Tile-Größe
+            # Standard Tile-Size ist 25px, skaliere Radien entsprechend
+            radius_scale = avg_tile_size / 25.0
+            
+            lighting_full = self.lighting_engine.render_lighting(
+                width=self.fog.width,
+                height=self.fog.height,
+                tile_size=avg_tile_size,
+                time_offset=self.lighting_time,
+                radius_scale=radius_scale
+            )
+            print(f"💡 Lighting gerendert: {lighting_full.size}, Radius-Scale: {radius_scale:.2f}")
+            
+            # WICHTIG: Skaliere Lighting auf exakte Full-Größe des SVG!
+            # Verhindert Streifen durch Größen-Mismatches
+            if lighting_full.size != (full_width, full_height):
+                from PIL import Image as PILImage
+                lighting_full = lighting_full.resize((full_width, full_height), PILImage.LANCZOS)
+            
+            # Crop Lighting auf gleichen Viewport wie Map
+            if view_x >= 0 and view_y >= 0:
+                lighting_viewport = lighting_full.crop((
+                    view_x,
+                    view_y,
+                    min(view_x + canvas_width, full_width),
+                    min(view_y + canvas_height, full_height)
+                ))
+            else:
+                lighting_viewport = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+                paste_x = max(0, -view_x)
+                paste_y = max(0, -view_y)
+                crop_x = max(0, view_x)
+                crop_y = max(0, view_y)
+                lighting_cropped = lighting_full.crop((crop_x, crop_y, full_width, full_height))
+                lighting_viewport.paste(lighting_cropped, (paste_x, paste_y))
+            
+            # Composite Lighting über Map (Screen Blending für leuchtende Bereiche)
+            from PIL import ImageChops
+            if lighting_viewport.size == viewport_img.size:
+                map_rgb = viewport_img.convert('RGB')
+                light_rgb = lighting_viewport.convert('RGB')
+                lit_map = ImageChops.screen(map_rgb, light_rgb)
+                viewport_img = lit_map.convert('RGBA')
+            else:
+                # Fallback: Resize Lighting-Viewport
+                lighting_viewport = lighting_viewport.resize(viewport_img.size, Image.LANCZOS)
+                map_rgb = viewport_img.convert('RGB')
+                light_rgb = lighting_viewport.convert('RGB')
+                lit_map = ImageChops.screen(map_rgb, light_rgb)
+                viewport_img = lit_map.convert('RGBA')
+        elif not self.lighting_enabled:
+            print(f"⚠️ Lighting disabled")
+        elif not self.lighting_engine.lights:
+            print(f"⚠️ No lights found")
+        
         # Fog-of-War anwenden (auf ORIGINALER Tile-Grid-Basis)
         if self.fog_enabled and self.fog:
             # Berechne welche Tiles im Viewport sichtbar sind
@@ -828,9 +997,6 @@ class ProjectorWindow(tk.Toplevel):
             end_tile_y = int(((view_y + canvas_height) / current_scale) / tile_height) + 1
             
             # Fog-Layer erstellen
-            if viewport_img.mode != 'RGBA':
-                viewport_img = viewport_img.convert('RGBA')
-            
             fog_layer = Image.new('RGBA', viewport_img.size, (0, 0, 0, 0))
             
             fog_tiles_count = 0
