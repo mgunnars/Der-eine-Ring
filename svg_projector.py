@@ -36,11 +36,129 @@ except OSError as e:
     print("   ℹ️  Oder führe aus: INSTALL_CAIRO.bat")
     print(f"   🐛 Fehler: {e}")
 
-print(f"🔍 DEBUG: HAS_CAIROSVG = {HAS_CAIROSVG}")
+# GPU Acceleration imports
+try:
+    import pyopencl as cl
+    import pyopencl.array as cl_array
+    import numpy as np
+    GPU_AVAILABLE = True
+    print("✅ GPU verfügbar für SVG-Rendering")
+except ImportError:
+    GPU_AVAILABLE = False
+    print("⚠️ PyOpenCL nicht verfügbar - GPU-SVG-Rendering deaktiviert")
+
+print(f"🔍 DEBUG: HAS_CAIROSVG = {HAS_CAIROSVG}, GPU_AVAILABLE = {GPU_AVAILABLE}")
+
+
+class GPUSVGRenderer:
+    """GPU-beschleunigter SVG-Renderer für einfache SVG-Elemente"""
+    
+    def __init__(self):
+        if not GPU_AVAILABLE:
+            raise RuntimeError("GPU nicht verfügbar")
+            
+        # OpenCL Setup - Automatische GPU-Auswahl ohne Benutzer-Interaktion
+        try:
+            # Hole verfügbare Platformen
+            platforms = cl.get_platforms()
+            if not platforms:
+                raise RuntimeError("Keine OpenCL-Platformen gefunden")
+            
+            # Wähle erste Platform (normalerweise AMD, NVIDIA oder Intel)
+            platform = platforms[0]
+            
+            # Hole GPU-Devices von dieser Platform
+            gpu_devices = [device for device in platform.get_devices() 
+                          if device.type == cl.device_type.GPU]
+            
+            if not gpu_devices:
+                # Fallback: Verwende alle verfügbaren Devices
+                gpu_devices = platform.get_devices()
+                if not gpu_devices:
+                    raise RuntimeError("Keine OpenCL-Devices gefunden")
+            
+            # Wähle erstes verfügbares Device
+            self.device = gpu_devices[0]
+            
+            # Erstelle Context und Queue
+            self.context = cl.Context([self.device])
+            self.queue = cl.CommandQueue(self.context)
+            
+            print(f"🎨 GPU-SVG-Renderer initialisiert: {self.device.name}")
+            
+        except Exception as e:
+            print(f"⚠️ Automatische GPU-Initialisierung fehlgeschlagen: {e}")
+            # Fallback zur interaktiven Methode
+            print("🔄 Fallback zur interaktiven GPU-Auswahl...")
+            self.context = cl.create_some_context()
+            self.queue = cl.CommandQueue(self.context)
+            self.device = self.context.devices[0]
+            print(f"🎨 GPU-SVG-Renderer initialisiert (Fallback): {self.device.name}")
+        
+        # GPU Buffer für Canvas
+        self.canvas_buffer = None
+        self.canvas_width = 0
+        self.canvas_height = 0
+    
+    def create_canvas(self, width, height):
+        """Erstelle GPU-Canvas"""
+        if self.canvas_width != width or self.canvas_height != height:
+            self.canvas_buffer = cl_array.zeros(self.queue, (height, width, 4), dtype=np.float32)
+            self.canvas_width = width
+            self.canvas_height = height
+            print(f"📐 GPU-Canvas erstellt: {width}x{height}")
+    
+    def clear_canvas(self, r=0, g=0, b=0, a=1):
+        """Canvas leeren"""
+        if self.canvas_buffer is not None:
+            self.canvas_buffer.fill(np.array([r, g, b, a], dtype=np.float32))
+    
+    def render_rect(self, x, y, width, height, r=0, g=0, b=0, a=1):
+        """Rechteck rendern auf GPU"""
+        if self.canvas_buffer is None:
+            return
+            
+        # Einfache CPU-to-GPU Implementierung für Rectangles
+        # Für komplexere SVGs würde man einen echten SVG-Parser brauchen
+        rect_kernel = cl.Program(self.context, """
+        __kernel void draw_rect(
+            __global float4 *canvas,
+            const int canvas_width,
+            const int canvas_height,
+            const int x, const int y,
+            const int width, const int height,
+            const float r, const float g, const float b, const float a
+        ) {
+            int px = get_global_id(0);
+            int py = get_global_id(1);
+            
+            if (px >= canvas_width || py >= canvas_height) return;
+            if (px < x || px >= x + width || py < y || py >= y + height) return;
+            
+            int idx = py * canvas_width + px;
+            canvas[idx] = (float4)(r, g, b, a);
+        }
+        """).build()
+        
+        rect_kernel.draw_rect(
+            self.queue, (self.canvas_width, self.canvas_height), None,
+            self.canvas_buffer.data,
+            np.int32(self.canvas_width), np.int32(self.canvas_height),
+            np.int32(x), np.int32(y), np.int32(width), np.int32(height),
+            np.float32(r), np.float32(g), np.float32(b), np.float32(a)
+        )
+    
+    def get_image(self):
+        """Canvas als PIL Image zurückgeben"""
+        if self.canvas_buffer is None:
+            return None
+            
+        np_array = self.canvas_buffer.get()
+        np_array = np.clip(np_array * 255, 0, 255).astype(np.uint8)
+        return Image.fromarray(np_array, mode='RGBA')
 
 
 class SVGProjectorRenderer:
-    """Rendert SVG-Karten für Projektor mit optimaler Qualität"""
     
     def __init__(self, svg_path):
         self.svg_path = svg_path

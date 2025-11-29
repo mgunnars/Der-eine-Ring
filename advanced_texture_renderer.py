@@ -224,6 +224,18 @@ class AdvancedTextureRenderer:
                 # Statische Custom-Textur
                 return self.load_and_scale_texture(material["texture_path"], size)
         
+        # GPU-Beschleunigte Textur-Generierung (für häufig verwendete Materialien)
+        try:
+            from lighting_system import LightingEngine
+            lighting = LightingEngine()
+            gpu_texture = lighting.generate_gpu_texture(material_id, size, animation_frame, river_direction)
+            if gpu_texture:
+                print(f"🎨 GPU-Textur generiert: {material_id} {size}x{size}")
+                return gpu_texture
+        except Exception as e:
+            # GPU nicht verfügbar oder Fehler - verwende CPU-Fallback
+            pass
+        
         # Animierte Texturen (prozedural)
         # Water mit Richtung hat separaten Cache
         if material_id == "water":

@@ -109,6 +109,9 @@ class ProjectorWindow(tk.Toplevel):
         # Set to None for now — we'll reuse lighting_engine.gpu_renderer after lighting_engine is created
         self.gpu_renderer = None
         
+        # GPU SVG Renderer (für zukünftige GPU-SVG-Rendering)
+        self.gpu_svg_renderer = None
+        
         # LIGHTING SYSTEM für Projektor
         self.lighting_engine = GPUAcceleratedLightingEngine()
         self.lighting_enabled = False  # Standardmäßig aus
@@ -177,6 +180,18 @@ class ProjectorWindow(tk.Toplevel):
             except Exception as e:
                 print(f"⚠️ Projektor: GPURenderer konnte nicht erstellt werden: {e}")
                 self.gpu_renderer = None
+        
+        # Initialize GPU SVG Renderer if GPU is available
+        if GPU_AVAILABLE and self.gpu_renderer:
+            try:
+                from svg_projector import GPUSVGRenderer
+                self.gpu_svg_renderer = GPUSVGRenderer()
+                print("🎨 GPU-SVG-Renderer initialisiert")
+            except Exception as e:
+                print(f"⚠️ GPU-SVG-Renderer konnte nicht erstellt werden: {e}")
+                self.gpu_svg_renderer = None
+        else:
+            self.gpu_svg_renderer = None
 
         print("🔧 After GPU setup, creating detail system")
         
@@ -1042,7 +1057,46 @@ class ProjectorWindow(tk.Toplevel):
         # STATISCHES RENDERING (nur bei Größenänderung)
         if cache_invalid:
             print(f"🎨 Rendere SVG-Base: {full_width}×{full_height}px (Scale: {current_scale:.2f})")
-            rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
+            
+            # Try GPU SVG rendering first if available
+            if self.gpu_svg_renderer:
+                try:
+                    print("🎯 Verwende GPU-SVG-Rendering")
+                    self.gpu_svg_renderer.create_canvas(full_width, full_height)
+                    self.gpu_svg_renderer.clear_canvas(0, 0, 0, 1)  # Black background
+                    
+                    # Parse SVG and render basic shapes with GPU
+                    root = ET.fromstring(self.svg_renderer.svg_data)
+                    namespaces = {'svg': 'http://www.w3.org/2000/svg'}
+                    
+                    # Render basic rectangles (most SVG maps use simple rects for tiles)
+                    for rect in root.findall('.//svg:rect', namespaces):
+                        x = float(rect.get('x', 0)) * current_scale
+                        y = float(rect.get('y', 0)) * current_scale
+                        width = float(rect.get('width', 0)) * current_scale
+                        height = float(rect.get('height', 0)) * current_scale
+                        
+                        # Get fill color
+                        fill = rect.get('fill', '#000000')
+                        if fill.startswith('#'):
+                            # Convert hex to RGB
+                            r = int(fill[1:3], 16) / 255.0
+                            g = int(fill[3:5], 16) / 255.0
+                            b = int(fill[5:7], 16) / 255.0
+                            self.gpu_svg_renderer.render_rect(int(x), int(y), int(width), int(height), r, g, b, 1.0)
+                    
+                    rendered_full = self.gpu_svg_renderer.get_image()
+                    if rendered_full:
+                        print("✅ GPU-SVG-Rendering erfolgreich")
+                    else:
+                        raise Exception("GPU-SVG-Renderer returned None")
+                        
+                except Exception as e:
+                    print(f"⚠️ GPU-SVG-Rendering fehlgeschlagen: {e}, fallback zu CPU")
+                    rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
+            else:
+                # CPU-based rendering with CairoSVG
+                rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
             
             if rendered_full is None:
                 print("❌ DEBUG: svg_renderer.render_to_size() hat None zurückgegeben!")

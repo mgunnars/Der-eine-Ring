@@ -29,7 +29,6 @@ try:
 except:
     pass
 
-
 class GPUImage:
     """GPU-basierte Image-Klasse für vollständige GPU-Rendering-Pipeline"""
     
@@ -84,13 +83,45 @@ class GPURenderer:
         if not GPU_AVAILABLE:
             raise RuntimeError("GPU nicht verfügbar")
             
-        # OpenCL Setup
-        self.context = cl.create_some_context()
-        self.queue = cl.CommandQueue(self.context)
-        self.device = self.context.devices[0]
-        
-        print(f"🎮 GPU-Renderer initialisiert: {self.device.name}")
-        print(f"   Speicher: {self.device.global_mem_size // (1024**3)}GB GDDR")
+        # OpenCL Setup - Automatische GPU-Auswahl ohne Benutzer-Interaktion
+        try:
+            # Hole verfügbare Platformen
+            platforms = cl.get_platforms()
+            if not platforms:
+                raise RuntimeError("Keine OpenCL-Platformen gefunden")
+            
+            # Wähle erste Platform (normalerweise AMD, NVIDIA oder Intel)
+            platform = platforms[0]
+            
+            # Hole GPU-Devices von dieser Platform
+            gpu_devices = [device for device in platform.get_devices() 
+                          if device.type == cl.device_type.GPU]
+            
+            if not gpu_devices:
+                # Fallback: Verwende alle verfügbaren Devices
+                gpu_devices = platform.get_devices()
+                if not gpu_devices:
+                    raise RuntimeError("Keine OpenCL-Devices gefunden")
+            
+            # Wähle erstes verfügbares Device
+            self.device = gpu_devices[0]
+            
+            # Erstelle Context und Queue
+            self.context = cl.Context([self.device])
+            self.queue = cl.CommandQueue(self.context)
+            
+            print(f"🎮 GPU-Renderer initialisiert: {self.device.name}")
+            print(f"   Platform: {platform.name}")
+            print(f"   Speicher: {self.device.global_mem_size // (1024**3)}GB GDDR")
+            
+        except Exception as e:
+            print(f"⚠️ Automatische GPU-Initialisierung fehlgeschlagen: {e}")
+            # Fallback zur interaktiven Methode
+            print("🔄 Fallback zur interaktiven GPU-Auswahl...")
+            self.context = cl.create_some_context()
+            self.queue = cl.CommandQueue(self.context)
+            self.device = self.context.devices[0]
+            print(f"🎮 GPU-Renderer initialisiert (Fallback): {self.device.name}")
         
         # OpenCL Programme kompilieren
         self._compile_kernels()
@@ -127,26 +158,46 @@ class GPURenderer:
             
             int idx = y * width + x;
             
-            if (dist > radius_px) {
+            // Smooth falloff without hard cutoff
+            // Allow light to fade gradually beyond the nominal radius
+            float extended_radius = radius_px * 3.0f; // Allow falloff up to 3x radius for very smooth edges
+            
+            if (dist > extended_radius) {
                 light_mask[idx] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
                 return;
             }
             
-            float normalized_dist = dist / radius_px;
+            // Smooth normalized distance with soft clamping
+            float normalized_dist = min(dist / radius_px, 2.0f); // Allow up to 2x radius for smooth falloff
             
-            // Physikalischer Falloff
-            float falloff = 1.0f / (1.0f + pow(normalized_dist, falloff_exponent));
+            // Enhanced smooth falloff: combine inverse square with gaussian for smoother edges
+            float inv_square = 1.0f / (1.0f + pow(normalized_dist, falloff_exponent));
+            float gaussian = exp(-pow(normalized_dist * 1.5f, 2.0f)); // Softer gaussian for smoother edges
             
-            // Kern-Bereich
+            // Blend the two falloff functions for smoother transition (more gaussian for realistic falloff)
+            float falloff = inv_square * 0.4f + gaussian * 0.6f;
+            
+            // For distances beyond the nominal radius, apply additional fade
+            if (dist > radius_px) {
+                float beyond_radius_factor = (extended_radius - dist) / (extended_radius - radius_px);
+                beyond_radius_factor = max(beyond_radius_factor, 0.0f);
+                // Exponential fade for very smooth edge
+                falloff *= exp(-pow(1.0f - beyond_radius_factor, 2.0f) * 3.0f);
+            }
+            
+            // Kern-Bereich (inner 10%) gets brightness boost
             if (dist < radius_px * 0.1f) {
                 falloff = min(1.0f, falloff * core_brightness);
             }
             
-            // Noise
+            // Noise for organic variation
             float noise_val = noise_map[idx];
             falloff = falloff * (1.0f + noise_val * noise_strength);
             
             float intensity = falloff * current_intensity;
+            
+            // Ensure minimum visibility for smooth blending
+            intensity = max(intensity, 0.001f);
             
             // Basis-Farben (werden später überschrieben für spezielle Lichttypen)
             light_mask[idx] = (float4)(intensity, intensity, intensity, intensity);
@@ -263,6 +314,83 @@ class GPURenderer:
             
             output[y * width + x] = sum;
         }
+        
+        __kernel void generate_grass_texture(
+            __global float4 *output,
+            const int width,
+            const int height,
+            const int frame
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            int idx = y * width + x;
+            
+            // Perlin-like noise for organic variation
+            float noise = sin(x * 0.1f) * cos(y * 0.1f) * 10.0f;
+            noise += sin(x * 0.05f + y * 0.07f) * 5.0f;
+            
+            // Add some randomness
+            float random_val = sin(x * 123.456f + y * 789.012f + frame * 0.1f) * 2.5f;
+            noise += random_val;
+            
+            float variation = noise / 255.0f;
+            
+            // Base grass color with variation
+            float r = clamp(126.0f/255.0f + variation * 0.1f, 110.0f/255.0f, 140.0f/255.0f);
+            float g = clamp(179.0f/255.0f + variation * 0.15f, 165.0f/255.0f, 190.0f/255.0f);
+            float b = clamp(86.0f/255.0f + variation * 0.1f, 75.0f/255.0f, 95.0f/255.0f);
+            
+            output[idx] = (float4)(r, g, b, 1.0f);
+        }
+        
+        __kernel void generate_water_texture(
+            __global float4 *output,
+            const int width,
+            const int height,
+            const int frame,
+            const int direction
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            int idx = y * width + x;
+            
+            // Flow direction
+            float dx = (direction == 0 || direction == 6 || direction == 7) ? 1.0f : 
+                      (direction == 2 || direction == 3 || direction == 4) ? -1.0f : 0.0f;
+            float dy = (direction == 2 || direction == 3 || direction == 4) ? 1.0f :
+                      (direction == 6 || direction == 7) ? -1.0f : 0.0f;
+            
+            // Normalize diagonal directions
+            if (dx != 0.0f && dy != 0.0f) {
+                dx *= 0.707f; // 1/sqrt(2)
+                dy *= 0.707f;
+            }
+            
+            // Flow animation
+            float flow_speed = frame * 0.4f;
+            float pos_x = x + flow_speed * dx;
+            float pos_y = y + flow_speed * dy;
+            
+            // Wave frequencies for realistic water
+            float wave1 = sin(pos_x * 0.05f) * 8.0f;
+            float wave2 = sin(pos_x * 0.037f + pos_y * 0.03f) * 5.0f;
+            float cross_wave = sin(x * 0.042f) * 2.0f + sin(y * 0.042f) * 2.0f;
+            
+            float brightness = (wave1 + wave2 + cross_wave) / 255.0f;
+            
+            // Water color with wave-based variation
+            float r = clamp(65.0f/255.0f + brightness * 0.15f, 50.0f/255.0f, 80.0f/255.0f);
+            float g = clamp(155.0f/255.0f + brightness * 0.2f, 135.0f/255.0f, 170.0f/255.0f);
+            float b = clamp(230.0f/255.0f + brightness * 0.15f, 205.0f/255.0f, 235.0f/255.0f);
+            
+            output[idx] = (float4)(r, g, b, 1.0f);
+        }
         """
         
         self.program = cl.Program(self.context, light_kernel).build()
@@ -365,6 +493,34 @@ class GPURenderer:
             gpu_image.gpu_buffer = temp_buffer
         
         return gpu_image
+    
+    def generate_grass_texture_gpu(self, width, height, frame=0):
+        """Generiert Gras-Textur auf GPU"""
+        
+        gpu_texture = GPUImage(self.context, self.queue, width, height, 4)
+        
+        self.program.generate_grass_texture(
+            self.queue, (width, height), None,
+            gpu_texture.gpu_buffer.data,
+            np.int32(width), np.int32(height),
+            np.int32(frame)
+        )
+        
+        return gpu_texture
+    
+    def generate_water_texture_gpu(self, width, height, frame=0, direction=0):
+        """Generiert Wasser-Textur auf GPU"""
+        
+        gpu_texture = GPUImage(self.context, self.queue, width, height, 4)
+        
+        self.program.generate_water_texture(
+            self.queue, (width, height), None,
+            gpu_texture.gpu_buffer.data,
+            np.int32(width), np.int32(height),
+            np.int32(frame), np.int32(direction)
+        )
+        
+        return gpu_texture
 
 class LightSource:
     """Einzelne Lichtquelle mit physikalischen Eigenschaften"""
@@ -520,16 +676,31 @@ class LightSource:
         dy = py - self.y
         distance = math.sqrt(dx * dx + dy * dy)
         
-        # Hard Cutoff am Radius (Performance)
-        if distance > self.radius:
+        # Extended radius for smooth falloff (allow light to fade up to 1.5x radius)
+        extended_radius = self.radius * 1.5
+        
+        # Hard cutoff at extended radius for performance
+        if distance > extended_radius:
             return (0, 0, 0, 0)
         
-        # Physikalisch korrekter Falloff: I = I₀ / (1 + (d/r)ⁿ)
-        # n = falloff_exponent (Standard 2.0 für Inverse-Square-Law)
-        normalized_distance = distance / self.radius
-        falloff = 1.0 / (1.0 + normalized_distance ** self.falloff_exponent)
+        # Smooth normalized distance (clamped to prevent issues)
+        normalized_distance = min(distance / self.radius, 1.0)
         
-        # Kern-Bereich (innerste 10%) ist überhell für Bloom-Effekt
+        # Enhanced smooth falloff: combine inverse square with gaussian for smoother edges
+        inv_square = 1.0 / (1.0 + normalized_distance ** self.falloff_exponent)
+        gaussian = math.exp(-(normalized_distance * 2.0) ** 2)
+        
+        # Blend the two falloff functions for smoother transition
+        falloff = inv_square * 0.7 + gaussian * 0.3
+        
+        # For distances beyond the nominal radius, apply additional fade
+        if distance > self.radius:
+            beyond_radius_factor = (extended_radius - distance) / (extended_radius - self.radius)
+            beyond_radius_factor = max(beyond_radius_factor, 0.0)
+            # Exponential fade for very smooth edge
+            falloff *= math.exp(-pow(1.0 - beyond_radius_factor, 2.0) * 3.0)
+        
+        # Kern-Bereich (inner 10%) gets brightness boost
         if distance < self.radius * 0.1:
             falloff = min(1.0, falloff * self.core_brightness)
         
@@ -538,6 +709,9 @@ class LightSource:
         
         # Finale Intensität
         final_intensity = falloff * current_intensity
+        
+        # Ensure minimum visibility for smooth blending
+        final_intensity = max(final_intensity, 0.001)
         
         # DYNAMISCHER FARB-SHIFT basierend auf Lichttyp und Distanz
         base_color = self.color
@@ -664,6 +838,10 @@ class LightingEngine:
 
         # Darkness-Polygone (für Tag-Modus: definiere Innenräume)
         self.darkness_polygons = []  # Liste von Polygon-Punkten [(x,y), ...]
+        
+        # GPU Texture Cache für häufig verwendete Texturen
+        self.gpu_texture_cache = {}
+        self.texture_generation_queue = []
         
     def add_light(self, light: LightSource):
         """Füge Lichtquelle hinzu"""
@@ -841,7 +1019,11 @@ class LightingEngine:
 
             y_grid, x_grid = np.ogrid[:small_height, :small_width]
             dist_from_center = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
-            mask = dist_from_center <= radius_px
+            
+            # Extended radius for smooth falloff
+            extended_radius_px = radius_px * 1.5
+            mask = dist_from_center <= extended_radius_px  # Allow falloff beyond nominal radius
+            
             dist_norm = np.clip(dist_from_center / radius_px, 0, 1)
 
             # Nur 1 Noise-Layer für Speed
@@ -853,9 +1035,20 @@ class LightingEngine:
             nx_grid, ny_grid = np.meshgrid(nx, ny)
             noise_map = np.vectorize(pnoise2)(nx_grid, ny_grid, 1)
 
+            # Enhanced smooth falloff: combine inverse square with gaussian
             inv_square = 1.0 / (1.0 + (dist_norm ** light.falloff_exponent) * 1.5)
             gaussian = np.exp(-(dist_norm ** 2) * 2.0)
             falloff = inv_square * 0.6 + gaussian * 0.4
+            
+            # For distances beyond the nominal radius, apply additional fade
+            beyond_radius = dist_from_center > radius_px
+            if np.any(beyond_radius):
+                beyond_radius_factor = (extended_radius_px - dist_from_center) / (extended_radius_px - radius_px)
+                beyond_radius_factor = np.maximum(beyond_radius_factor, 0.0)
+                # Exponential fade for very smooth edge
+                extra_fade = np.exp(-np.power(1.0 - beyond_radius_factor, 2.0) * 3.0)
+                falloff = np.where(beyond_radius, falloff * extra_fade, falloff)
+            
             falloff = falloff * (1.0 + noise_map * noise_strength)
             intensity = falloff * current_intensity * mask
 
@@ -1131,9 +1324,60 @@ class LightingEngine:
         """
         self.time_offset += delta_time
         
-        # Wrap around bei großen Werten (verhindert Float-Overflow)
-        if self.time_offset > 1000.0:
-            self.time_offset = self.time_offset % 1000.0
+    def generate_gpu_texture(self, material_id, size=64, animation_frame=0, river_direction="right"):
+        """
+        GPU-beschleunigte Textur-Generierung
+        Fallback auf CPU wenn GPU nicht verfügbar
+        """
+        cache_key = f"gpu_{material_id}_{size}_{animation_frame}_{river_direction}"
+        
+        # Cache prüfen
+        if cache_key in self.gpu_texture_cache:
+            return self.gpu_texture_cache[cache_key]
+        
+        # GPU-generierte Texturen
+        gpu_textures = {
+            "grass": lambda: self._generate_gpu_grass_texture(size, animation_frame),
+            "water": lambda: self._generate_gpu_water_texture(size, animation_frame, river_direction),
+        }
+        
+        if material_id in gpu_textures:
+            try:
+                gpu_texture = gpu_textures[material_id]()
+                pil_image = gpu_texture.to_pil_image()
+                
+                # Cache speichern
+                self.gpu_texture_cache[cache_key] = pil_image
+                
+                # Cache-Größe begrenzen
+                if len(self.gpu_texture_cache) > 50:
+                    oldest_key = next(iter(self.gpu_texture_cache))
+                    del self.gpu_texture_cache[oldest_key]
+                
+                return pil_image
+            except Exception as e:
+                print(f"⚠️ GPU-Textur-Generierung fehlgeschlagen für {material_id}: {e}")
+        
+        # Fallback auf CPU
+        return None
+    
+    def _generate_gpu_grass_texture(self, size, frame):
+        """GPU-Gras-Textur"""
+        if hasattr(self, 'gpu_renderer') and self.gpu_renderer:
+            return self.gpu_renderer.generate_grass_texture_gpu(size, size, frame)
+        raise RuntimeError("GPU Renderer nicht verfügbar")
+    
+    def _generate_gpu_water_texture(self, size, frame, direction):
+        """GPU-Wasser-Textur"""
+        if hasattr(self, 'gpu_renderer') and self.gpu_renderer:
+            # Direction mapping
+            direction_map = {
+                "right": 0, "left": 2, "down": 4, "up": 6,
+                "down-right": 3, "down-left": 5, "up-right": 7, "up-left": 1
+            }
+            dir_code = direction_map.get(direction, 0)
+            return self.gpu_renderer.generate_water_texture_gpu(size, size, frame, dir_code)
+        raise RuntimeError("GPU Renderer nicht verfügbar")
         
     def to_dict(self) -> Dict:
         """Export als Dictionary"""
