@@ -1,6 +1,6 @@
 {
   "version": "1.2",
-  "created": "2025-11-29T16:35:33.034875",
+  "created": "2025-11-29T16:40:02.566828",
   "width": 32,
   "height": 23,
   "tiles": [
@@ -150,7 +150,7 @@
       "grass",
       "grass",
       "grass",
-      "grass",
+      "candle",
       "grass",
       "grass",
       "grass",
@@ -183,7 +183,7 @@
       "grass",
       "grass",
       "grass",
-      "candle",
+      "grass",
       "grass",
       "grass",
       "grass",
@@ -839,13 +839,13 @@
         "content": []
       }
     ],
-    "active_layer": 5
+    "active_layer": 1
   },
   "lighting": {
     "lights": [
       {
-        "x": 8,
-        "y": 5,
+        "x": 9,
+        "y": 4,
         "radius": 4,
         "color": [
           255,
@@ -882,20 +882,20 @@
     "darkness_polygons": [
       [
         [
-          0.0,
-          10.0
+          0,
+          0
         ],
         [
-          761.0,
-          11.0
+          768,
+          0
         ],
         [
-          764.0,
-          543.0
+          768,
+          552
         ],
         [
-          0.0,
-          541.0
+          0,
+          552
         ]
       ]
     ]

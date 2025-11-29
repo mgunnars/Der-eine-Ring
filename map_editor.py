@@ -674,8 +674,10 @@ class MapEditor(tk.Frame):
                  font=("Arial", 8), width=10, command=self.start_darkness_polygon).grid(row=0, column=0, padx=2)
         tk.Button(polygon_controls, text="❌ Abbrechen", bg="#4a2a2a", fg="white",
                  font=("Arial", 8), width=10, command=self.cancel_darkness_polygon).grid(row=0, column=1, padx=2)
+        tk.Button(polygon_controls, text="🌑 Ganze Map", bg="#4a2a2a", fg="white",
+                 font=("Arial", 8), width=12, command=self.create_full_map_darkness_polygon).grid(row=0, column=2, padx=2)
         tk.Button(polygon_controls, text="🗑️ Alle löschen", bg="#7d2a2a", fg="white",
-                 font=("Arial", 8), width=22, command=self.clear_darkness_polygons).grid(row=1, column=0, columnspan=2, padx=2, pady=2)
+                 font=("Arial", 8), width=22, command=self.clear_darkness_polygons).grid(row=1, column=0, columnspan=3, padx=2, pady=2)
         
         self.polygon_info_label = tk.Label(lighting_tab, text="0 Polygone | 0 Punkte", 
                                           bg="#1a1a1a", fg="#888888", font=("Arial", 8))
@@ -2134,6 +2136,30 @@ class MapEditor(tk.Frame):
             self.draw_grid()
             print("🗑️ Alle Dunkel-Polygone gelöscht")
     
+    def create_full_map_darkness_polygon(self):
+        """Erstelle ein Polygon, das die gesamte Map abdeckt"""
+        if messagebox.askyesno("Bestätigen", "Die gesamte Map als Dunkelbereich markieren?\n\nAlle bestehenden Polygone werden gelöscht."):
+            # Erstelle Rechteck-Polygon für die gesamte Map
+            map_width_px = self.width * self.tile_size
+            map_height_px = self.height * self.tile_size
+            
+            full_map_polygon = [
+                (0, 0),
+                (map_width_px, 0),
+                (map_width_px, map_height_px),
+                (0, map_height_px)
+            ]
+            
+            # Lösche alle bestehenden Polygone
+            self.lighting_engine.darkness_polygons.clear()
+            
+            # Füge das neue Polygon hinzu
+            self.lighting_engine.darkness_polygons.append(full_map_polygon)
+            
+            self.update_polygon_info()
+            self.draw_grid()
+            print(f"🌑 Ganze Map als Dunkelbereich markiert: {map_width_px}×{map_height_px}px")
+    
     def finish_darkness_polygon(self):
         """Schließe das aktuelle Polygon ab"""
         mode = self.polygon_draw_mode.get()
@@ -2699,6 +2725,8 @@ class MapEditor(tk.Frame):
         self.light_radius_vars.clear()
         self.light_radius_sliders.clear()
         self.light_radius_labels.clear()
+        
+        print(f"DEBUG: refresh_light_list - {len(self.lighting_engine.lights)} Lichter vorhanden")
         
         if not self.lighting_engine.lights:
             # Keine Lichter vorhanden
