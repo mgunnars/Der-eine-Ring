@@ -181,6 +181,11 @@ class MapEditor(tk.Frame):
         self.lighting_update_id = None  # Timer für Animation
         self.lighting_time = 0.0  # Zeit für Flicker-Animation
         
+        # UI-Variablen für individuelle Lichtquellen
+        self.light_radius_vars = {}  # Dict: light_index -> tk.DoubleVar
+        self.light_radius_sliders = {}  # Dict: light_index -> Slider widget
+        self.light_radius_labels = {}  # Dict: light_index -> Label widget
+        
         # Lade Lighting-Daten falls vorhanden
         if map_data and "lighting" in map_data:
             self.lighting_engine.from_dict(map_data["lighting"])
@@ -685,6 +690,40 @@ class MapEditor(tk.Frame):
         
         tk.Button(btn_frame, text="🗑️ Alle Lichter löschen", bg="#7d2a2a", fg="white",
                  font=("Arial", 9), command=self.clear_all_lights).pack(fill=tk.X)
+        
+        # Separator
+        tk.Frame(lighting_tab, bg="#333", height=1).pack(fill=tk.X, padx=10, pady=10)
+        
+        # Individuelle Lichtquellen-Einstellungen
+        tk.Label(lighting_tab, text="💡 Individuelle Lichtquellen:", bg="#1a1a1a", fg="white",
+                font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=(5, 2))
+        
+        # Scrollable Frame für Lichtquellen-Liste
+        light_list_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        light_list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Canvas für Scrolling
+        light_canvas = tk.Canvas(light_list_frame, bg="#2a2a2a", highlightthickness=0, height=150)
+        light_scrollbar = tk.Scrollbar(light_list_frame, orient=tk.VERTICAL, command=light_canvas.yview)
+        light_scrollable_frame = tk.Frame(light_canvas, bg="#2a2a2a")
+        
+        light_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: light_canvas.configure(scrollregion=light_canvas.bbox("all"))
+        )
+        
+        light_canvas.create_window((0, 0), window=light_scrollable_frame, anchor="nw")
+        light_canvas.configure(yscrollcommand=light_scrollbar.set)
+        
+        light_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        light_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Speichere Referenzen für spätere Updates
+        self.light_list_canvas = light_canvas
+        self.light_list_inner = light_scrollable_frame
+        
+        # Initiale Liste auffüllen
+        self.refresh_light_list()
         
         # SETTINGS TAB
         settings_tab = tk.Frame(right_frame, bg="#1a1a1a")
@@ -1334,15 +1373,13 @@ class MapEditor(tk.Frame):
                 self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
         
-        # Zeichne Darkness-Polygone (gespeichert) - INTERN TILES, IM EDITOR PIXEL
-        # Polygone werden als Tile-Koordinaten gespeichert, für Editor in Pixel konvertieren
+        # Zeichne Darkness-Polygone (gespeichert) - PIXEL-KOORDINATEN
+        # Polygone werden als Pixel-Koordinaten gespeichert (für präzise Editor-Anzeige)
         for polygon in self.lighting_engine.darkness_polygons:
             if len(polygon) >= 3:
                 coords = []
-                for tx, ty in polygon:
-                    # Konvertiere Tile zu Pixel-Koordinaten für Editor-Anzeige
-                    px = tx * self.tile_size
-                    py = ty * self.tile_size
+                for px, py in polygon:
+                    # Pixel-Koordinaten direkt verwenden (bereits konvertiert)
                     coords.extend([px, py])
                 self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
                                           fill="", dash=(5, 5), tags="darkness_polygon")
@@ -1408,11 +1445,10 @@ class MapEditor(tk.Frame):
                             py = center_y + radius * math.sin(angle)
                             polygon.append((px, py))
                     
-                    # Speichere als Tile-Koordinaten für konsistente Speicherung
-                    tile_polygon = [(x // self.tile_size, y // self.tile_size) for x, y in polygon]
-                    self.lighting_engine.darkness_polygons.append(tile_polygon)
+                    # Speichere als Pixel-Koordinaten für präzise Speicherung
+                    self.lighting_engine.darkness_polygons.append(polygon)
                     
-                    print(f"✅ {mode.title()}-Polygon erstellt: {len(polygon)} Punkte")
+                    print(f"✅ {mode.title()}-Polygon erstellt: {len(polygon)} Punkte (Pixel-genau)")
                     
                     self.drawing_darkness_polygon = False
                     self.polygon_shape_start = None
@@ -1486,6 +1522,7 @@ class MapEditor(tk.Frame):
                 preset = LIGHT_PRESETS.get(self.selected_light_preset, LIGHT_PRESETS["torch"])
                 light = LightSource(x, y, **preset)
                 self.lighting_engine.add_light(light)
+                self.refresh_light_list()  # Liste aktualisieren
                 print(f"💡 {self.selected_light_preset.title()} platziert bei ({x}, {y}) [Layer: Lights]")
             
             # Redraw wenn Lighting aktiv
@@ -1968,6 +2005,7 @@ class MapEditor(tk.Frame):
         """Entferne alle Lichtquellen"""
         if messagebox.askyesno("Bestätigen", "Alle Lichtquellen löschen?"):
             self.lighting_engine.clear_lights()
+            self.refresh_light_list()  # Liste aktualisieren
             self.draw_grid()
             print("💡 Alle Lichtquellen entfernt")
     
@@ -2101,7 +2139,7 @@ class MapEditor(tk.Frame):
         mode = self.polygon_draw_mode.get()
         
         # Nutze smooth_polygon_drawer für pixelgenaue, geglättete Polygone
-        pixel_polygon = self.smooth_polygon_drawer.finish(smooth=True)
+        pixel_polygon = self.smooth_polygon_drawer.finish(smooth=False)
         
         if pixel_polygon and len(pixel_polygon) >= 3:
             # Optional: Intelligente Edge-Detection & Optimization
@@ -2119,11 +2157,10 @@ class MapEditor(tk.Frame):
                     print(f"⚠️ Edge-Detection Fehler: {e}")
                     print("   Nutze Original-Polygon")
             
-            # WICHTIG: Speichere TILE-Koordinaten für konsistente Speicherung
-            # Konvertiere Pixel zu Tile-Koordinaten
-            tile_polygon = [(x // self.tile_size, y // self.tile_size) for x, y in pixel_polygon]
-            self.lighting_engine.darkness_polygons.append(tile_polygon)
-            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte → {len(tile_polygon)} Tile-Punkte")
+            # WICHTIG: Speichere PIXEL-Koordinaten für präzise Speicherung (kein Genauigkeitsverlust!)
+            # Keine Konvertierung zu Tile-Koordinaten mehr
+            self.lighting_engine.darkness_polygons.append(pixel_polygon)
+            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte (Pixel-genau)")
         
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
@@ -2167,7 +2204,7 @@ class MapEditor(tk.Frame):
         )
         
         if filename:
-            # Polygone sind bereits in Tile-Koordinaten gespeichert
+            # Polygone sind in Pixel-Koordinaten gespeichert (präzise)
             map_data = {
                 "width": self.width,
                 "height": self.height,
@@ -2217,24 +2254,25 @@ class MapEditor(tk.Frame):
                         self.lighting_engine.from_dict(map_data["lighting"])
                         self.lighting_enabled = map_data["lighting"].get("enabled", False)
                         
-                        # Polygone sind in Tile-Koordinaten gespeichert, konvertiere zu Pixel für Editor
-                        # ABER: Alte Maps haben Pixel-Koordinaten - erkenne automatisch
-                        tile_polygons = self.lighting_engine.darkness_polygons.copy()
+                        # Polygone sind jetzt immer in Pixel-Koordinaten gespeichert (präzise)
+                        # Alte Maps hatten Tile-Koordinaten - erkenne automatisch
+                        stored_polygons = self.lighting_engine.darkness_polygons.copy()
                         pixel_polygons = []
-                        for polygon in tile_polygons:
+                        for polygon in stored_polygons:
                             # Prüfe ob Koordinaten Tile- oder Pixel-basiert sind
                             # Wenn max x/y > map width/height, dann Pixel-Koordinaten
                             max_x = max(p[0] for p in polygon) if polygon else 0
                             max_y = max(p[1] for p in polygon) if polygon else 0
                             
                             if max_x > self.width or max_y > self.height:
-                                # Pixel-Koordinaten (alte Map) - verwende direkt
+                                # Pixel-Koordinaten (neue oder alte Map) - verwende direkt
                                 pixel_polygons.append(polygon)
-                                print(f"🔄 Alte Pixel-Polygone erkannt: max_x={max_x}, max_y={max_y}")
+                                print(f"🔄 Pixel-Polygone erkannt: max_x={max_x}, max_y={max_y}")
                             else:
-                                # Tile-Koordinaten - konvertiere zu Pixel
+                                # Tile-Koordinaten (sehr alte Map) - konvertiere zu Pixel
                                 pixel_poly = [(tx * self.tile_size, ty * self.tile_size) for tx, ty in polygon]
                                 pixel_polygons.append(pixel_poly)
+                                print(f"🔄 Alte Tile-Polygone konvertiert: max_x={max_x}, max_y={max_y}")
                         
                         self.lighting_engine.darkness_polygons = pixel_polygons
                         
@@ -2245,6 +2283,9 @@ class MapEditor(tk.Frame):
                         print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
                         print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
                         print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
+                    
+                    # Lighting-Liste aktualisieren
+                    self.refresh_light_list()
                     
                     # SVG-Metadata laden
                     if map_data.get("is_svg_mode"):
@@ -2648,12 +2689,71 @@ class MapEditor(tk.Frame):
                  bg="#2a7d2a", fg="white", font=("Arial", 9),
                  padx=15, pady=5, command=dialog.destroy).pack(side=tk.LEFT, padx=5)
     
-    def destroy(self):
-        """Aufräumen"""
-        self.is_animating = False
-        if self.animation_id:
-            self.after_cancel(self.animation_id)
-        super().destroy()
+    def refresh_light_list(self):
+        """Aktualisiert die Liste der Lichtquellen mit individuellen Radius-Slidern"""
+        # Clear existing widgets
+        for widget in self.light_list_inner.winfo_children():
+            widget.destroy()
+        
+        # Clear old references
+        self.light_radius_vars.clear()
+        self.light_radius_sliders.clear()
+        self.light_radius_labels.clear()
+        
+        if not self.lighting_engine.lights:
+            # Keine Lichter vorhanden
+            tk.Label(self.light_list_inner, text="Keine Lichtquellen vorhanden",
+                    bg="#2a2a2a", fg="#888", font=("Arial", 9)).pack(pady=20)
+            return
+        
+        # Icons für verschiedene Lichttypen
+        icons = {"torch": "🔥", "candle": "🕯️", "window": "🪟", 
+                "magic": "✨", "fire": "🔥", "moonlight": "🌙", "point": "💡"}
+        
+        for i, light in enumerate(self.lighting_engine.lights):
+            # Frame für jedes Licht
+            light_frame = tk.Frame(self.light_list_inner, bg="#3a3a3a", relief=tk.RIDGE, bd=1)
+            light_frame.pack(fill=tk.X, padx=5, pady=2)
+            
+            # Icon und Info
+            info_text = f"{icons.get(light.light_type, '💡')} {light.light_type.title()} @ ({light.x},{light.y})"
+            tk.Label(light_frame, text=info_text, bg="#3a3a3a", fg="white",
+                    font=("Arial", 8, "bold")).pack(anchor=tk.W, padx=5, pady=2)
+            
+            # Radius-Slider Frame
+            radius_frame = tk.Frame(light_frame, bg="#3a3a3a")
+            radius_frame.pack(fill=tk.X, padx=5, pady=2)
+            
+            # Radius Label
+            tk.Label(radius_frame, text="Radius:", bg="#3a3a3a", fg="#ccc",
+                    font=("Arial", 7)).pack(side=tk.LEFT)
+            
+            # Variable für diesen Licht-Index
+            radius_var = tk.DoubleVar(value=light.radius)
+            self.light_radius_vars[i] = radius_var
+            
+            # Slider
+            slider = tk.Scale(radius_frame, from_=1, to=20, resolution=0.5, orient=tk.HORIZONTAL,
+                            variable=radius_var, command=lambda v, idx=i: self.update_light_radius(idx, v),
+                            bg="#2a2a2a", fg="white", highlightthickness=0, showvalue=False,
+                            troughcolor="#404040", activebackground="#3a3a3a", length=100)
+            slider.pack(side=tk.LEFT, padx=5)
+            self.light_radius_sliders[i] = slider
+            
+            # Wert-Label
+            value_label = tk.Label(radius_frame, text=f"{light.radius}", bg="#3a3a3a", fg="white",
+                                  font=("Arial", 8, "bold"), width=3)
+            value_label.pack(side=tk.LEFT, padx=2)
+            self.light_radius_labels[i] = value_label
+            
+            # Löschen-Button
+            delete_btn = tk.Button(radius_frame, text="🗑️", bg="#5a2a2a", fg="white",
+                                  font=("Arial", 8), width=2,
+                                  command=lambda idx=i: self.delete_light(idx))
+            delete_btn.pack(side=tk.RIGHT, padx=2)
+        
+        # Canvas neu konfigurieren
+        self.light_list_canvas.configure(scrollregion=self.light_list_canvas.bbox("all"))
     
     def open_map_draw(self):
         """Öffnet das MapDraw-Tool (Hand-Drawn Map Editor)"""
