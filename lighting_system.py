@@ -1174,6 +1174,10 @@ class GPUAcceleratedLightingEngine(LightingEngine):
         
         try:
             self.gpu_renderer = GPURenderer()
+            # Mirror key attributes so other code can access them consistently
+            self.gpu_context = self.gpu_renderer.context
+            self.gpu_queue = self.gpu_renderer.queue
+            self.gpu_program = self.gpu_renderer.program
             print("✅ Vollständige GPU-Rendering-Pipeline initialisiert")
             
         except Exception as e:
@@ -1182,9 +1186,10 @@ class GPUAcceleratedLightingEngine(LightingEngine):
     
     def render_lighting_gpu(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
         """GPU-beschleunigte Licht-Rendering"""
-        if not self.gpu_context or not self.lights:
-            # Fallback zur CPU-Version
-            return self.render_lighting(width, height, tile_size, time_offset, radius_scale)
+        if not getattr(self, 'gpu_context', None) or not self.lights:
+            # Fallback zur CPU-Version — call parent to avoid recursion
+            print('⚠️ GPU render path not ready or no lights — use CPU fallback')
+            return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
         
         try:
             # Vereinfachte GPU-Version für Performance
@@ -1200,10 +1205,15 @@ class GPUAcceleratedLightingEngine(LightingEngine):
             img_width = max(1, (max_x - min_x + 1) * tile_size)
             img_height = max(1, (max_y - min_y + 1) * tile_size)
             
-            # GPU Buffer für Licht-Maske
-            light_mask_r = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
-            light_mask_g = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
-            light_mask_b = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
+            # Guard: make sure gpu_renderer/program/queue exist and there are lights
+            if not getattr(self, 'gpu_renderer', None) or not getattr(self, 'gpu_program', None):
+                # Not properly initialized: fall back to CPU
+                print('⚠️ GPU-Renderer intern nicht initialisiert — Fallback zu CPU')
+                return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
+
+            # GPU Buffer für Gesamt-Lichtmaske (RGBA)
+            final_mask = cl_array.zeros(self.gpu_queue, (img_height, img_width, 4), dtype=np.float32)
+            print(f"🎯 GPU: render_lighting_gpu: creating final_mask {img_width}x{img_height}, lights={len(self.lights)}")
             
             # Für jedes Licht: GPU-Kernel ausführen
             for light in self.lights[:3]:  # Max 3 Lichter für Performance
@@ -1216,28 +1226,42 @@ class GPUAcceleratedLightingEngine(LightingEngine):
                 # Noise-Map generieren (einfache Version)
                 noise_map = np.random.randn(img_height, img_width).astype(np.float32) * 0.1
                 noise_gpu = cl_array.to_device(self.gpu_queue, noise_map)
-                
-                # Kernel ausführen
+
+                # Per-light temporary RGBA buffer
+                light_mask = cl_array.zeros(self.gpu_queue, (img_height, img_width, 4), dtype=np.float32)
+
+                # Kernel ausführen (compute_light_mask expects a float4 buffer)
                 self.gpu_program.compute_light_mask(
                     self.gpu_queue, (img_width, img_height), None,
-                    light_mask_r.data, light_mask_g.data, light_mask_b.data,
+                    light_mask.data,
                     np.int32(img_width), np.int32(img_height),
                     np.float32(cx), np.float32(cy), np.float32(radius_px),
                     np.float32(light.falloff_exponent), np.float32(light.core_brightness),
                     np.float32(current_intensity), np.float32(0.12),
                     noise_gpu.data
                 )
+
+                # Akkumulieren (GPU-to-GPU Add)
+                final_mask = final_mask + light_mask
+                print(f"   ✔️ GPU: added light @ ({light.x},{light.y}), radius_px={radius_px}, intensity={current_intensity:.2f}")
             
-            # Ergebnis zurück zur CPU holen
-            r_np = light_mask_r.get()
-            g_np = light_mask_g.get()
-            b_np = light_mask_b.get()
+            # Ergebnis zurück zur CPU holen (RGBA float32)
+            rgba_np = final_mask.get()
+            nonzero = np.count_nonzero(rgba_np)
+            print(f"🎯 GPU: finished accumulation — buffer nonzero count: {nonzero}")
+            # Falls kernel nur schrieb 1 channel intensity, expand it
+            if rgba_np.ndim == 2:
+                rgba_np = np.stack([rgba_np]*3 + [np.ones_like(rgba_np)], axis=2)
+
+            # Clamp and convert to uint8
+            rgba_array = np.clip(rgba_np * 255.0, 0, 255).astype(np.uint8)
+            print(f"🎯 GPU: converted rgba_array -> shape {rgba_array.shape}, dtype {rgba_array.dtype}")
             
-            # Zu PIL Image konvertieren
-            rgb_array = np.stack([r_np, g_np, b_np], axis=2)
-            rgb_array = np.clip(rgb_array * 255, 0, 255).astype(np.uint8)
-            
-            light_image = Image.fromarray(rgb_array, mode='RGB')
+            # If we have alpha channel use RGBA, else convert to RGB
+            if rgba_array.shape[2] == 4:
+                light_image = Image.fromarray(rgba_array, mode='RGBA')
+            else:
+                light_image = Image.fromarray(rgba_array[:, :, :3], mode='RGB')
             
             # Blur für weiche Kanten (CPU, da GPU-Blur komplex wäre)
             from PIL import ImageFilter
@@ -1247,14 +1271,21 @@ class GPUAcceleratedLightingEngine(LightingEngine):
             # Ambient hinzufügen
             if self.ambient_intensity > 0:
                 ambient = int(self.ambient_intensity * 255)
-                ambient_img = Image.new('RGB', light_image.size, (ambient, ambient, ambient))
+                # Create ambient image in the same mode as light_image so ImageChops works
+                if light_image.mode == 'RGBA':
+                    ambient_img = Image.new('RGBA', light_image.size, (ambient, ambient, ambient, 255))
+                else:
+                    ambient_img = Image.new('RGB', light_image.size, (ambient, ambient, ambient))
+                # Ensure comparable modes
+                if ambient_img.mode != light_image.mode:
+                    ambient_img = ambient_img.convert(light_image.mode)
                 light_image = ImageChops.lighter(light_image, ambient_img)
             
             return light_image.convert('RGBA')
             
         except Exception as e:
             print(f"⚠️ GPU-Rendering fehlgeschlagen, verwende CPU: {e}")
-            return self.render_lighting(width, height, tile_size, time_offset, radius_scale)
+            return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
     
     def render_lighting(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
         """Override der CPU-Version für GPU-Beschleunigung"""
