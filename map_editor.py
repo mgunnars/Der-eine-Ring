@@ -464,7 +464,7 @@ class MapEditor(tk.Frame):
         # Panel-Callbacks werden in show_light_context/show_polygon_context gesetzt
         
         # =================== RIGHT PANEL - SETTINGS ===================
-        right_outer = tk.Frame(self, bg="#1a1a1a", width=280)
+        right_outer = tk.Frame(self, bg="#1a1a1a", width=350)  # Erhöht von 280 auf 350 für Scrollbar-Sichtbarkeit
         right_outer.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False)
         right_outer.pack_propagate(False)
         
@@ -701,23 +701,24 @@ class MapEditor(tk.Frame):
                 font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10, pady=(5, 2))
         
         # Scrollable Frame für Lichtquellen-Liste
-        light_list_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
-        light_list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        light_list_frame = tk.Frame(lighting_tab, bg="#1a1a1a", height=180)  # Feste Höhe für Container
+        light_list_frame.pack(fill=tk.X, padx=10, pady=5)  # fill=tk.X statt BOTH
+        light_list_frame.pack_propagate(False)  # Höhe beibehalten
         
         # Canvas für Scrolling
-        light_canvas = tk.Canvas(light_list_frame, bg="#2a2a2a", highlightthickness=0, height=150)
+        light_canvas = tk.Canvas(light_list_frame, bg="#2a2a2a", highlightthickness=0)  # Keine feste Höhe
         light_scrollbar = tk.Scrollbar(light_list_frame, orient=tk.VERTICAL, command=light_canvas.yview)
         light_scrollable_frame = tk.Frame(light_canvas, bg="#2a2a2a")
         
         light_scrollable_frame.bind(
             "<Configure>",
-            lambda e: light_canvas.configure(scrollregion=light_canvas.bbox("all"))
+            lambda e: light_canvas.configure(scrollregion=light_canvas.bbox("all"))  # Wie funktionierende rechte Leiste
         )
         
         light_canvas.create_window((0, 0), window=light_scrollable_frame, anchor="nw")
         light_canvas.configure(yscrollcommand=light_scrollbar.set)
         
-        light_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        light_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)  # Scrollbar rechts wie rechte Leiste
         light_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Speichere Referenzen für spätere Updates
@@ -2164,13 +2165,14 @@ class MapEditor(tk.Frame):
     def create_full_map_darkness_polygon(self):
         """Erstelle ein Polygon, das die gesamte Map abdeckt"""
         if messagebox.askyesno("Bestätigen", "Die gesamte Map als Dunkelbereich markieren?\n\nAlle bestehenden Polygone werden gelöscht."):
-            # Erstelle Rechteck-Polygon für die gesamte Map (in relativen Koordinaten 0-1 mit Rand)
-            # Relative Koordinaten: Map ist 32×23, also von (-0.04) bis (1.04) etc.
+            # Erstelle Rechteck-Polygon für die gesamte Map (in relativen Koordinaten 0-1 mit großem Rand)
+            # Verwende größeren Rand um sicherzustellen, dass alles abgedeckt ist
+            margin = 0.1  # 10% Rand um sicherzugehen
             full_map_polygon = [
-                (-0.041666666666666664, -0.041666666666666664),
-                (1.0416666666666667, -0.041666666666666664),
-                (1.0416666666666667, 1.0416666666666667),
-                (-0.041666666666666664, 1.0416666666666667)
+                (-margin, -margin),
+                (1.0 + margin, -margin),
+                (1.0 + margin, 1.0 + margin),
+                (-margin, 1.0 + margin)
             ]
             
             # Lösche alle bestehenden Polygone
@@ -2181,7 +2183,7 @@ class MapEditor(tk.Frame):
             
             self.update_polygon_info()
             self.draw_grid()
-            print(f"🌑 Ganze Map als Dunkelbereich markiert: {32.041666666666664 - (-0.041666666666666664):.3f}×{23.041666666666668 - (-0.041666666666666664):.3f} Tiles (mit Rand)")
+            print(f"🌑 Ganze Map als Dunkelbereich markiert: {self.width}x{self.height} Tiles (mit {margin*100}% Rand)")
     
     def finish_darkness_polygon(self):
         """Schließe das aktuelle Polygon ab"""
@@ -2784,8 +2786,8 @@ class MapEditor(tk.Frame):
                                   command=lambda idx=i: self.delete_light(idx))
             delete_btn.pack(side=tk.RIGHT, padx=2)
         
-        # Canvas neu konfigurieren
-        self.light_list_canvas.configure(scrollregion=self.light_list_canvas.bbox("all"))
+        # Canvas neu konfigurieren - automatische Scrollregion durch Bind
+        self.light_list_canvas.update_idletasks()  # Widgets aktualisieren
     
     def open_map_draw(self):
         """Öffnet das MapDraw-Tool (Hand-Drawn Map Editor)"""
