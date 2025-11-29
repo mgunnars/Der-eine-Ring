@@ -198,7 +198,7 @@ class PhysicalLightingDemo(tk.Tk):
         
         # Zeichne Raum-Umrisse (nur zur Visualisierung)
         for polygon in self.lighting_engine.darkness_polygons:
-            pixel_poly = [(int(x * self.tile_size), int(y * self.tile_size)) for x, y in polygon]
+            pixel_poly = [(int(x * self.map_width * self.tile_size), int(y * self.map_height * self.tile_size)) for x, y in polygon]
             draw.polygon(pixel_poly, outline=(200, 200, 200), width=3)
         
         return base_map

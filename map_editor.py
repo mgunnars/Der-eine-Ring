@@ -1239,8 +1239,20 @@ class MapEditor(tk.Frame):
     def select_terrain(self, terrain):
         """Terrain auswählen"""
         self.selected_terrain = terrain
+        
+        # Prüfe ob es ein Licht-emittierendes Material ist
+        if terrain in self.light_emitting_materials:
+            preset_name = self.light_emitting_materials[terrain]["preset"]
+            icon = self.light_emitting_materials[terrain]["icon"]
+            print(f"✓ {icon} Licht-Material '{terrain}' ausgewählt (Preset: {preset_name})")
+            print(f"   💡 Tipp: Verwende das Licht-Tool (G) um Lichter zu platzieren!")
+        else:
+            print(f"✓ Material '{terrain}' ausgewählt")
+        
         # Update ohne komplettes Neuladen
-        print(f"✓ Material '{terrain}' ausgewählt")
+        if hasattr(self, 'populate_material_list'):
+            # Markiere ausgewähltes Material visuell (falls Material-Liste sichtbar)
+            pass
     
     def draw_grid(self):
         """Grid zeichnen"""
@@ -1375,13 +1387,15 @@ class MapEditor(tk.Frame):
                 self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
         
-        # Zeichne Darkness-Polygone (gespeichert) - PIXEL-KOORDINATEN
-        # Polygone werden als Pixel-Koordinaten gespeichert (für präzise Editor-Anzeige)
+        # Zeichne Darkness-Polygone (gespeichert) - RELATIVE KOORDINATEN (0-1)
+        # Polygone werden als relative Koordinaten gespeichert und hier zu Pixel konvertiert
         for polygon in self.lighting_engine.darkness_polygons:
             if len(polygon) >= 3:
                 coords = []
-                for px, py in polygon:
-                    # Pixel-Koordinaten direkt verwenden (bereits konvertiert)
+                for rx, ry in polygon:
+                    # Relative Koordinaten zu Pixel konvertieren
+                    px = rx * self.width * self.tile_size
+                    py = ry * self.height * self.tile_size
                     coords.extend([px, py])
                 self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
                                           fill="", dash=(5, 5), tags="darkness_polygon")
@@ -1447,8 +1461,9 @@ class MapEditor(tk.Frame):
                             py = center_y + radius * math.sin(angle)
                             polygon.append((px, py))
                     
-                    # Speichere als Pixel-Koordinaten für präzise Speicherung
-                    self.lighting_engine.darkness_polygons.append(polygon)
+                    # Speichere als relative Koordinaten für konsistente Speicherung
+                    rel_polygon = [(px / (self.width * self.tile_size), py / (self.height * self.tile_size)) for px, py in polygon]
+                    self.lighting_engine.darkness_polygons.append(rel_polygon)
                     
                     print(f"✅ {mode.title()}-Polygon erstellt: {len(polygon)} Punkte (Pixel-genau)")
                     
@@ -1520,12 +1535,19 @@ class MapEditor(tk.Frame):
                 self.select_light(existing)
                 print(f"💡 Lichtquelle #{existing} ausgewählt")
             else:
-                # Neues Licht hinzufügen
-                preset = LIGHT_PRESETS.get(self.selected_light_preset, LIGHT_PRESETS["torch"])
+                # Bestimme Preset: Verwende ausgewähltes Material falls es Licht-emittierend ist
+                preset_name = self.selected_light_preset
+                
+                # Prüfe ob ausgewähltes Material ein Licht-Material ist
+                if self.selected_terrain in self.light_emitting_materials:
+                    preset_name = self.light_emitting_materials[self.selected_terrain]["preset"]
+                    print(f"💡 Verwende Preset '{preset_name}' vom Material '{self.selected_terrain}'")
+                
+                preset = LIGHT_PRESETS.get(preset_name, LIGHT_PRESETS["torch"])
                 light = LightSource(x, y, **preset)
                 self.lighting_engine.add_light(light)
                 self.refresh_light_list()  # Liste aktualisieren
-                print(f"💡 {self.selected_light_preset.title()} platziert bei ({x}, {y}) [Layer: Lights]")
+                print(f"💡 {preset_name.title()} platziert bei ({x}, {y}) [Layer: Lights]")
             
             # Redraw wenn Lighting aktiv
             if self.show_lighting.get():
@@ -1702,12 +1724,15 @@ class MapEditor(tk.Frame):
                             light_type=preset_name
                         )
                         self.lighting_engine.add_light(light)
+                        self.refresh_light_list()  # UI aktualisieren!
+                        print(f"💡 Auto-Licht platziert: {preset_name} bei ({x},{y})")
                 
                 # Auto-Light entfernen: IMMER prüfen ob Lichtquelle existiert (auch beim Eraser!)
                 else:
                     light_idx = self.lighting_engine.get_light_at(x, y, tolerance=0)
                     if light_idx is not None:
                         self.lighting_engine.remove_light(light_idx)
+                        self.refresh_light_list()  # UI aktualisieren!
                         print(f"💡 Lichtquelle bei ({x},{y}) entfernt")
     
     def flood_fill(self, start_x, start_y, new_terrain):
@@ -2139,15 +2164,13 @@ class MapEditor(tk.Frame):
     def create_full_map_darkness_polygon(self):
         """Erstelle ein Polygon, das die gesamte Map abdeckt"""
         if messagebox.askyesno("Bestätigen", "Die gesamte Map als Dunkelbereich markieren?\n\nAlle bestehenden Polygone werden gelöscht."):
-            # Erstelle Rechteck-Polygon für die gesamte Map
-            map_width_px = self.width * self.tile_size
-            map_height_px = self.height * self.tile_size
-            
+            # Erstelle Rechteck-Polygon für die gesamte Map (in relativen Koordinaten 0-1 mit Rand)
+            # Relative Koordinaten: Map ist 32×23, also von (-0.04) bis (1.04) etc.
             full_map_polygon = [
-                (0, 0),
-                (map_width_px, 0),
-                (map_width_px, map_height_px),
-                (0, map_height_px)
+                (-0.041666666666666664, -0.041666666666666664),
+                (1.0416666666666667, -0.041666666666666664),
+                (1.0416666666666667, 1.0416666666666667),
+                (-0.041666666666666664, 1.0416666666666667)
             ]
             
             # Lösche alle bestehenden Polygone
@@ -2158,7 +2181,7 @@ class MapEditor(tk.Frame):
             
             self.update_polygon_info()
             self.draw_grid()
-            print(f"🌑 Ganze Map als Dunkelbereich markiert: {map_width_px}×{map_height_px}px")
+            print(f"🌑 Ganze Map als Dunkelbereich markiert: {32.041666666666664 - (-0.041666666666666664):.3f}×{23.041666666666668 - (-0.041666666666666664):.3f} Tiles (mit Rand)")
     
     def finish_darkness_polygon(self):
         """Schließe das aktuelle Polygon ab"""
@@ -2183,10 +2206,11 @@ class MapEditor(tk.Frame):
                     print(f"⚠️ Edge-Detection Fehler: {e}")
                     print("   Nutze Original-Polygon")
             
-            # WICHTIG: Speichere PIXEL-Koordinaten für präzise Speicherung (kein Genauigkeitsverlust!)
-            # Keine Konvertierung zu Tile-Koordinaten mehr
-            self.lighting_engine.darkness_polygons.append(pixel_polygon)
-            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte (Pixel-genau)")
+            # WICHTIG: Konvertiere Pixel zu relativen Koordinaten (0-1) für konsistente Speicherung
+            # Alle Polygone werden als relative Koordinaten gespeichert
+            rel_polygon = [(px / (self.width * self.tile_size), py / (self.height * self.tile_size)) for px, py in pixel_polygon]
+            self.lighting_engine.darkness_polygons.append(rel_polygon)
+            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte (relative Koordinaten)")
         
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
@@ -2230,7 +2254,7 @@ class MapEditor(tk.Frame):
         )
         
         if filename:
-            # Polygone sind in Pixel-Koordinaten gespeichert (präzise)
+            # Polygone sind in relativen Koordinaten (0-1) gespeichert (konsistent)
             map_data = {
                 "width": self.width,
                 "height": self.height,
@@ -2280,35 +2304,15 @@ class MapEditor(tk.Frame):
                         self.lighting_engine.from_dict(map_data["lighting"])
                         self.lighting_enabled = map_data["lighting"].get("enabled", False)
                         
-                        # Polygone sind jetzt immer in Pixel-Koordinaten gespeichert (präzise)
-                        # Alte Maps hatten Tile-Koordinaten - erkenne automatisch
-                        stored_polygons = self.lighting_engine.darkness_polygons.copy()
-                        pixel_polygons = []
-                        for polygon in stored_polygons:
-                            # Prüfe ob Koordinaten Tile- oder Pixel-basiert sind
-                            # Wenn max x/y > map width/height, dann Pixel-Koordinaten
-                            max_x = max(p[0] for p in polygon) if polygon else 0
-                            max_y = max(p[1] for p in polygon) if polygon else 0
-                            
-                            if max_x > self.width or max_y > self.height:
-                                # Pixel-Koordinaten (neue oder alte Map) - verwende direkt
-                                pixel_polygons.append(polygon)
-                                print(f"🔄 Pixel-Polygone erkannt: max_x={max_x}, max_y={max_y}")
-                            else:
-                                # Tile-Koordinaten (sehr alte Map) - konvertiere zu Pixel
-                                pixel_poly = [(tx * self.tile_size, ty * self.tile_size) for tx, ty in polygon]
-                                pixel_polygons.append(pixel_poly)
-                                print(f"🔄 Alte Tile-Polygone konvertiert: max_x={max_x}, max_y={max_y}")
-                        
-                        self.lighting_engine.darkness_polygons = pixel_polygons
+                        # Polygone sind jetzt immer in relativen Koordinaten (0-1) gespeichert (konsistent)
+                        # Keine Konvertierung mehr nötig - direkt verwenden
+                        print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
+                        print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
+                        print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
                         
                         # Synchronisiere UI mit geladenen Daten
                         self.lighting_mode_var.set(self.lighting_engine.lighting_mode)
                         self.darkness_opacity_var.set(int(self.lighting_engine.darkness_opacity * 100))
-                        
-                        print(f"💡 {len(self.lighting_engine.lights)} Lichtquellen geladen")
-                        print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
-                        print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
                     
                     # Lighting-Liste aktualisieren
                     self.refresh_light_list()

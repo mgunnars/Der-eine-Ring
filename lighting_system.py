@@ -924,7 +924,7 @@ class LightingEngine:
                     draw = ImageDraw.Draw(shadow_mask)
                     
                     for polygon in self.darkness_polygons:
-                        pixel_poly = [(int(x), int(y)) for x, y in polygon]
+                        pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
                         shadow_intensity = int(self.darkness_opacity * 255)
                         draw.polygon(pixel_poly, fill=shadow_intensity)
                     
@@ -944,7 +944,7 @@ class LightingEngine:
                     polygon_alpha = Image.new('L', (img_width, img_height), 0)
                     draw_alpha = ImageDraw.Draw(polygon_alpha)
                     for polygon in self.darkness_polygons:
-                        pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                        pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
                         draw_alpha.polygon(pixel_poly, fill=255)
                     
                     multiply_layer = multiply_rgb.convert('RGBA')
@@ -973,7 +973,7 @@ class LightingEngine:
                 draw = ImageDraw.Draw(shadow_mask)
                 
                 for polygon in self.darkness_polygons:
-                    pixel_poly = [(int(x), int(y)) for x, y in polygon]
+                    pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
                     shadow_intensity = int(self.darkness_opacity * 255)
                     draw.polygon(pixel_poly, fill=shadow_intensity)
                 
@@ -991,7 +991,7 @@ class LightingEngine:
                 polygon_alpha = Image.new('L', (img_width, img_height), 0)
                 draw_alpha = ImageDraw.Draw(polygon_alpha)
                 for polygon in self.darkness_polygons:
-                    pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                    pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
                     draw_alpha.polygon(pixel_poly, fill=255)
                 
                 multiply_layer = multiply_rgb.convert('RGBA')
@@ -1173,9 +1173,9 @@ class LightingEngine:
             
             # Zeichne Dunkelheits-Polygone als Schatten-Bereiche
             for polygon in self.darkness_polygons:
-                # Polygone sind in Tile-Koordinaten gespeichert, konvertiere zu Pixeln
-                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
-                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} (converted from tiles to pixels)")
+                # Polygone sind in relativen Koordinaten (0-1) gespeichert, konvertiere zu Pixeln
+                pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
+                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} (converted from relative to pixels)")
                 # Basis-Schatten-Intensität (nie 100% schwarz wegen Ambient)
                 # darkness_opacity = 0.85 → 85% dunkel → Pixel-Wert 217 (von 255)
                 shadow_intensity = int(self.darkness_opacity * 255)
@@ -1304,7 +1304,7 @@ class LightingEngine:
             polygon_alpha = Image.new('L', (img_width, img_height), 0)
             draw_alpha = ImageDraw.Draw(polygon_alpha)
             for polygon in self.darkness_polygons:
-                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                pixel_poly = [(int(x * width * tile_size), int(y * height * tile_size)) for x, y in polygon]
                 draw_alpha.polygon(pixel_poly, fill=255)
             
             # SCHRITT 3: Kombiniere zu RGBA
