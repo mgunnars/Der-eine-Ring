@@ -2803,6 +2803,32 @@ class MapEditor(tk.Frame):
             
         except Exception as e:
             messagebox.showerror("Fehler", f"Konnte MapDraw nicht starten:\n{e}")
+    
+    def update_light_radius(self, light_index, new_radius):
+        """Update the radius of a light source from the slider"""
+        if 0 <= light_index < len(self.lighting_engine.lights):
+            light = self.lighting_engine.lights[light_index]
+            light.radius = float(new_radius)
+            
+            # Update the label if it exists
+            if light_index in self.light_radius_labels:
+                self.light_radius_labels[light_index].config(text=f"{new_radius}")
+            
+            print(f"💡 Light {light_index} radius updated: {new_radius}")
+            if self.show_lighting.get():
+                self.draw_grid()
+    
+    def delete_light(self, light_index):
+        """Delete a light source"""
+        if 0 <= light_index < len(self.lighting_engine.lights):
+            self.lighting_engine.lights.pop(light_index)
+            print(f"🗑️ Light {light_index} deleted")
+            
+            # Refresh the light list UI
+            self.refresh_light_list()
+            
+            if self.show_lighting.get():
+                self.draw_grid()
 
 
 def ask_canvas_size(parent=None):

@@ -1,6 +1,6 @@
 {
   "version": "1.2",
-  "created": "2025-11-29T17:02:58.567738",
+  "created": "2025-11-29T17:07:34.629894",
   "width": 32,
   "height": 23,
   "tiles": [
@@ -150,8 +150,8 @@
       "grass",
       "grass",
       "grass",
-      "grass",
       "candle",
+      "grass",
       "grass",
       "grass",
       "grass",
@@ -844,9 +844,9 @@
   "lighting": {
     "lights": [
       {
-        "x": 10,
+        "x": 9,
         "y": 4,
-        "radius": 4,
+        "radius": 2.0,
         "color": [
           255,
           230,
@@ -859,7 +859,7 @@
       {
         "x": 19,
         "y": 15,
-        "radius": 4,
+        "radius": 2.0,
         "color": [
           255,
           230,
