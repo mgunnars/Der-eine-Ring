@@ -1334,13 +1334,15 @@ class MapEditor(tk.Frame):
                 self.canvas.create_text(lx, ly, text=icon, font=("Arial", 14),
                                        tags="light_source")
         
-        # Zeichne Darkness-Polygone (gespeichert) - IM EDITOR PIXEL, INTERN TILES
-        # Editor arbeitet mit Pixel-Koordinaten, aber beim Laden/Speichern wird konvertiert
+        # Zeichne Darkness-Polygone (gespeichert) - INTERN TILES, IM EDITOR PIXEL
+        # Polygone werden als Tile-Koordinaten gespeichert, für Editor in Pixel konvertieren
         for polygon in self.lighting_engine.darkness_polygons:
             if len(polygon) >= 3:
                 coords = []
-                for px, py in polygon:
-                    # Polygone sind im Editor in Pixel-Koordinaten
+                for tx, ty in polygon:
+                    # Konvertiere Tile zu Pixel-Koordinaten für Editor-Anzeige
+                    px = tx * self.tile_size
+                    py = ty * self.tile_size
                     coords.extend([px, py])
                 self.canvas.create_polygon(coords, outline="#ff00ff", width=2, 
                                           fill="", dash=(5, 5), tags="darkness_polygon")
@@ -1406,8 +1408,9 @@ class MapEditor(tk.Frame):
                             py = center_y + radius * math.sin(angle)
                             polygon.append((px, py))
                     
-                    # Speichere pixelgenaue Koordinaten (kein Tile-Snapping!)
-                    self.lighting_engine.darkness_polygons.append(polygon)
+                    # Speichere als Tile-Koordinaten für konsistente Speicherung
+                    tile_polygon = [(x // self.tile_size, y // self.tile_size) for x, y in polygon]
+                    self.lighting_engine.darkness_polygons.append(tile_polygon)
                     
                     print(f"✅ {mode.title()}-Polygon erstellt: {len(polygon)} Punkte")
                     

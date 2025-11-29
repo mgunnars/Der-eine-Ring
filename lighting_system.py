@@ -877,24 +877,38 @@ class LightingEngine:
 
         # TILE-BASIERTES RENDERING: Nur sichtbarer Bereich
         # Hole sichtbare Tiles aus MapEditor (Standard: alles, aber kann optimiert werden)
-        # Für Demo: Nur ein Bereich um die Lichtquellen (z.B. 10 Tiles extra)
-        margin_tiles = 10
-        min_x = min([l.x for l in self.lights]) if self.lights else 0
-        max_x = max([l.x for l in self.lights]) if self.lights else width-1
-        min_y = min([l.y for l in self.lights]) if self.lights else 0
-        max_y = max([l.y for l in self.lights]) if self.lights else height-1
-        min_x = max(0, min_x - margin_tiles)
-        max_x = min(width-1, max_x + margin_tiles)
-        min_y = max(0, min_y - margin_tiles)
-        max_y = min(height-1, max_y + margin_tiles)
+        # WICHTIG: Im Tagesmodus mit Darkness-Polygonen MUSS die gesamte Karte gerendert werden!
+        
+        # Prüfe ob wir die gesamte Karte rendern müssen
+        render_full_map = (self.lighting_mode == "day" and self.darkness_polygons) or not self.enabled
+        
+        if render_full_map:
+            # Volle Karte rendern für korrekte Polygon-Anwendung oder wenn disabled
+            img_width = width * tile_size
+            img_height = height * tile_size
+            offset_x = 0
+            offset_y = 0
+            min_x = 0
+            max_x = width - 1
+            min_y = 0
+            max_y = height - 1
+        else:
+            # Nur Bereich um Lichtquellen (Performance-Optimierung)
+            margin_tiles = 10
+            min_x = min([l.x for l in self.lights]) if self.lights else 0
+            max_x = max([l.x for l in self.lights]) if self.lights else width-1
+            min_y = min([l.y for l in self.lights]) if self.lights else 0
+            max_y = max([l.y for l in self.lights]) if self.lights else height-1
+            min_x = max(0, min_x - margin_tiles)
+            max_x = min(width-1, max_x + margin_tiles)
+            min_y = max(0, min_y - margin_tiles)
+            max_y = min(height-1, max_y + margin_tiles)
 
-        # Bereich in Pixeln
-        img_width = (max_x - min_x + 1) * tile_size
-        img_height = (max_y - min_y + 1) * tile_size
-
-        # Offset für spätere Platzierung
-        offset_x = min_x * tile_size
-        offset_y = min_y * tile_size
+            # Bereich in Pixeln
+            img_width = (max_x - min_x + 1) * tile_size
+            img_height = (max_y - min_y + 1) * tile_size
+            offset_x = min_x * tile_size
+            offset_y = min_y * tile_size
         
         if not self.enabled:
             # Keine Beleuchtung aktiv
@@ -910,7 +924,7 @@ class LightingEngine:
                     draw = ImageDraw.Draw(shadow_mask)
                     
                     for polygon in self.darkness_polygons:
-                        pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                        pixel_poly = [(int(x), int(y)) for x, y in polygon]
                         shadow_intensity = int(self.darkness_opacity * 255)
                         draw.polygon(pixel_poly, fill=shadow_intensity)
                     
@@ -959,7 +973,7 @@ class LightingEngine:
                 draw = ImageDraw.Draw(shadow_mask)
                 
                 for polygon in self.darkness_polygons:
-                    pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                    pixel_poly = [(int(x), int(y)) for x, y in polygon]
                     shadow_intensity = int(self.darkness_opacity * 255)
                     draw.polygon(pixel_poly, fill=shadow_intensity)
                 
@@ -1159,9 +1173,9 @@ class LightingEngine:
             
             # Zeichne Dunkelheits-Polygone als Schatten-Bereiche
             for polygon in self.darkness_polygons:
-                # Konvertiere Tile-Koordinaten zu Pixel-Koordinaten
+                # Polygone sind in Tile-Koordinaten gespeichert, konvertiere zu Pixeln
                 pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
-                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} with tile_size {tile_size}")
+                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} (converted from tiles to pixels)")
                 # Basis-Schatten-Intensität (nie 100% schwarz wegen Ambient)
                 # darkness_opacity = 0.85 → 85% dunkel → Pixel-Wert 217 (von 255)
                 shadow_intensity = int(self.darkness_opacity * 255)
@@ -1233,7 +1247,7 @@ class LightingEngine:
             polygon_mask = Image.new('L', (img_width, img_height), 0)
             draw_poly = ImageDraw.Draw(polygon_mask)
             for polygon in self.darkness_polygons:
-                pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                pixel_poly = [(int(x - offset_x), int(y - offset_y)) for x, y in polygon]
                 draw_poly.polygon(pixel_poly, fill=255)
             
             # Clamp Licht auf Polygon-Bereich
@@ -1299,16 +1313,8 @@ class LightingEngine:
             multiply_layer = multiply_rgb.convert('RGBA')
             multiply_layer.putalpha(polygon_alpha)
             
-            # SCHRITT 4: Addiere farbiges Licht
-            # Das Licht wird NACH dem Multiply als normaler Alpha-Composite angewandt
-            result = Image.alpha_composite(multiply_layer, light_rgba)
-            
-            # WICHTIGER HINWEIS für Projector:
-            # Dieser Layer muss mit ImageChops.multiply() angewandt werden,
-            # NICHT mit alpha_composite!
-            # Projector muss prüfen: if lighting_mode == "day": multiply statt composite
-            
-            return result
+            # RETURN: Multiply-Layer (Licht wird separat behandelt)
+            return multiply_layer
             
         else:
             # NACHTMODUS: Nur additive Lichtquellen, KEIN Darkness-Overlay
@@ -1430,6 +1436,11 @@ class GPUAcceleratedLightingEngine(LightingEngine):
     
     def render_lighting_gpu(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
         """GPU-beschleunigte Licht-Rendering"""
+        # Darkness polygons require CPU rendering for now
+        if self.lighting_mode == "day" and self.darkness_polygons:
+            print("🎯 GPU: Darkness polygons detected in day mode, using CPU fallback")
+            return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
+        
         if not getattr(self, 'gpu_context', None) or not self.lights:
             # Fallback zur CPU-Version — call parent to avoid recursion
             print('⚠️ GPU render path not ready or no lights — use CPU fallback')

@@ -22,8 +22,6 @@ class ProjectorWindow(tk.Toplevel):
     def __init__(self, parent, map_data=None, webcam_tracker=None, svg_path=None):
         super().__init__(parent)
         
-        print(f"🎬 ProjectorWindow __init__ called with svg_path={svg_path is not None}")
-        
         self.title("Der Eine Ring - Projektor")
         self.configure(bg="#0a0a0a", cursor="")
         
@@ -42,7 +40,6 @@ class ProjectorWindow(tk.Toplevel):
             # Hole Original-SVG-Größe aus map_data falls vorhanden
             if map_data and "original_svg_size" in map_data:
                 self.original_svg_size = map_data["original_svg_size"]
-                print(f"📐 Original SVG-Größe: {self.original_svg_size}px")
             
             # SVG-spezifisches Caching
             self.svg_static_cache = None  # Gecachte statische Tiles
@@ -119,9 +116,7 @@ class ProjectorWindow(tk.Toplevel):
 
         # Lade Lighting-Daten aus map_data falls vorhanden
         if map_data and "lighting" in self.map_data:
-            print(f"🔍 DEBUG: 'lighting' key gefunden in map_data")
             lighting_data = self.map_data["lighting"]
-            print(f"🔍 DEBUG: lighting_data keys = {list(lighting_data.keys()) if hasattr(lighting_data,'keys') else lighting_data}")
 
             # Lade ALLE Lighting-Einstellungen (Mode, Darkness-Polygone, etc.)
             self.lighting_engine.from_dict(lighting_data)
@@ -131,10 +126,6 @@ class ProjectorWindow(tk.Toplevel):
                 self.lighting_enabled = True
             else:
                 self.lighting_enabled = lighting_data.get("enabled", False)
-
-            print(f"💡 Projektor: {len(self.lighting_engine.lights)} Lichtquellen geladen")
-            print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
-            print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
 
             # Konvertiere alte Pixel-Polygone zu Tile-Koordinaten falls nötig
             if self.lighting_engine.darkness_polygons:
@@ -150,7 +141,6 @@ class ProjectorWindow(tk.Toplevel):
                             # Pixel-Koordinaten - konvertiere zu Tile (angenommen tile_size=24 aus Editor)
                             tile_polygon = [(p[0] / 24.0, p[1] / 24.0) for p in polygon]
                             converted_polygons.append(tile_polygon)
-                            print(f"🔄 Projektor: Pixel-Polygon konvertiert zu Tile: {polygon} -> {tile_polygon}")
                         else:
                             # Schon Tile-Koordinaten
                             converted_polygons.append(polygon)
@@ -159,13 +149,10 @@ class ProjectorWindow(tk.Toplevel):
 
                 self.lighting_engine.darkness_polygons = converted_polygons
 
-            print(f"DEBUG: darkness_polygons = {self.lighting_engine.darkness_polygons}")
-
         # Ensure projector uses the same GPURenderer as the lighting engine (if available)
         # This avoids creating two separate GPU contexts and keeps resources consistent.
         if getattr(self.lighting_engine, 'gpu_renderer', None):
             self.gpu_renderer = self.lighting_engine.gpu_renderer
-            print("🎮 Projektor: Reusing lighting_engine's GPURenderer")
         elif GPU_AVAILABLE:
             # lighting_engine didn't initialize GPU for some reason — try to create one here and attach it
             try:
@@ -176,9 +163,7 @@ class ProjectorWindow(tk.Toplevel):
                 self.lighting_engine.gpu_context = self.gpu_renderer.context
                 self.lighting_engine.gpu_queue = self.gpu_renderer.queue
                 self.lighting_engine.gpu_program = self.gpu_renderer.program
-                print("🎮 Projektor: GPURenderer erstellt und an lighting_engine angehängt")
             except Exception as e:
-                print(f"⚠️ Projektor: GPURenderer konnte nicht erstellt werden: {e}")
                 self.gpu_renderer = None
         
         # Initialize GPU SVG Renderer if GPU is available
@@ -186,20 +171,15 @@ class ProjectorWindow(tk.Toplevel):
             try:
                 from svg_projector import GPUSVGRenderer
                 self.gpu_svg_renderer = GPUSVGRenderer()
-                print("🎨 GPU-SVG-Renderer initialisiert")
             except Exception as e:
-                print(f"⚠️ GPU-SVG-Renderer konnte nicht erstellt werden: {e}")
                 self.gpu_svg_renderer = None
         else:
             self.gpu_svg_renderer = None
 
-        print("🔧 After GPU setup, creating detail system")
-        
         # Detail-Map System (für zukünftige Erweiterungen)
         from detail_map_system import DetailMapSystem
         self.detail_system = DetailMapSystem(map_data or {"width": 50, "height": 50, "tiles": []})
         
-        print("🔧 Detail system created, calling setup_ui")
         self.setup_ui()
         
         # Auto-Switch für Detail-Maps
@@ -250,13 +230,11 @@ class ProjectorWindow(tk.Toplevel):
         self.lift()
         self.focus_force()
         
-        print("🔧 About to call render_map")
         try:
             # Warte bis Fenster vollständig initialisiert ist, dann render
             # self.after(100, self.render_map)  # Commented out for immediate rendering
             self.render_map()  # Render immediately
         except Exception as e:
-            print(f"❌ Exception in render_map: {e}")
             import traceback
             traceback.print_exc()
         
@@ -277,15 +255,12 @@ class ProjectorWindow(tk.Toplevel):
                     # Aktiviere Lighting automatisch wenn flackernde Lichter vorhanden
                     if not self.lighting_enabled:
                         self.lighting_enabled = True
-                        print(f"💡 Lighting automatisch aktiviert (flackernde Lichtquelle: {light.flicker})")
-                    print(f"💡 Flackernde Lichtquelle gefunden: {light.flicker}")
                     break
         
         if self.has_animated_tiles:
-            print(f"Animation aktiviert: {len(self.animated_positions) if not self.is_svg_mode else len(self.svg_animated_materials)} animierte Tiles")
             self.start_animation()  # Nur starten wenn nötig
         else:
-            print("Keine animierten Tiles gefunden - statische Map")
+            pass
     def gpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None, mode='alpha'):
         """GPU-basiertes Compositing aller Rendering-Layer"""
         # Prefer shared GPU renderer (lighting_engine.gpu_renderer) if available
@@ -322,7 +297,6 @@ class ProjectorWindow(tk.Toplevel):
                 final_pil = Image.composite(darkened_pil.convert('RGBA'), map_image.convert('RGBA'), lighting_alpha)
 
             else:
-                print(f"⚠️ GPU: Unknown composite mode '{mode}' - falling back to CPU")
                 return self.cpu_composite_rendering(map_image, lighting_overlay, fog_enabled, fog_data)
 
             # Fog hinzufügen (falls aktiviert) — do fog on PIL side
@@ -332,7 +306,6 @@ class ProjectorWindow(tk.Toplevel):
             return final_pil
             
         except Exception as e:
-            print(f"⚠️ GPU-Compositing fehlgeschlagen: {e}")
             return self.cpu_composite_rendering(map_image, lighting_overlay, fog_enabled, fog_data)
     
     def cpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None):
@@ -347,7 +320,6 @@ class ProjectorWindow(tk.Toplevel):
     def setup_ui(self):
         """UI-Elemente erstellen"""
         try:
-            print(f"🎨 setup_ui called")
             # Hauptframe
             main_frame = tk.Frame(self, bg="#0a0a0a")
             main_frame.pack(fill=tk.BOTH, expand=True)
@@ -382,8 +354,6 @@ class ProjectorWindow(tk.Toplevel):
                                 highlightthickness=0, cursor="")
             self.canvas.pack(fill=tk.BOTH, expand=True)
             
-            print(f"🎨 Canvas created: {self.canvas}")
-            
             # Scrollbars (versteckt, aber funktional)
             self.h_scroll = tk.Scrollbar(main_frame, orient=tk.HORIZONTAL, 
                                          command=self.canvas.xview)
@@ -411,7 +381,6 @@ class ProjectorWindow(tk.Toplevel):
             # Info nach 3 Sekunden ausblenden
             self.after(3000, lambda: self.info_label.place_forget())
         except Exception as e:
-            print(f"❌ Exception in setup_ui: {e}")
             import traceback
             traceback.print_exc()
         
@@ -420,10 +389,8 @@ class ProjectorWindow(tk.Toplevel):
         Karte auf dem Canvas rendern - OPTIMIERT MIT CACHING!
         Unterstützt sowohl JSON-Maps (Tile-basiert) als auch SVG-Maps (Vektor-basiert)
         """
-        print(f"🎨 render_map() START - is_svg_mode={self.is_svg_mode}, canvas exists: {hasattr(self, 'canvas')}")
         # If UI not yet created, schedule a retry
         if not hasattr(self, 'canvas'):
-            print("⚠️ render_map called before canvas exists - scheduling retry")
             # try again shortly after UI finishes initializing
             self.after(100, self.render_map)
             return
@@ -465,10 +432,7 @@ class ProjectorWindow(tk.Toplevel):
             # Canvas wurde zerstört
             return
         
-        print(f"📐 Canvas size: {canvas_width}x{canvas_height}, Map size: {width}x{height}, tile_size: {current_tile_size}")
-        
         if canvas_width <= 1 or canvas_height <= 1:
-            print(f"⚠️ Canvas size too small: {canvas_width}x{canvas_height}, scheduling retry")
             self.after(500, self.render_map)
             return
         
@@ -495,7 +459,6 @@ class ProjectorWindow(tk.Toplevel):
         
         # STATISCHE MAP CACHEN (einmalig oder bei Größenänderung)
         if cache_invalid:
-            print(f"Erstelle statischen Map-Cache ({width}x{height}, {current_tile_size}px)")
             self.static_map_cache = Image.new('RGB', (total_map_width, total_map_height), (10, 10, 10))
             self.static_map_size = cache_key
             
@@ -541,8 +504,6 @@ class ProjectorWindow(tk.Toplevel):
         
         # Kopiere statischen Cache als Basis
         map_image = self.static_map_cache.copy()
-        
-        print(f"🖼️ Map image created: {map_image.size}, Mode: {map_image.mode}, Sample pixel at (0,0): {map_image.getpixel((0,0)) if map_image else 'None'}")
         
         # NUR ANIMIERTE TILES neu rendern (wenn Animation läuft)
         if self.is_animating and self.animated_positions:
@@ -598,10 +559,6 @@ class ProjectorWindow(tk.Toplevel):
                 radius_scale=radius_scale
             )
             
-            print(f"🔍 Map-Image vor Lighting: {map_image.size}, Mode={map_image.mode}")
-            print(f"🔍 Lighting-Overlay: {lighting_overlay.size}, Mode={lighting_overlay.mode}")
-            print(f"🔍 Lighting-Mode: {self.lighting_engine.lighting_mode}")
-            
             # WICHTIG: Map muss RGBA sein!
             if map_image.mode != 'RGBA':
                 map_image = map_image.convert('RGBA')
@@ -610,7 +567,6 @@ class ProjectorWindow(tk.Toplevel):
             # TAG-MODUS: MULTIPLY-BLEND für physikalisch korrekte Schatten
             # ═══════════════════════════════════════════════════════════
             if self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons:
-                print("🌞 TAG-MODUS: Verwende Multiply-Blend für Schatten")
                 
                 # Separiere RGB und Alpha aus dem Lighting-Overlay
                 lighting_rgb = lighting_overlay.convert('RGB')
@@ -628,10 +584,8 @@ class ProjectorWindow(tk.Toplevel):
                 gpu = self.gpu_renderer or getattr(self.lighting_engine, 'gpu_renderer', None)
                 if gpu:
                     try:
-                        print('🎯 Projektor: Verwende GPU-Multiply-Composite')
                         map_image = self.gpu_composite_rendering(map_image, lighting_overlay, fog_enabled=False, fog_data=None, mode='multiply')
                     except Exception as e:
-                        print(f"⚠️ Projektor GPU-Multiply fehlgeschlagen, fallback zu CPU: {e}")
                         darkened_map = ImageChops.multiply(map_rgb, lighting_rgb)
                         darkened_map = darkened_map.convert('RGBA')
                         map_image = Image.composite(darkened_map, map_image, lighting_alpha)
@@ -643,21 +597,16 @@ class ProjectorWindow(tk.Toplevel):
                     # Wende Multiply nur in Polygon-Bereichen an (mit Alpha-Maske)
                     map_image = Image.composite(darkened_map, map_image, lighting_alpha)
                 
-                print(f"🔍 Map nach Multiply-Blend: {map_image.size}, Mode={map_image.mode}")
             else:
                 # NACHT-MODUS oder keine Polygone: Normales Alpha-Composite
-                print("🌙 NACHT-MODUS: Verwende Alpha-Composite")
                 gpu = self.gpu_renderer or getattr(self.lighting_engine, 'gpu_renderer', None)
                 if gpu:
                     try:
                         map_image = self.gpu_composite_rendering(map_image, lighting_overlay, fog_enabled=False, fog_data=None, mode='alpha')
                     except Exception as e:
-                        print(f"⚠️ Projektor GPU-Alpha fehlgeschlagen, fallback CPU: {e}")
                         map_image = Image.alpha_composite(map_image, lighting_overlay)
                 else:
                     map_image = Image.alpha_composite(map_image, lighting_overlay)
-            
-            print(f"🔍 Map-Image nach Lighting: {map_image.size}, Mode={map_image.mode}")
             
             # Zurück zu RGB für Fog-Rendering
             map_image = map_image.convert('RGB')
@@ -690,8 +639,6 @@ class ProjectorWindow(tk.Toplevel):
         
         self.map_photo = ImageTk.PhotoImage(map_image)
         
-        print(f"🖼️ PhotoImage created: {self.map_photo.width()}x{self.map_photo.height()}")
-        
         # UPDATE statt DELETE+CREATE = kein Flackern!
         if self.canvas_image_id is None:
             # Erstes Mal: Image erstellen
@@ -701,15 +648,12 @@ class ProjectorWindow(tk.Toplevel):
                 anchor=tk.NW, 
                 tags="map"
             )
-            print(f"🖼️ Created canvas image at {offset_x}, {offset_y}")
         else:
             # Nachfolgende Male: Nur Image aktualisieren
             self.canvas.itemconfig(self.canvas_image_id, image=self.map_photo)
             self.canvas.coords(self.canvas_image_id, offset_x, offset_y)
-            print(f"🔄 Updated canvas image at {offset_x}, {offset_y}")
         
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        print(f"✅ Render completed")
     
     def center_view(self):
         """Karte zentrieren und skalieren für Fullscreen"""
@@ -863,10 +807,10 @@ class ProjectorWindow(tk.Toplevel):
                     self.has_animated_tiles = True
             
             if self.has_animated_tiles:
-                print(f"SVG-Animation: {len(self.svg_animated_materials)} animierte Material-Typen gefunden: {self.svg_animated_materials}")
+                pass
         
         except Exception as e:
-            print(f"⚠️ Fehler beim Parsen der SVG für Animation: {e}")
+            pass
     
     def check_for_animated_tiles(self):
         """Prüft ob die Map animierte Tiles hat und sammelt ihre Positionen"""
@@ -903,13 +847,6 @@ class ProjectorWindow(tk.Toplevel):
                 if is_animated:
                     self.animated_positions.append((x, y, material))
                     self.has_animated_tiles = True
-        
-        # DEBUG: Zeige Material-Verteilung
-        print("Material-Statistik auf der Map:")
-        for mat, count in sorted(material_counts.items()):
-            is_anim = "🎬 ANIMIERT" if mat in animated_materials else ""
-            print(f"  {mat}: {count} Tiles {is_anim}")
-        print(f"\nGesamt: {len(self.animated_positions)} animierte Tiles gefunden")
     
     def start_animation(self):
         """Startet die Animation für Wasser, Wälder, etc."""
@@ -990,7 +927,6 @@ class ProjectorWindow(tk.Toplevel):
                     if fog_tile_size not in self.fog_photo_cache:
                         fog_texture = self.fog_texture_gen.get_fog_texture(fog_tile_size, "normal")
                         self.fog_photo_cache[fog_tile_size] = fog_texture
-                        print(f"🌫️ Fog-Textur generiert: {fog_tile_size}px, Mode: {fog_texture.mode}")
                     else:
                         fog_texture = self.fog_photo_cache[fog_tile_size]
                     
@@ -1005,7 +941,7 @@ class ProjectorWindow(tk.Toplevel):
                         fog_layer.paste(fog_texture, (x1, y1))
         
         if fog_count > 0:
-            print(f"🌫️ Fog angewendet auf {fog_count} Tiles (SVG-Modus)")
+            pass
         
         # Kombiniere Bild mit Fog-Layer
         img = Image.alpha_composite(img, fog_layer)
@@ -1018,20 +954,16 @@ class ProjectorWindow(tk.Toplevel):
             self.canvas.update_idletasks()
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
-            print(f"📐 Canvas-Größe: {canvas_width}×{canvas_height}")
         except Exception as e:
-            print(f"❌ Canvas-Größe Fehler: {e}")
             return
         
         # Prüfe ob Canvas-Größen gültig sind
         if canvas_width <= 1 or canvas_height <= 1:
-            print(f"⚠️ Canvas zu klein: {canvas_width}×{canvas_height}, überspringe Rendering")
             return
         
         # SVG Original-Größe: Nutze original_svg_size wenn vorhanden, sonst aus File
         if self.original_svg_size:
             svg_width, svg_height = self.original_svg_size
-            print(f"📐 Nutze Original-SVG-Größe: {svg_width}×{svg_height}px")
         else:
             root = ET.fromstring(self.svg_renderer.svg_data)
             svg_width = int(root.get('width', '1000').replace('px', ''))
@@ -1056,12 +988,10 @@ class ProjectorWindow(tk.Toplevel):
         
         # STATISCHES RENDERING (nur bei Größenänderung)
         if cache_invalid:
-            print(f"🎨 Rendere SVG-Base: {full_width}×{full_height}px (Scale: {current_scale:.2f})")
             
             # Try GPU SVG rendering first if available
             if self.gpu_svg_renderer:
                 try:
-                    print("🎯 Verwende GPU-SVG-Rendering")
                     self.gpu_svg_renderer.create_canvas(full_width, full_height)
                     self.gpu_svg_renderer.clear_canvas(0, 0, 0, 1)  # Black background
                     
@@ -1087,22 +1017,19 @@ class ProjectorWindow(tk.Toplevel):
                     
                     rendered_full = self.gpu_svg_renderer.get_image()
                     if rendered_full:
-                        print("✅ GPU-SVG-Rendering erfolgreich")
+                        pass
                     else:
                         raise Exception("GPU-SVG-Renderer returned None")
                         
                 except Exception as e:
-                    print(f"⚠️ GPU-SVG-Rendering fehlgeschlagen: {e}, fallback zu CPU")
                     rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
             else:
                 # CPU-based rendering with CairoSVG
                 rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
             
             if rendered_full is None:
-                print("❌ DEBUG: svg_renderer.render_to_size() hat None zurückgegeben!")
                 return
             
-            print(f"✅ DEBUG: SVG-Rendering erfolgreich: {rendered_full.size}, Mode: {rendered_full.mode}")
             self.svg_static_cache = rendered_full.copy()
             self.svg_cache_size = cache_key
         
@@ -1191,12 +1118,10 @@ class ProjectorWindow(tk.Toplevel):
         
         # Lighting-Overlay rendern (SVG-Modus: skaliert auf full_width/full_height)
         if self.lighting_enabled and (self.lighting_engine.lights or (self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons)):
-            print(f"💡 SVG-Lighting: Rendere {len(self.lighting_engine.lights)} Lichter, Mode: {self.lighting_engine.lighting_mode}")
             # Berechne Tile-Größe aus SVG-Original und Fog-Grid
             tile_width_px = (svg_width * current_scale) / self.fog.width
             tile_height_px = (svg_height * current_scale) / self.fog.height
             avg_tile_size = int((tile_width_px + tile_height_px) / 2)
-            print(f"💡 Tile-Size: {avg_tile_size}px, Time: {self.lighting_time:.2f}s")
             
             # Rendere Lighting direkt in PIXEL-Größe des gerenderten SVG (nicht in Tile-Grid!)
             # Das verhindert Größen-Mismatches und Streifen
@@ -1211,13 +1136,6 @@ class ProjectorWindow(tk.Toplevel):
                 time_offset=self.lighting_time,
                 radius_scale=radius_scale
             )
-            print(f"💡 Lighting gerendert: {lighting_full.size}, Radius-Scale: {radius_scale:.2f}")
-            
-            # WICHTIG: Skaliere Lighting auf exakte Full-Größe des SVG!
-            # Verhindert Streifen durch Größen-Mismatches
-            if lighting_full.size != (full_width, full_height):
-                from PIL import Image as PILImage
-                lighting_full = lighting_full.resize((full_width, full_height), PILImage.LANCZOS)
             
             # Crop Lighting auf gleichen Viewport wie Map
             if view_x >= 0 and view_y >= 0:
@@ -1243,16 +1161,13 @@ class ProjectorWindow(tk.Toplevel):
             if lighting_viewport.size == viewport_img.size:
                 # TAG-MODUS: Multiply-Blend für physikalisch korrekte Schatten
                 if self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons:
-                    print("🌞 SVG TAG-MODUS: Verwende Multiply-Blend")
 
                     # Prefer GPU when available
                     gpu = self.gpu_renderer or getattr(self.lighting_engine, 'gpu_renderer', None)
                     if gpu:
                         try:
-                            print('🎯 Projektor: Verwende GPU-Multiply-Composite (SVG)')
                             viewport_img = self.gpu_composite_rendering(viewport_img, lighting_viewport, fog_enabled=False, fog_data=None, mode='multiply')
                         except Exception as e:
-                            print(f"⚠️ Projektor GPU-Multiply fehlgeschlagen (SVG), fallback zu CPU: {e}")
                             lighting_rgb = lighting_viewport.convert('RGB')
                             lighting_alpha = lighting_viewport.split()[3]
                             viewport_rgb = viewport_img.convert('RGB')
@@ -1268,13 +1183,11 @@ class ProjectorWindow(tk.Toplevel):
                         viewport_img = Image.composite(darkened_map, viewport_img, lighting_alpha)
                 else:
                     # NACHT-MODUS: Normales Alpha-Composite
-                    print("🌙 SVG NACHT-MODUS: Verwende Alpha-Composite")
                     gpu = self.gpu_renderer or getattr(self.lighting_engine, 'gpu_renderer', None)
                     if gpu:
                         try:
                             viewport_img = self.gpu_composite_rendering(viewport_img, lighting_viewport, fog_enabled=False, fog_data=None, mode='alpha')
                         except Exception as e:
-                            print(f"⚠️ Projektor GPU-Alpha fehlgeschlagen (SVG), fallback CPU: {e}")
                             viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
                     else:
                         viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
@@ -1287,10 +1200,8 @@ class ProjectorWindow(tk.Toplevel):
                     gpu = self.gpu_renderer or getattr(self.lighting_engine, 'gpu_renderer', None)
                     if gpu:
                         try:
-                            print('🎯 Projektor: Verwende GPU-Multiply-Composite (SVG fallback)')
                             viewport_img = self.gpu_composite_rendering(viewport_img, lighting_viewport, fog_enabled=False, fog_data=None, mode='multiply')
                         except Exception as e:
-                            print(f"⚠️ Projektor GPU-Multiply fehlgeschlagen (SVG fallback), fallback CPU: {e}")
                             lighting_rgb = lighting_viewport.convert('RGB')
                             lighting_alpha = lighting_viewport.split()[3]
                             viewport_rgb = viewport_img.convert('RGB')
@@ -1310,14 +1221,13 @@ class ProjectorWindow(tk.Toplevel):
                         try:
                             viewport_img = self.gpu_composite_rendering(viewport_img, lighting_viewport, fog_enabled=False, fog_data=None, mode='alpha')
                         except Exception as e:
-                            print(f"⚠️ Projektor GPU-Alpha fehlgeschlagen (SVG resized), fallback CPU: {e}")
                             viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
                     else:
                         viewport_img = Image.alpha_composite(viewport_img, lighting_viewport)
         elif not self.lighting_enabled:
-            print(f"⚠️ Lighting disabled")
+            pass
         elif not self.lighting_engine.lights:
-            print(f"⚠️ No lights found")
+            pass
         
         # Fog-of-War anwenden (auf ORIGINALER Tile-Grid-Basis)
         if self.fog_enabled and self.fog:
@@ -1359,7 +1269,6 @@ class ProjectorWindow(tk.Toplevel):
                             if fog_tile_size not in self.fog_photo_cache:
                                 fog_texture = self.fog_texture_gen.get_fog_texture(fog_tile_size, "normal")
                                 self.fog_photo_cache[fog_tile_size] = fog_texture
-                                print(f"🌫️ SVG-Fog-Textur generiert: {fog_tile_size}px")
                             else:
                                 fog_texture = self.fog_photo_cache[fog_tile_size]
                             
@@ -1374,7 +1283,7 @@ class ProjectorWindow(tk.Toplevel):
                                 fog_layer.paste(fog_texture, (x1, y1))
             
             if fog_tiles_count > 0:
-                print(f"🌫️ SVG: {fog_tiles_count} Fog-Tiles im Viewport gerendert")
+                pass
             
             viewport_img = Image.alpha_composite(viewport_img, fog_layer)
             viewport_img = viewport_img.convert('RGB')
@@ -1391,7 +1300,6 @@ class ProjectorWindow(tk.Toplevel):
             )
         
         self.canvas.photo = photo
-        print(f"✅ SVG-Rendering abgeschlossen: {viewport_img.size}")
     
     def destroy(self):
         """Aufräumen beim Schließen"""
