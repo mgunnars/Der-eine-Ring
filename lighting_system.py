@@ -9,6 +9,363 @@ from typing import List, Tuple, Dict, Optional
 import json
 import numpy as np
 
+# GPU Acceleration imports
+try:
+    import pyopencl as cl
+    import pyopencl.array as cl_array
+    GPU_AVAILABLE = True
+except ImportError:
+    GPU_AVAILABLE = False
+    print("⚠️ PyOpenCL nicht verfügbar - GPU-Beschleunigung deaktiviert")
+
+# Enable OpenCV OpenCL support
+try:
+    import cv2
+    cv2.ocl.setUseOpenCL(True)
+    if cv2.ocl.useOpenCL():
+        print("✅ OpenCV OpenCL aktiviert")
+    else:
+        print("⚠️ OpenCV OpenCL nicht verfügbar")
+except:
+    pass
+
+
+class GPUImage:
+    """GPU-basierte Image-Klasse für vollständige GPU-Rendering-Pipeline"""
+    
+    def __init__(self, context, queue, width, height, channels=4):
+        self.context = context
+        self.queue = queue
+        self.width = width
+        self.height = height
+        self.channels = channels
+        
+        # GPU Buffer für RGBA Daten
+        self.gpu_buffer = cl_array.zeros(queue, (height, width, channels), dtype=np.float32)
+        
+    @classmethod
+    def from_pil_image(cls, context, queue, pil_image):
+        """Erstelle GPUImage aus PIL Image"""
+        # Konvertiere PIL zu numpy array
+        if pil_image.mode != 'RGBA':
+            pil_image = pil_image.convert('RGBA')
+        
+        np_array = np.array(pil_image, dtype=np.float32) / 255.0
+        
+        gpu_img = cls(context, queue, pil_image.width, pil_image.height, 4)
+        gpu_img.gpu_buffer.set(np_array)
+        
+        return gpu_img
+    
+    def to_pil_image(self):
+        """Konvertiere zurück zu PIL Image"""
+        np_array = self.gpu_buffer.get()
+        np_array = np.clip(np_array * 255, 0, 255).astype(np.uint8)
+        
+        if self.channels == 4:
+            return Image.fromarray(np_array, mode='RGBA')
+        elif self.channels == 3:
+            return Image.fromarray(np_array, mode='RGB')
+        else:
+            return Image.fromarray(np_array[:, :, 0], mode='L')
+    
+    def copy(self):
+        """Erstelle Kopie"""
+        new_img = GPUImage(self.context, self.queue, self.width, self.height, self.channels)
+        # GPU-to-GPU copy
+        cl.enqueue_copy(self.queue, new_img.gpu_buffer.data, self.gpu_buffer.data)
+        return new_img
+
+
+class GPURenderer:
+    """Vollständige GPU-basierte Rendering-Engine"""
+    
+    def __init__(self):
+        if not GPU_AVAILABLE:
+            raise RuntimeError("GPU nicht verfügbar")
+            
+        # OpenCL Setup
+        self.context = cl.create_some_context()
+        self.queue = cl.CommandQueue(self.context)
+        self.device = self.context.devices[0]
+        
+        print(f"🎮 GPU-Renderer initialisiert: {self.device.name}")
+        print(f"   Speicher: {self.device.global_mem_size // (1024**3)}GB GDDR")
+        
+        # OpenCL Programme kompilieren
+        self._compile_kernels()
+        
+        # GPU Buffer Cache für Performance
+        self.buffer_cache = {}
+        
+    def _compile_kernels(self):
+        """Kompiliere alle OpenCL-Kernel"""
+        
+        # Kernel für Lichtberechnung
+        light_kernel = """
+        __kernel void compute_light_mask(
+            __global float4 *light_mask,
+            const int width,
+            const int height,
+            const float cx,
+            const float cy,
+            const float radius_px,
+            const float falloff_exponent,
+            const float core_brightness,
+            const float current_intensity,
+            const float noise_strength,
+            __global float *noise_map
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            float dx = x - cx;
+            float dy = y - cy;
+            float dist = sqrt(dx * dx + dy * dy);
+            
+            int idx = y * width + x;
+            
+            if (dist > radius_px) {
+                light_mask[idx] = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
+                return;
+            }
+            
+            float normalized_dist = dist / radius_px;
+            
+            // Physikalischer Falloff
+            float falloff = 1.0f / (1.0f + pow(normalized_dist, falloff_exponent));
+            
+            // Kern-Bereich
+            if (dist < radius_px * 0.1f) {
+                falloff = min(1.0f, falloff * core_brightness);
+            }
+            
+            // Noise
+            float noise_val = noise_map[idx];
+            falloff = falloff * (1.0f + noise_val * noise_strength);
+            
+            float intensity = falloff * current_intensity;
+            
+            // Basis-Farben (werden später überschrieben für spezielle Lichttypen)
+            light_mask[idx] = (float4)(intensity, intensity, intensity, intensity);
+        }
+        
+        __kernel void add_ambient_light(
+            __global float4 *image,
+            const int width,
+            const int height,
+            const float ambient_r,
+            const float ambient_g,
+            const float ambient_b,
+            const float ambient_a
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            int idx = y * width + x;
+            float4 pixel = image[idx];
+            
+            // Add ambient light
+            pixel.x = max(pixel.x, ambient_r);
+            pixel.y = max(pixel.y, ambient_g);
+            pixel.z = max(pixel.z, ambient_b);
+            pixel.w = max(pixel.w, ambient_a);
+            
+            image[idx] = pixel;
+        }
+        
+        __kernel void multiply_blend(
+            __global float4 *result,
+            __global float4 *base,
+            __global float4 *overlay,
+            const int width,
+            const int height
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            int idx = y * width + x;
+            float4 base_pixel = base[idx];
+            float4 overlay_pixel = overlay[idx];
+            
+            // Multiply blend: result = base * overlay
+            result[idx] = (float4)(
+                base_pixel.x * overlay_pixel.x,
+                base_pixel.y * overlay_pixel.y,
+                base_pixel.z * overlay_pixel.z,
+                base_pixel.w * overlay_pixel.w
+            );
+        }
+        
+        __kernel void alpha_composite(
+            __global float4 *result,
+            __global float4 *base,
+            __global float4 *overlay,
+            const int width,
+            const int height
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            int idx = y * width + x;
+            float4 base_pixel = base[idx];
+            float4 overlay_pixel = overlay[idx];
+            
+            // Alpha compositing
+            float alpha = overlay_pixel.w;
+            float inv_alpha = 1.0f - alpha;
+            
+            result[idx] = (float4)(
+                base_pixel.x * inv_alpha + overlay_pixel.x * alpha,
+                base_pixel.y * inv_alpha + overlay_pixel.y * alpha,
+                base_pixel.z * inv_alpha + overlay_pixel.z * alpha,
+                base_pixel.w * inv_alpha + overlay_pixel.w * alpha
+            );
+        }
+        
+        __kernel void gaussian_blur_3x3(
+            __global float4 *output,
+            __global float4 *input,
+            const int width,
+            const int height
+        ) {
+            int x = get_global_id(0);
+            int y = get_global_id(1);
+            
+            if (x >= width || y >= height) return;
+            
+            // 3x3 Gaussian kernel
+            float gauss_kernel[9] = {
+                0.0625f, 0.125f, 0.0625f,
+                0.125f,  0.25f,  0.125f,
+                0.0625f, 0.125f, 0.0625f
+            };
+            
+            float4 sum = (float4)(0.0f, 0.0f, 0.0f, 0.0f);
+            
+            for (int ky = -1; ky <= 1; ky++) {
+                for (int kx = -1; kx <= 1; kx++) {
+                    int sx = clamp(x + kx, 0, width - 1);
+                    int sy = clamp(y + ky, 0, height - 1);
+                    int kidx = (ky + 1) * 3 + (kx + 1);
+                    
+                    sum += input[sy * width + sx] * gauss_kernel[kidx];
+                }
+            }
+            
+            output[y * width + x] = sum;
+        }
+        """
+        
+        self.program = cl.Program(self.context, light_kernel).build()
+        print("✅ GPU-Kernel kompiliert")
+    
+    def create_gpu_image(self, width, height, channels=4):
+        """Erstelle GPUImage"""
+        return GPUImage(self.context, self.queue, width, height, channels)
+    
+    def compute_light_mask_gpu(self, width, height, light, time_offset):
+        """Berechne Lichtmaske vollständig auf GPU"""
+        
+        # GPU Buffer für Lichtmaske
+        light_mask = cl_array.zeros(self.queue, (height, width, 4), dtype=np.float32)
+        
+        # Parameter berechnen
+        cx = light.x * 32 + 16  # Annahme: 32px per tile
+        cy = light.y * 32 + 16
+        radius_px = light.radius * 32
+        current_intensity = light.get_current_intensity(time_offset)
+        
+        # Noise Map generieren (auf GPU)
+        noise_map = cl_array.to_device(self.queue, 
+            np.random.randn(height, width).astype(np.float32) * 0.1)
+        
+        # Kernel ausführen
+        self.program.compute_light_mask(
+            self.queue, (width, height), None,
+            light_mask.data,
+            np.int32(width), np.int32(height),
+            np.float32(cx), np.float32(cy), np.float32(radius_px),
+            np.float32(light.falloff_exponent), np.float32(light.core_brightness),
+            np.float32(current_intensity), np.float32(0.12),
+            noise_map.data
+        )
+        
+        # GPUImage zurückgeben
+        gpu_img = GPUImage(self.context, self.queue, width, height, 4)
+        gpu_img.gpu_buffer = light_mask
+        
+        return gpu_img
+    
+    def add_ambient_light_gpu(self, gpu_image, ambient_r, ambient_g, ambient_b, ambient_a):
+        """Füge Ambient Light auf GPU hinzu"""
+        
+        self.program.add_ambient_light(
+            self.queue, (gpu_image.width, gpu_image.height), None,
+            gpu_image.gpu_buffer.data,
+            np.int32(gpu_image.width), np.int32(gpu_image.height),
+            np.float32(ambient_r), np.float32(ambient_g), 
+            np.float32(ambient_b), np.float32(ambient_a)
+        )
+        
+        return gpu_image
+    
+    def multiply_blend_gpu(self, base_image, overlay_image):
+        """Multiply-Blend vollständig auf GPU"""
+        
+        result = GPUImage(self.context, self.queue, base_image.width, base_image.height, 4)
+        
+        self.program.multiply_blend(
+            self.queue, (base_image.width, base_image.height), None,
+            result.gpu_buffer.data,
+            base_image.gpu_buffer.data,
+            overlay_image.gpu_buffer.data,
+            np.int32(base_image.width), np.int32(base_image.height)
+        )
+        
+        return result
+    
+    def alpha_composite_gpu(self, base_image, overlay_image):
+        """Alpha-Compositing auf GPU"""
+        
+        result = GPUImage(self.context, self.queue, base_image.width, base_image.height, 4)
+        
+        self.program.alpha_composite(
+            self.queue, (base_image.width, base_image.height), None,
+            result.gpu_buffer.data,
+            base_image.gpu_buffer.data,
+            overlay_image.gpu_buffer.data,
+            np.int32(base_image.width), np.int32(base_image.height)
+        )
+        
+        return result
+    
+    def gaussian_blur_gpu(self, gpu_image, radius=1):
+        """Gaussian Blur auf GPU"""
+        
+        # Für größere Radien mehrmals anwenden
+        for _ in range(radius):
+            temp_buffer = cl_array.zeros_like(gpu_image.gpu_buffer)
+            
+            self.program.gaussian_blur_3x3(
+                self.queue, (gpu_image.width, gpu_image.height), None,
+                temp_buffer.data,
+                gpu_image.gpu_buffer.data,
+                np.int32(gpu_image.width), np.int32(gpu_image.height)
+            )
+            
+            gpu_image.gpu_buffer = temp_buffer
+        
+        return gpu_image
+
 class LightSource:
     """Einzelne Lichtquelle mit physikalischen Eigenschaften"""
     def __init__(self, x: int, y: int, radius: int = 5, 
@@ -48,20 +405,20 @@ class LightSource:
         
         # Typ-spezifische Parameter
         if self.light_type in ["torch", "fire", "campfire"]:
-            # Fackel/Feuer: Stark flackernd, sehr intensiv im Kern
+            # Fackel/Feuer: Realistischeres Flackern, langsamer und weniger chaotisch
             self.falloff_exponent = 2.5  # Stärker abfallend
             self.core_brightness = 1.5
-            self.flicker_frequency = 15.0  # Sehr schnelles Flackern (Hz)
-            self.flicker_amplitude = 0.25  # Große Schwankungen
-            self.flicker_chaos = 0.35
+            self.flicker_frequency = 4.5  # Realistisch: 3-5 Hz
+            self.flicker_amplitude = 0.13  # Weniger Schwankung
+            self.flicker_chaos = 0.18
             
         elif self.light_type == "candle":
-            # Kerze: Sanftes Flackern, weicher Kern
+            # Kerze: Sanftes, langsames Flackern
             self.falloff_exponent = 2.2
             self.core_brightness = 1.3
-            self.flicker_frequency = 8.0   # Mittleres Flackern
-            self.flicker_amplitude = 0.15
-            self.flicker_chaos = 0.12
+            self.flicker_frequency = 2.2   # Sehr langsam
+            self.flicker_amplitude = 0.09
+            self.flicker_chaos = 0.08
             
         elif self.light_type == "magic":
             # Magie: Pulsierend, konstante Wellen
@@ -281,20 +638,32 @@ class LightSource:
 
 class LightingEngine:
     """Verwaltet alle Lichtquellen und rendert Beleuchtung"""
+    def _get_active_light_indices(self, max_lights: int, time_offset: float) -> list:
+        """Gibt die Indizes der Lichtquellen zurück, die im aktuellen Frame gerendert werden sollen."""
+        if not self.lights:
+            return []
+        # Zyklisch durch alle Lichter gehen
+        frame = int(time_offset * 30)  # 30 FPS
+        total = len(self.lights)
+        start = (frame * max_lights) % total
+        indices = [(start + i) % total for i in range(max_lights)]
+        return indices
+
     def __init__(self):
-        self.lights: List[LightSource] = []
+        self.lights = []
         self.ambient_color = (30, 30, 40)  # Dunkles Blau für Nacht
         self.ambient_intensity = 0.2  # Basis-Helligkeit
         self.enabled = True
         self.time_offset = 0.0  # Für Animationen
         self.global_radius_scale = 1.0  # Manueller Radius-Multiplikator
-        
+
         # Tag/Nacht-System
         self.lighting_mode = "night"  # "day", "night", "custom"
         self.darkness_opacity = 0.85  # Wie dunkel sind unbeleuchtete Bereiche (0=hell, 1=schwarz)
-        
+        self.darkness_feather = 20   # Feathering-Radius für weiche Kanten (Pixel)
+
         # Darkness-Polygone (für Tag-Modus: definiere Innenräume)
-        self.darkness_polygons: List[List[Tuple[int, int]]] = []  # Liste von Polygon-Punkten [(x,y), ...]
+        self.darkness_polygons = []  # Liste von Polygon-Punkten [(x,y), ...]
         
     def add_light(self, light: LightSource):
         """Füge Lichtquelle hinzu"""
@@ -325,151 +694,248 @@ class LightingEngine:
         Returns: RGBA Image mit farbigem Licht und Schatten
         """
         self.time_offset = time_offset
+        print(f"DEBUG: render_lighting darkness_polygons = {self.darkness_polygons}")
         
-        img_width = width * tile_size
-        img_height = height * tile_size
+
+        # TILE-BASIERTES RENDERING: Nur sichtbarer Bereich
+        # Hole sichtbare Tiles aus MapEditor (Standard: alles, aber kann optimiert werden)
+        # Für Demo: Nur ein Bereich um die Lichtquellen (z.B. 10 Tiles extra)
+        margin_tiles = 10
+        min_x = min([l.x for l in self.lights]) if self.lights else 0
+        max_x = max([l.x for l in self.lights]) if self.lights else width-1
+        min_y = min([l.y for l in self.lights]) if self.lights else 0
+        max_y = max([l.y for l in self.lights]) if self.lights else height-1
+        min_x = max(0, min_x - margin_tiles)
+        max_x = min(width-1, max_x + margin_tiles)
+        min_y = max(0, min_y - margin_tiles)
+        max_y = min(height-1, max_y + margin_tiles)
+
+        # Bereich in Pixeln
+        img_width = (max_x - min_x + 1) * tile_size
+        img_height = (max_y - min_y + 1) * tile_size
+
+        # Offset für spätere Platzierung
+        offset_x = min_x * tile_size
+        offset_y = min_y * tile_size
         
-        if not self.enabled or not self.lights:
+        if not self.enabled:
             # Keine Beleuchtung aktiv
             if self.lighting_mode == "day":
-                # Tagesszene ohne Lichter = normal sichtbar
-                return Image.new('RGBA', (img_width, img_height), (255, 255, 255, 0))
+                # Tagesszene ohne Lichter = normal sichtbar, aber mit Darkness-Polygonen wenn vorhanden
+                if self.darkness_polygons:
+                    # Erstelle multiply_layer für Darkness-Polygone ohne Lichter
+                    img_width = width * tile_size
+                    img_height = height * tile_size
+                    
+                    # Erstelle Shadow-Mask ohne Lichter
+                    shadow_mask = Image.new('L', (img_width, img_height), 0)
+                    draw = ImageDraw.Draw(shadow_mask)
+                    
+                    for polygon in self.darkness_polygons:
+                        pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                        shadow_intensity = int(self.darkness_opacity * 255)
+                        draw.polygon(pixel_poly, fill=shadow_intensity)
+                    
+                    if self.darkness_feather > 0:
+                        shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(radius=self.darkness_feather))
+                    
+                    # Erstelle multiply_mask
+                    import numpy as np
+                    shadow_array = np.array(shadow_mask, dtype=np.float32)
+                    multiply_array = 255 - (shadow_array * (1.0 - self.ambient_intensity))
+                    multiply_array = np.clip(multiply_array, int(self.ambient_intensity * 255), 255).astype(np.uint8)
+                    multiply_mask = Image.fromarray(multiply_array)
+                    
+                    multiply_rgb = Image.merge('RGB', [multiply_mask, multiply_mask, multiply_mask])
+                    
+                    # Polygon-Alpha-Maske
+                    polygon_alpha = Image.new('L', (img_width, img_height), 0)
+                    draw_alpha = ImageDraw.Draw(polygon_alpha)
+                    for polygon in self.darkness_polygons:
+                        pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                        draw_alpha.polygon(pixel_poly, fill=255)
+                    
+                    multiply_layer = multiply_rgb.convert('RGBA')
+                    multiply_layer.putalpha(polygon_alpha)
+                    
+                    # Kein Licht-Layer, nur multiply_layer
+                    return multiply_layer
+                else:
+                    return Image.new('RGBA', (width * tile_size, height * tile_size), (255, 255, 255, 0))
             else:
                 # Nachtszene ohne Lichter = ambient darkness
+                img_width = width * tile_size
+                img_height = height * tile_size
                 ambient = int(self.ambient_intensity * 255)
                 darkness = Image.new('RGB', (img_width, img_height), (ambient, ambient, ambient))
                 return darkness.convert('RGBA')
         
-        # Erstelle Licht-Layer (additiv)
-        light_layer = Image.new('RGB', (img_width, img_height), (0, 0, 0))
-        pixels = light_layer.load()
+        # Wenn enabled, aber keine Lichter, dann Tagesmodus mit Polygonen
+        if not self.lights:
+            if self.lighting_mode == "day" and self.darkness_polygons:
+                # Gleicher Code wie oben
+                img_width = width * tile_size
+                img_height = height * tile_size
+                
+                shadow_mask = Image.new('L', (img_width, img_height), 0)
+                draw = ImageDraw.Draw(shadow_mask)
+                
+                for polygon in self.darkness_polygons:
+                    pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                    shadow_intensity = int(self.darkness_opacity * 255)
+                    draw.polygon(pixel_poly, fill=shadow_intensity)
+                
+                if self.darkness_feather > 0:
+                    shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(radius=self.darkness_feather))
+                
+                import numpy as np
+                shadow_array = np.array(shadow_mask, dtype=np.float32)
+                multiply_array = 255 - (shadow_array * (1.0 - self.ambient_intensity))
+                multiply_array = np.clip(multiply_array, int(self.ambient_intensity * 255), 255).astype(np.uint8)
+                multiply_mask = Image.fromarray(multiply_array)
+                
+                multiply_rgb = Image.merge('RGB', [multiply_mask, multiply_mask, multiply_mask])
+                
+                polygon_alpha = Image.new('L', (img_width, img_height), 0)
+                draw_alpha = ImageDraw.Draw(polygon_alpha)
+                for polygon in self.darkness_polygons:
+                    pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                    draw_alpha.polygon(pixel_poly, fill=255)
+                
+                multiply_layer = multiply_rgb.convert('RGBA')
+                multiply_layer.putalpha(polygon_alpha)
+                
+                return multiply_layer
+            elif self.lighting_mode == "day":
+                return Image.new('RGBA', (width * tile_size, height * tile_size), (255, 255, 255, 0))
+            else:
+                img_width = width * tile_size
+                img_height = height * tile_size
+                ambient = int(self.ambient_intensity * 255)
+                darkness = Image.new('RGB', (img_width, img_height), (ambient, ambient, ambient))
+                return darkness.convert('RGBA')
         
-        # Zeichne jede Lichtquelle mit realistischem Gradient
-        for light in self.lights:
-            cx = int(light.x * tile_size + tile_size / 2)
-            cy = int(light.y * tile_size + tile_size / 2)
-            # WICHTIG: Radius mit radius_scale UND global_radius_scale skalieren!
+
+
+        # GPU-optimiertes Licht-Layer mit numpy und OpenCV (nur für sichtbaren Bereich)
+        import numpy as np
+        import cv2
+
+
+        # Multi-Threading für Lichtquellen
+        import concurrent.futures
+        from noise import pnoise2
+
+
+        def compute_light_mask(light):
+            # Noch niedrigere Auflösung für schwache PCs
+            scale_factor = 0.25
+            small_height = int(img_height * scale_factor)
+            small_width = int(img_width * scale_factor)
+
+            cx = int((light.x - min_x) * tile_size * scale_factor + tile_size * scale_factor / 2)
+            cy = int((light.y - min_y) * tile_size * scale_factor + tile_size * scale_factor / 2)
             final_radius_scale = radius_scale * self.global_radius_scale
-            radius_px = int(light.radius * tile_size * final_radius_scale)
-            
-            # Aktuelle Intensität mit Flackern
+            radius_px = int(light.radius * tile_size * final_radius_scale * scale_factor)
             current_intensity = light.get_current_intensity(time_offset)
-            
-            # Zeichne Licht pixelweise für sanften, natürlichen Falloff
-            for dy in range(-radius_px, radius_px + 1):
-                for dx in range(-radius_px, radius_px + 1):
-                    px = cx + dx
-                    py = cy + dy
-                    
-                    if px < 0 or px >= img_width or py < 0 or py >= img_height:
-                        continue
-                    
-                    # Distanz zum Lichtzentrum
-                    distance = math.sqrt(dx * dx + dy * dy)
-                    if distance > radius_px:
-                        continue
-                    
-                    # Distanz normalisiert (0 = Zentrum, 1 = Rand)
-                    dist_norm = distance / radius_px
-                    
-                    # Physikalischer Falloff mit extra Weichheit
-                    # Kombiniere Inverse-Square mit Gaussian für natürlichen Look
-                    inv_square = 1.0 / (1.0 + (dist_norm ** light.falloff_exponent) * 1.5)
-                    gaussian = math.exp(-(dist_norm ** 2) * 2.0)
-                    falloff = inv_square * 0.6 + gaussian * 0.4  # Mischung
-                    
-                    # Finale Intensität
-                    intensity = falloff * current_intensity
-                    
-                    if intensity < 0.01:
-                        continue
-                    
-                    # FARBIGES LICHT basierend auf Lichttyp und Distanz
-                    if light.light_type in ["torch", "fire", "campfire"]:
-                        # Feuer: Farbgradient von Weiß (Kern) über Gelb zu Orange/Rot (Rand)
-                        if dist_norm < 0.15:
-                            # Kern: Sehr hell, fast weiß mit leichtem Gelb
-                            r = 255
-                            g = 250
-                            b = 230
-                        elif dist_norm < 0.4:
-                            # Innen: Helles Gelb-Orange
-                            r = 255
-                            g = int(220 - dist_norm * 100)
-                            b = int(150 - dist_norm * 200)
-                        elif dist_norm < 0.7:
-                            # Mitte: Orange
-                            r = int(255 - dist_norm * 50)
-                            g = int(140 - dist_norm * 60)
-                            b = int(50 - dist_norm * 30)
-                        else:
-                            # Außen: Dunkles Orange-Rot
-                            r = int(200 - dist_norm * 50)
-                            g = int(80 - dist_norm * 40)
-                            b = 20
-                    
-                    elif light.light_type == "candle":
-                        # Kerze: Warmes Gelb
-                        r = 255
-                        g = int(230 - dist_norm * 30)
-                        b = int(180 - dist_norm * 80)
-                    
-                    elif light.light_type == "magic":
-                        # Magie: Kühles Lila/Blau (pulsierend)
-                        hue_shift = math.sin(time_offset * 2.0) * 0.2
-                        r = int((180 + hue_shift * 40) * (1.0 - dist_norm * 0.5))
-                        g = int((120 + hue_shift * 30) * (1.0 - dist_norm * 0.5))
-                        b = int((255 + hue_shift * 20) * (1.0 - dist_norm * 0.3))
-                    
-                    elif light.light_type == "window":
-                        # Tageslicht: Kühles Blau-Weiß
-                        r = int(220 - dist_norm * 20)
-                        g = int(235 - dist_norm * 35)
-                        b = 255
-                    
-                    elif light.light_type == "moonlight":
-                        # Mondlicht: Sehr kühles Blau
-                        r = int(180 - dist_norm * 60)
-                        g = int(200 - dist_norm * 50)
-                        b = int(235 - dist_norm * 35)
-                    
-                    else:
-                        # Standard: Neutral weiß
-                        bright = int(255 * (1.0 - dist_norm * 0.3))
-                        r = g = b = bright
-                    
-                    # Wende Intensität an
-                    r = int(r * intensity)
-                    g = int(g * intensity)
-                    b = int(b * intensity)
-                    
-                    # Additive Blending (Licht addiert sich)
-                    old_r, old_g, old_b = pixels[px, py]
-                    pixels[px, py] = (
-                        min(255, old_r + r),
-                        min(255, old_g + g),
-                        min(255, old_b + b)
-                    )
+
+            y_grid, x_grid = np.ogrid[:small_height, :small_width]
+            dist_from_center = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
+            mask = dist_from_center <= radius_px
+            dist_norm = np.clip(dist_from_center / radius_px, 0, 1)
+
+            # Nur 1 Noise-Layer für Speed
+            from noise import pnoise2
+            noise_scale = 0.10
+            noise_strength = 0.12
+            nx = (x_grid - cx) * noise_scale
+            ny = (y_grid - cy) * noise_scale
+            nx_grid, ny_grid = np.meshgrid(nx, ny)
+            noise_map = np.vectorize(pnoise2)(nx_grid, ny_grid, 1)
+
+            inv_square = 1.0 / (1.0 + (dist_norm ** light.falloff_exponent) * 1.5)
+            gaussian = np.exp(-(dist_norm ** 2) * 2.0)
+            falloff = inv_square * 0.6 + gaussian * 0.4
+            falloff = falloff * (1.0 + noise_map * noise_strength)
+            intensity = falloff * current_intensity * mask
+
+            # Nur ein Blur-Pass
+            import cv2
+            intensity_blur = cv2.GaussianBlur(intensity.astype(np.float32), (7, 7), 0)
+
+            if light.light_type in ["torch", "fire", "campfire"]:
+                r = np.where(dist_norm < 0.15, 255,
+                    np.where(dist_norm < 0.4, 255,
+                        np.where(dist_norm < 0.7, 255 - dist_norm * 50, 200 - dist_norm * 50)))
+                g = np.where(dist_norm < 0.15, 250,
+                    np.where(dist_norm < 0.4, 220 - dist_norm * 100,
+                        np.where(dist_norm < 0.7, 140 - dist_norm * 60, 80 - dist_norm * 40)))
+                b = np.where(dist_norm < 0.15, 230,
+                    np.where(dist_norm < 0.4, 150 - dist_norm * 200,
+                        np.where(dist_norm < 0.7, 50 - dist_norm * 30, 20)))
+            elif light.light_type == "candle":
+                r = np.full_like(dist_norm, 255)
+                g = 230 - dist_norm * 30
+                b = 180 - dist_norm * 80
+            elif light.light_type == "magic":
+                hue_shift = math.sin(time_offset * 2.0) * 0.2
+                r = (180 + hue_shift * 40) * (1.0 - dist_norm * 0.5)
+                g = (120 + hue_shift * 30) * (1.0 - dist_norm * 0.5)
+                b = (255 + hue_shift * 20) * (1.0 - dist_norm * 0.3)
+            elif light.light_type == "window":
+                r = 220 - dist_norm * 20
+                g = 235 - dist_norm * 35
+                b = np.full_like(dist_norm, 255)
+            elif light.light_type == "moonlight":
+                r = 180 - dist_norm * 60
+                g = 200 - dist_norm * 50
+                b = 235 - dist_norm * 35
+            else:
+                bright = 255 * (1.0 - dist_norm * 0.3)
+                r = g = b = bright
+
+            light_mask = np.zeros((small_height, small_width, 3), dtype=np.float32)
+            light_mask[..., 0] = r * intensity_blur
+            light_mask[..., 1] = g * intensity_blur
+            light_mask[..., 2] = b * intensity_blur
+
+            light_mask_up = cv2.resize(light_mask, (img_width, img_height), interpolation=cv2.INTER_CUBIC)
+            return light_mask_up
+
+        # Maximal 3 Lichtquellen pro Frame (wichtigste zuerst)
+        # Alle Lichtquellen pro Frame, aber mit minimaler Auflösung/Effekten
+        used_lights = self.lights
+
+        light_layer_np = np.zeros((img_height, img_width, 3), dtype=np.float32)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(compute_light_mask, used_lights))
+        for mask in results:
+            light_layer_np += mask
+
+        light_layer_np = np.clip(light_layer_np, 0, 255).astype(np.uint8)
+
+        # REDUZIERTE BLUR-INTENSITÄT für Speed
+        # Blur-Intensität aus maximalem Licht-Radius im Bereich
+        if self.lights:
+            max_radius = max([light.radius for light in self.lights])
+        else:
+            max_radius = 5
+        blur_strength = max(int(tile_size * max_radius * 0.7), 7)
+        light_layer_np = cv2.GaussianBlur(light_layer_np, (blur_strength|1, blur_strength|1), 0)
+        light_layer_np = cv2.GaussianBlur(light_layer_np, (max(3, blur_strength//2)|1, max(3, blur_strength//2)|1), 0)
+
+        light_layer = Image.fromarray(light_layer_np, mode='RGB')
+
+        # Offset für Rückgabe (MapEditor muss Overlay an richtiger Stelle platzieren)
+        self._render_offset = (offset_x, offset_y)
         
-        # EXTREM STARKER Blur für völlig verwischtes, diffuses Licht
-        # 3 Blur-Pässe mit steigender Intensität um ALLE Geometrien zu entfernen
-        blur_strength = max(int(tile_size * final_radius_scale * 1.2), 15)  # 3x stärker!
-        
-        # Pass 1: Starker Basis-Blur
-        light_layer = light_layer.filter(ImageFilter.GaussianBlur(radius=blur_strength))
-        
-        # Pass 2: Mittlerer Blur für sanfte Übergänge
-        light_layer = light_layer.filter(ImageFilter.GaussianBlur(radius=blur_strength // 2))
-        
-        # Pass 3: Feiner Blur für ultra-weiche Ränder
-        light_layer = light_layer.filter(ImageFilter.GaussianBlur(radius=blur_strength // 4))
-        
-        # Addiere Ambient Light zum beleuchteten Bereich
+
+        # Addiere Ambient Light als numpy-Array für Performance
         if self.ambient_intensity > 0:
             ambient = int(self.ambient_intensity * 255)
-            ambient_layer = Image.new('RGB', (img_width, img_height), (ambient, ambient, ambient))
-            # Kombiniere: max(ambient, light)
-            light_layer = ImageChops.lighter(light_layer, ambient_layer)
+            ambient_np = np.full((img_height, img_width, 3), ambient, dtype=np.uint8)
+            light_layer_np = np.maximum(np.array(light_layer), ambient_np)
+            light_layer = Image.fromarray(light_layer_np, mode='RGB')
         
         # TAG/NACHT-MODI: Unterschiedliche Rendering-Strategien
         if self.lighting_mode == "day":
@@ -502,10 +968,17 @@ class LightingEngine:
             for polygon in self.darkness_polygons:
                 # Konvertiere Tile-Koordinaten zu Pixel-Koordinaten
                 pixel_poly = [(int(x * tile_size), int(y * tile_size)) for x, y in polygon]
+                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} with tile_size {tile_size}")
                 # Basis-Schatten-Intensität (nie 100% schwarz wegen Ambient)
                 # darkness_opacity = 0.85 → 85% dunkel → Pixel-Wert 217 (von 255)
                 shadow_intensity = int(self.darkness_opacity * 255)
                 draw.polygon(pixel_poly, fill=shadow_intensity)
+            
+            # ════════════════════════════════════════════════════════════
+            # FEATHERING: Weiche Kanten durch Gaussian Blur
+            # ════════════════════════════════════════════════════════════
+            if self.darkness_feather > 0:
+                shadow_mask = shadow_mask.filter(ImageFilter.GaussianBlur(radius=self.darkness_feather))
             
             # ════════════════════════════════════════════════════════════
             # SCHRITT 2: Licht reduziert Schatten (physikalisch korrekt)
@@ -683,6 +1156,109 @@ class LightingEngine:
         self.lighting_mode = data.get("lighting_mode", "night")
         self.darkness_opacity = data.get("darkness_opacity", 0.85)
         self.darkness_polygons = data.get("darkness_polygons", [])
+
+
+class GPUAcceleratedLightingEngine(LightingEngine):
+    """GPU-beschleunigte Version des LightingEngine mit OpenCL"""
+    
+    def __init__(self):
+        super().__init__()
+        self.gpu_renderer = None
+        self._init_gpu()
+    
+    def _init_gpu(self):
+        """Initialisiere GPU-Renderer"""
+        if not GPU_AVAILABLE:
+            print("⚠️ GPU nicht verfügbar - verwende CPU-Fallback")
+            return
+        
+        try:
+            self.gpu_renderer = GPURenderer()
+            print("✅ Vollständige GPU-Rendering-Pipeline initialisiert")
+            
+        except Exception as e:
+            print(f"⚠️ GPU-Initialisierung fehlgeschlagen: {e}")
+            self.gpu_renderer = None
+    
+    def render_lighting_gpu(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
+        """GPU-beschleunigte Licht-Rendering"""
+        if not self.gpu_context or not self.lights:
+            # Fallback zur CPU-Version
+            return self.render_lighting(width, height, tile_size, time_offset, radius_scale)
+        
+        try:
+            # Vereinfachte GPU-Version für Performance
+            margin_tiles = 5
+            if self.lights:
+                min_x = min([l.x for l in self.lights]) - margin_tiles
+                max_x = max([l.x for l in self.lights]) + margin_tiles
+                min_y = min([l.y for l in self.lights]) - margin_tiles
+                max_y = max([l.y for l in self.lights]) + margin_tiles
+            else:
+                min_x = max_x = min_y = max_y = 0
+            
+            img_width = max(1, (max_x - min_x + 1) * tile_size)
+            img_height = max(1, (max_y - min_y + 1) * tile_size)
+            
+            # GPU Buffer für Licht-Maske
+            light_mask_r = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
+            light_mask_g = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
+            light_mask_b = cl_array.zeros(self.gpu_queue, (img_height, img_width), dtype=np.float32)
+            
+            # Für jedes Licht: GPU-Kernel ausführen
+            for light in self.lights[:3]:  # Max 3 Lichter für Performance
+                cx = (light.x - min_x) * tile_size + tile_size / 2
+                cy = (light.y - min_y) * tile_size + tile_size / 2
+                final_radius_scale = radius_scale * self.global_radius_scale
+                radius_px = light.radius * tile_size * final_radius_scale
+                current_intensity = light.get_current_intensity(time_offset)
+                
+                # Noise-Map generieren (einfache Version)
+                noise_map = np.random.randn(img_height, img_width).astype(np.float32) * 0.1
+                noise_gpu = cl_array.to_device(self.gpu_queue, noise_map)
+                
+                # Kernel ausführen
+                self.gpu_program.compute_light_mask(
+                    self.gpu_queue, (img_width, img_height), None,
+                    light_mask_r.data, light_mask_g.data, light_mask_b.data,
+                    np.int32(img_width), np.int32(img_height),
+                    np.float32(cx), np.float32(cy), np.float32(radius_px),
+                    np.float32(light.falloff_exponent), np.float32(light.core_brightness),
+                    np.float32(current_intensity), np.float32(0.12),
+                    noise_gpu.data
+                )
+            
+            # Ergebnis zurück zur CPU holen
+            r_np = light_mask_r.get()
+            g_np = light_mask_g.get()
+            b_np = light_mask_b.get()
+            
+            # Zu PIL Image konvertieren
+            rgb_array = np.stack([r_np, g_np, b_np], axis=2)
+            rgb_array = np.clip(rgb_array * 255, 0, 255).astype(np.uint8)
+            
+            light_image = Image.fromarray(rgb_array, mode='RGB')
+            
+            # Blur für weiche Kanten (CPU, da GPU-Blur komplex wäre)
+            from PIL import ImageFilter
+            blur_radius = max(1, int(tile_size * 0.3))
+            light_image = light_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+            
+            # Ambient hinzufügen
+            if self.ambient_intensity > 0:
+                ambient = int(self.ambient_intensity * 255)
+                ambient_img = Image.new('RGB', light_image.size, (ambient, ambient, ambient))
+                light_image = ImageChops.lighter(light_image, ambient_img)
+            
+            return light_image.convert('RGBA')
+            
+        except Exception as e:
+            print(f"⚠️ GPU-Rendering fehlgeschlagen, verwende CPU: {e}")
+            return self.render_lighting(width, height, tile_size, time_offset, radius_scale)
+    
+    def render_lighting(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
+        """Override der CPU-Version für GPU-Beschleunigung"""
+        return self.render_lighting_gpu(width, height, tile_size, time_offset, radius_scale)
 
 
 # Preset Lichtquellen mit optimierten physikalischen Parametern

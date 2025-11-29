@@ -36,6 +36,8 @@ except OSError as e:
     print("   ℹ️  Oder führe aus: INSTALL_CAIRO.bat")
     print(f"   🐛 Fehler: {e}")
 
+print(f"🔍 DEBUG: HAS_CAIROSVG = {HAS_CAIROSVG}")
+
 
 class SVGProjectorRenderer:
     """Rendert SVG-Karten für Projektor mit optimaler Qualität"""
@@ -116,13 +118,16 @@ class SVGProjectorRenderer:
         
         try:
             if HAS_CAIROSVG:
+                print("🔍 DEBUG: Verwende CairoSVG-Rendering")
                 # Hochwertig mit cairosvg
                 image = self._render_with_cairosvg(width, height)
             else:
+                print("🔍 DEBUG: Verwende PIL-Fallback-Rendering")
                 # Fallback mit PIL (extrahiert eingebettete Bilder)
                 image = self._render_with_pil_fallback(width, height)
             
             if not image:
+                print("❌ DEBUG: Rendering fehlgeschlagen - image ist None")
                 return None
             
             self.render_time = time.time() - start_time
@@ -147,6 +152,7 @@ class SVGProjectorRenderer:
     
     def _render_with_cairosvg(self, width, height):
         """Rendert mit CairoSVG (hohe Qualität, echte Vektoren)"""
+        print(f"🔍 DEBUG: _render_with_cairosvg aufgerufen mit {width}×{height}")
         try:
             png_data = cairosvg.svg2png(
                 bytestring=self.svg_data.encode('utf-8'),
@@ -154,7 +160,10 @@ class SVGProjectorRenderer:
                 output_height=height,
                 dpi=96  # Standard-DPI für Screens
             )
-            return Image.open(BytesIO(png_data))
+            print(f"🔍 DEBUG: cairosvg.svg2png erfolgreich, PNG-Daten Größe: {len(png_data)} bytes")
+            image = Image.open(BytesIO(png_data))
+            print(f"🔍 DEBUG: PIL Image erstellt: {image.size}, Mode: {image.mode}")
+            return image
         except Exception as e:
             print(f"⚠️ Cairo-Rendering fehlgeschlagen: {e}")
             print("   Fallback zu PIL...")
@@ -165,6 +174,7 @@ class SVGProjectorRenderer:
         Fallback-Rendering mit PIL
         Extrahiert base64-eingebettete PNG-Tiles und compositet sie
         """
+        print(f"🔍 DEBUG: _render_with_pil_fallback aufgerufen mit {width}×{height}")
         try:
             root = ET.fromstring(self.svg_data)
             
@@ -264,6 +274,7 @@ class SVGProjectorRenderer:
             import traceback
             traceback.print_exc()
             # Notfall: Schwarzes Bild
+            print("🔍 DEBUG: Erstelle Notfall-Bild (schwarz)")
             return Image.new('RGB', (width, height), (26, 26, 26))
     
     def _check_tile_for_borders(self, tile_img):

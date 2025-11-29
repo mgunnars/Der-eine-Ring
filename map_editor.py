@@ -20,6 +20,7 @@ from layer_manager import LayerManager, LayerPanel
 from advanced_drawing_tools import BezierCurveTool, PolygonTool, TextTool, TransformTool
 from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS
 from map_editor_extensions import SelectTool, ContextPanel, SmoothPolygonDrawer, GeometryTools
+from edge_detection import EdgeDetector, SmartDarknessDrawer
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
@@ -166,6 +167,11 @@ class MapEditor(tk.Frame):
         self.smooth_polygon_drawer = SmoothPolygonDrawer()
         self.geometry_tools = GeometryTools()
         self.context_panel = None  # Wird im UI setup erstellt
+        
+        # Edge Detection für intelligente Polygon-Optimierung
+        self.edge_detector = EdgeDetector()
+        self.smart_darkness_drawer = SmartDarknessDrawer(self.edge_detector)
+        self.enable_edge_snap = tk.BooleanVar(value=False)  # Optional, aus per default
         
         # Lighting System
         self.lighting_engine = LightingEngine()
@@ -590,6 +596,40 @@ class MapEditor(tk.Frame):
         self.darkness_label = tk.Label(darkness_frame, text="85%", bg="#1a1a1a", fg="white",
                                       font=("Arial", 9, "bold"), width=5)
         self.darkness_label.pack(side=tk.LEFT, padx=5)
+        
+        # Feathering Control (weiche Kanten)
+        tk.Label(lighting_tab, text="Weichheit (Feathering):", bg="#1a1a1a", fg="#888",
+                 font=("Arial", 8)).pack(anchor=tk.W, padx=10, pady=(5, 2))
+        
+        feather_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        feather_frame.pack(fill=tk.X, padx=10, pady=2)
+        
+        self.darkness_feather_var = tk.IntVar(value=20)
+        tk.Scale(feather_frame, from_=0, to=50, orient=tk.HORIZONTAL,
+                variable=self.darkness_feather_var, command=self.update_darkness_feather,
+                bg="#2a2a2a", fg="white", highlightthickness=0, showvalue=False,
+                troughcolor="#404040", activebackground="#3a3a3a").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        self.feather_label = tk.Label(feather_frame, text="20px", bg="#1a1a1a", fg="white",
+                                       font=("Arial", 9, "bold"), width=5)
+        self.feather_label.pack(side=tk.LEFT, padx=5)
+        
+        # Edge-Snapping Option (Kantenerkennung)
+        tk.Label(lighting_tab, text="Intelligente Anpassung:", bg="#1a1a1a", fg="#888",
+                 font=("Arial", 8)).pack(anchor=tk.W, padx=10, pady=(10, 2))
+        
+        edge_snap_frame = tk.Frame(lighting_tab, bg="#1a1a1a")
+        edge_snap_frame.pack(fill=tk.X, padx=15, pady=2)
+        
+        tk.Checkbutton(edge_snap_frame, text="🔍 Auto-Snap an Textur-Kanten", 
+                      variable=self.enable_edge_snap, bg="#1a1a1a", fg="white",
+                      selectcolor="#2a2a2a", font=("Arial", 8),
+                      command=self.toggle_edge_snap).pack(anchor=tk.W)
+        
+        self.edge_snap_info = tk.Label(edge_snap_frame, 
+                                       text="(Polygone werden automatisch an Wände/Strukturen angepasst)",
+                                       bg="#1a1a1a", fg="#666", font=("Arial", 7))
+        self.edge_snap_info.pack(anchor=tk.W, padx=20)
         
         # Separator
         tk.Frame(lighting_tab, bg="#333", height=1).pack(fill=tk.X, padx=10, pady=10)
@@ -1523,6 +1563,18 @@ class MapEditor(tk.Frame):
         if not (0 <= x < self.width and 0 <= y < self.height):
             return
         
+        # === DARKNESS POLYGON DRAWING (Drag/Freehand) ===
+        if self.drawing_darkness_polygon:
+            mode = self.polygon_draw_mode.get()
+            if mode == "freehand":
+                # Kontinuierliches Pinsel-artiges Zeichnen
+                canvas_x = self.canvas.canvasx(event.x)
+                canvas_y = self.canvas.canvasy(event.y)
+                self.smooth_polygon_drawer.add_point(canvas_x, canvas_y)
+                # Live-Preview aktualisieren
+                self.draw_grid()
+                return
+        
         tool = self.active_tool.get()
         
         # === SHAPE PREVIEW ===
@@ -1938,6 +1990,20 @@ class MapEditor(tk.Frame):
         self.darkness_label.config(text=f"{int(opacity*100)}%")
         self.draw_grid()
     
+    def update_darkness_feather(self, value):
+        """Update Darkness Feathering (weiche Kanten)"""
+        feather = int(value)
+        self.lighting_engine.darkness_feather = feather
+        self.feather_label.config(text=f"{feather}px")
+        self.draw_grid()
+    
+    def toggle_edge_snap(self):
+        """Toggle Edge-Snapping für intelligente Polygon-Anpassung"""
+        enabled = self.enable_edge_snap.get()
+        self.smart_darkness_drawer.auto_snap = enabled
+        status = "aktiviert" if enabled else "deaktiviert"
+        print(f"🔍 Edge-Snapping {status}")
+    
     def select_light(self, index):
         """Wähle eine Lichtquelle aus"""
         if 0 <= index < len(self.lighting_engine.lights):
@@ -2035,15 +2101,49 @@ class MapEditor(tk.Frame):
         pixel_polygon = self.smooth_polygon_drawer.finish(smooth=True)
         
         if pixel_polygon and len(pixel_polygon) >= 3:
-            # WICHTIG: Speichere PIXEL-Koordinaten, nicht Tile-Koordinaten!
-            # Das verhindert Lag und ermöglicht präzise Polygone
-            self.lighting_engine.darkness_polygons.append(pixel_polygon)
-            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte")
+            # Optional: Intelligente Edge-Detection & Optimization
+            if self.enable_edge_snap.get():
+                try:
+                    # Rendere aktuelles Map-Bild für Edge-Detection
+                    map_image = self.render_map_to_image()
+                    
+                    # Optimiere Polygon mit Edge-Snapping
+                    pixel_polygon = self.smart_darkness_drawer.process_drawn_polygon(
+                        pixel_polygon, 
+                        map_image
+                    )
+                except Exception as e:
+                    print(f"⚠️ Edge-Detection Fehler: {e}")
+                    print("   Nutze Original-Polygon")
+            
+            # WICHTIG: Speichere TILE-Koordinaten für konsistente Speicherung
+            # Konvertiere Pixel zu Tile-Koordinaten
+            tile_polygon = [(x // self.tile_size, y // self.tile_size) for x, y in pixel_polygon]
+            self.lighting_engine.darkness_polygons.append(tile_polygon)
+            print(f"✅ Polygon gespeichert ({mode}, geglättet): {len(pixel_polygon)} Punkte → {len(tile_polygon)} Tile-Punkte")
         
         self.drawing_darkness_polygon = False
         self.current_darkness_polygon = []
         self.update_polygon_info()
         self.draw_grid()
+    
+    def render_map_to_image(self):
+        """Rendere aktuelle Map als PIL Image (für Edge-Detection)"""
+        width_px = self.width * self.tile_size
+        height_px = self.height * self.tile_size
+        
+        map_img = Image.new('RGB', (width_px, height_px), (0, 0, 0))
+        
+        for y in range(self.height):
+            for x in range(self.width):
+                material = self.map[y][x]
+                if material and material != "empty":
+                    # Hole Textur
+                    texture = self.texture_manager.get_texture(material, self.tile_size)
+                    if texture:
+                        map_img.paste(texture, (x * self.tile_size, y * self.tile_size))
+        
+        return map_img
     
     def update_polygon_info(self):
         """Update Polygon-Info-Label"""
@@ -2064,16 +2164,7 @@ class MapEditor(tk.Frame):
         )
         
         if filename:
-            # Konvertiere Pixel-Polygone zu Tile-Koordinaten für Speicherung
-            pixel_polygons = self.lighting_engine.darkness_polygons.copy()
-            tile_polygons = []
-            for polygon in pixel_polygons:
-                tile_poly = [(px / self.tile_size, py / self.tile_size) for px, py in polygon]
-                tile_polygons.append(tile_poly)
-            
-            # Temporär Tile-Koordinaten setzen für Export
-            self.lighting_engine.darkness_polygons = tile_polygons
-            
+            # Polygone sind bereits in Tile-Koordinaten gespeichert
             map_data = {
                 "width": self.width,
                 "height": self.height,
@@ -2082,9 +2173,6 @@ class MapEditor(tk.Frame):
                 "layers": self.layer_manager.to_dict(),  # Layer-Daten speichern
                 "lighting": self.lighting_engine.to_dict()  # Lighting speichern
             }
-            
-            # Stelle Pixel-Koordinaten wieder her
-            self.lighting_engine.darkness_polygons = pixel_polygons
             
             # SVG-Metadata behalten wenn vorhanden
             if self.is_svg_mode and self.svg_source_path:
@@ -2126,29 +2214,26 @@ class MapEditor(tk.Frame):
                         self.lighting_engine.from_dict(map_data["lighting"])
                         self.lighting_enabled = map_data["lighting"].get("enabled", False)
                         
-                        # INTELLIGENTE KOORDINATEN-ERKENNUNG
-                        # Prüfe ob Polygone bereits in Pixel-Koordinaten sind (neue Maps)
-                        # oder in Tile-Koordinaten (alte Maps + Standard)
+                        # Polygone sind in Tile-Koordinaten gespeichert, konvertiere zu Pixel für Editor
+                        # ABER: Alte Maps haben Pixel-Koordinaten - erkenne automatisch
                         tile_polygons = self.lighting_engine.darkness_polygons.copy()
-                        
-                        if tile_polygons:
-                            # Heuristik: Wenn alle Koordinaten > 100, sind es wahrscheinlich Pixel
-                            first_polygon = tile_polygons[0]
-                            max_coord = max(max(abs(x), abs(y)) for x, y in first_polygon) if first_polygon else 0
+                        pixel_polygons = []
+                        for polygon in tile_polygons:
+                            # Prüfe ob Koordinaten Tile- oder Pixel-basiert sind
+                            # Wenn max x/y > map width/height, dann Pixel-Koordinaten
+                            max_x = max(p[0] for p in polygon) if polygon else 0
+                            max_y = max(p[1] for p in polygon) if polygon else 0
                             
-                            if max_coord > 100:
-                                # Bereits Pixel-Koordinaten (neue Map mit Bug)
-                                print(f"   ⚠️ LEGACY: Polygon-Koordinaten bereits in Pixeln (max: {max_coord:.1f})")
-                                pixel_polygons = tile_polygons
+                            if max_x > self.width or max_y > self.height:
+                                # Pixel-Koordinaten (alte Map) - verwende direkt
+                                pixel_polygons.append(polygon)
+                                print(f"🔄 Alte Pixel-Polygone erkannt: max_x={max_x}, max_y={max_y}")
                             else:
-                                # Tile-Koordinaten (Standard, alte Maps)
-                                print(f"   ✅ Polygon-Koordinaten in Tiles (max: {max_coord:.1f}), konvertiere zu Pixel")
-                                pixel_polygons = []
-                                for polygon in tile_polygons:
-                                    pixel_poly = [(tx * self.tile_size, ty * self.tile_size) for tx, ty in polygon]
-                                    pixel_polygons.append(pixel_poly)
-                            
-                            self.lighting_engine.darkness_polygons = pixel_polygons
+                                # Tile-Koordinaten - konvertiere zu Pixel
+                                pixel_poly = [(tx * self.tile_size, ty * self.tile_size) for tx, ty in polygon]
+                                pixel_polygons.append(pixel_poly)
+                        
+                        self.lighting_engine.darkness_polygons = pixel_polygons
                         
                         # Synchronisiere UI mit geladenen Daten
                         self.lighting_mode_var.set(self.lighting_engine.lighting_mode)

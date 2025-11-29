@@ -12,6 +12,9 @@ import os
 import xml.etree.ElementTree as ET
 from fog_texture_generator import FogTextureGenerator
 from lighting_system import LightingEngine
+from PIL import Image
+import numpy as np
+from lighting_system import GPUAcceleratedLightingEngine, GPU_AVAILABLE
 
 class ProjectorWindow(tk.Toplevel):
     """Vollbild-Projektor-Fenster für Spieler mit Fog-of-War"""
@@ -100,12 +103,62 @@ class ProjectorWindow(tk.Toplevel):
         from camera_controller import CameraController
         self.camera = CameraController(map_width, map_height)
         
-        # Detail-Map System
-        from detail_map_system import DetailMapSystem
-        self.detail_system = DetailMapSystem(self.map_data)
+        # GPU-basierte Rendering-Engine
+        self.gpu_renderer = None
+        if GPU_AVAILABLE:
+            try:
+                from lighting_system import GPURenderer
+                self.gpu_renderer = GPURenderer()
+                print("🎮 Projektor: GPU-Renderer verfügbar")
+            except Exception as e:
+                print(f"⚠️ Projektor: GPU-Renderer nicht verfügbar: {e}")
+                self.gpu_renderer = None
+        
+        # GPU Memory Manager für große Texturen
+        self.gpu_texture_cache = {}  # Cache für GPU-Texturen
+        self.max_gpu_memory_mb = 1024  # 1GB GPU-Speicher für Texturen
+    
+    def gpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None):
+        """GPU-basiertes Compositing aller Rendering-Layer"""
+        if not self.gpu_renderer:
+            # Fallback zur CPU-Version
+            return self.cpu_composite_rendering(map_image, lighting_overlay, fog_enabled, fog_data)
+        
+        try:
+            # Konvertiere alle Images zu GPU-Images
+            gpu_map = self.gpu_renderer.create_gpu_image(map_image.width, map_image.height, 4)
+            gpu_map.gpu_buffer.set(np.array(map_image.convert('RGBA'), dtype=np.float32) / 255.0)
+            
+            gpu_lighting = self.gpu_renderer.create_gpu_image(lighting_overlay.width, lighting_overlay.height, 4)
+            gpu_lighting.gpu_buffer.set(np.array(lighting_overlay.convert('RGBA'), dtype=np.float32) / 255.0)
+            
+            # Alpha-Compositing auf GPU
+            result = self.gpu_renderer.alpha_composite_gpu(gpu_map, gpu_lighting)
+            
+            # Fog hinzufügen (falls aktiviert)
+            if fog_enabled and fog_data:
+                gpu_fog = self.gpu_renderer.create_gpu_image(fog_data.width, fog_data.height, 4)
+                gpu_fog.gpu_buffer.set(np.array(fog_data.convert('RGBA'), dtype=np.float32) / 255.0)
+                result = self.gpu_renderer.alpha_composite_gpu(result, gpu_fog)
+            
+            # Konvertiere zurück zu PIL
+            return result.to_pil_image()
+            
+        except Exception as e:
+            print(f"⚠️ GPU-Compositing fehlgeschlagen: {e}")
+            return self.cpu_composite_rendering(map_image, lighting_overlay, fog_enabled, fog_data)
+    
+    def cpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None):
+        """CPU-Fallback für Compositing"""
+        result = Image.alpha_composite(map_image.convert('RGBA'), lighting_overlay.convert('RGBA'))
+        
+        if fog_enabled and fog_data:
+            result = Image.alpha_composite(result, fog_data.convert('RGBA'))
+        
+        return result
         
         # LIGHTING SYSTEM für Projektor
-        self.lighting_engine = LightingEngine()
+        self.lighting_engine = GPUAcceleratedLightingEngine()
         self.lighting_enabled = False  # Standardmäßig aus
         self.lighting_time = 0.0  # Zeit für Flicker-Animation
         
@@ -118,32 +171,6 @@ class ProjectorWindow(tk.Toplevel):
             # Lade ALLE Lighting-Einstellungen (Mode, Darkness-Polygone, etc.)
             self.lighting_engine.from_dict(lighting_data)
             
-            # INTELLIGENTE KOORDINATEN-ERKENNUNG (wie im Editor)
-            # Prüfe ob Polygone bereits in Pixel-Koordinaten sind (buggy neue Maps)
-            # oder in Tile-Koordinaten (Standard, alte Maps)
-            if self.lighting_engine.darkness_polygons:
-                first_polygon = self.lighting_engine.darkness_polygons[0]
-                max_coord = max(max(abs(x), abs(y)) for x, y in first_polygon) if first_polygon else 0
-                
-                if max_coord > 100:
-                    # Bereits Pixel-Koordinaten - müssen zu Tiles konvertiert werden!
-                    print(f"   ⚠️ LEGACY: Polygon-Koordinaten in Pixeln (max: {max_coord:.1f})")
-                    print(f"   🔄 Konvertiere zu Tile-Koordinaten für Lighting-System...")
-                    
-                    # Berechne durchschnittliche Tile-Größe aus Map-Dimensionen
-                    # (Projektor weiß noch nicht seine finale tile_size)
-                    estimated_tile_size = 32  # Fallback
-                    
-                    tile_polygons = []
-                    for polygon in self.lighting_engine.darkness_polygons:
-                        tile_poly = [(px / estimated_tile_size, py / estimated_tile_size) for px, py in polygon]
-                        tile_polygons.append(tile_poly)
-                    
-                    self.lighting_engine.darkness_polygons = tile_polygons
-                    print(f"   ✅ Polygone konvertiert (Tile-Size: {estimated_tile_size}px)")
-                else:
-                    print(f"   ✅ Polygon-Koordinaten bereits in Tiles (max: {max_coord:.1f})")
-            
             # Projektor: Lighting automatisch aktivieren wenn Lichtquellen vorhanden
             if self.lighting_engine.lights:
                 self.lighting_enabled = True
@@ -153,6 +180,31 @@ class ProjectorWindow(tk.Toplevel):
             print(f"💡 Projektor: {len(self.lighting_engine.lights)} Lichtquellen geladen")
             print(f"☀️ Lighting-Mode: {self.lighting_engine.lighting_mode}")
             print(f"🏠 Darkness-Polygone: {len(self.lighting_engine.darkness_polygons)}")
+            
+            # Konvertiere alte Pixel-Polygone zu Tile-Koordinaten falls nötig
+            if self.lighting_engine.darkness_polygons:
+                map_width = self.map_data.get("width", 50)
+                map_height = self.map_data.get("height", 50)
+                converted_polygons = []
+                for polygon in self.lighting_engine.darkness_polygons:
+                    if polygon:  # not empty
+                        max_x = max(p[0] for p in polygon)
+                        max_y = max(p[1] for p in polygon)
+                        
+                        if max_x > map_width or max_y > map_height:
+                            # Pixel-Koordinaten - konvertiere zu Tile (angenommen tile_size=24 aus Editor)
+                            tile_polygon = [(p[0] / 24.0, p[1] / 24.0) for p in polygon]
+                            converted_polygons.append(tile_polygon)
+                            print(f"🔄 Projektor: Pixel-Polygon konvertiert zu Tile: {polygon} -> {tile_polygon}")
+                        else:
+                            # Schon Tile-Koordinaten
+                            converted_polygons.append(polygon)
+                    else:
+                        converted_polygons.append(polygon)
+                
+                self.lighting_engine.darkness_polygons = converted_polygons
+            
+            print(f"DEBUG: darkness_polygons = {self.lighting_engine.darkness_polygons}")
         
         # Auto-Switch für Detail-Maps
         self.auto_detail_switch = True
@@ -198,7 +250,9 @@ class ProjectorWindow(tk.Toplevel):
         self.canvas_image_id = None  # ID des Canvas-Image-Items (für Update statt Delete)
         
         self.setup_ui()
-        self.render_map()
+        
+        # Warte bis Fenster vollständig initialisiert ist, dann render
+        self.after(100, self.render_map)
         
         # Prüfe ob Animation gebraucht wird
         if self.is_svg_mode:
@@ -295,6 +349,7 @@ class ProjectorWindow(tk.Toplevel):
         Karte auf dem Canvas rendern - OPTIMIERT MIT CACHING!
         Unterstützt sowohl JSON-Maps (Tile-basiert) als auch SVG-Maps (Vektor-basiert)
         """
+        print(f"🎨 render_map() aufgerufen, is_svg_mode={self.is_svg_mode}")
         # SVG-Modus: Delegiere an SVG-Renderer
         if self.is_svg_mode:
             self.render_svg_map()
@@ -439,7 +494,7 @@ class ProjectorWindow(tk.Toplevel):
                             map_image.paste(texture_img, (paste_x, paste_y))
         
         # Lighting-Overlay rendern (NACH Tiles, VOR Fog!)
-        if self.lighting_enabled and self.lighting_engine.lights:
+        if self.lighting_enabled and (self.lighting_engine.lights or (self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons)):
             # Konvertiere zu RGBA für Transparenz
             if map_image.mode != 'RGBA':
                 map_image = map_image.convert('RGBA')
@@ -854,7 +909,14 @@ class ProjectorWindow(tk.Toplevel):
             self.canvas.update_idletasks()
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
-        except:
+            print(f"📐 Canvas-Größe: {canvas_width}×{canvas_height}")
+        except Exception as e:
+            print(f"❌ Canvas-Größe Fehler: {e}")
+            return
+        
+        # Prüfe ob Canvas-Größen gültig sind
+        if canvas_width <= 1 or canvas_height <= 1:
+            print(f"⚠️ Canvas zu klein: {canvas_width}×{canvas_height}, überspringe Rendering")
             return
         
         # SVG Original-Größe: Nutze original_svg_size wenn vorhanden, sonst aus File
@@ -889,8 +951,10 @@ class ProjectorWindow(tk.Toplevel):
             rendered_full = self.svg_renderer.render_to_size(full_width, full_height, cache=False)
             
             if rendered_full is None:
+                print("❌ DEBUG: svg_renderer.render_to_size() hat None zurückgegeben!")
                 return
             
+            print(f"✅ DEBUG: SVG-Rendering erfolgreich: {rendered_full.size}, Mode: {rendered_full.mode}")
             self.svg_static_cache = rendered_full.copy()
             self.svg_cache_size = cache_key
         
@@ -978,8 +1042,8 @@ class ProjectorWindow(tk.Toplevel):
             viewport_img = viewport_img.convert('RGBA')
         
         # Lighting-Overlay rendern (SVG-Modus: skaliert auf full_width/full_height)
-        if self.lighting_enabled and self.lighting_engine.lights:
-            print(f"💡 SVG-Lighting: Rendere {len(self.lighting_engine.lights)} Lichter")
+        if self.lighting_enabled and (self.lighting_engine.lights or (self.lighting_engine.lighting_mode == "day" and self.lighting_engine.darkness_polygons)):
+            print(f"💡 SVG-Lighting: Rendere {len(self.lighting_engine.lights)} Lichter, Mode: {self.lighting_engine.lighting_mode}")
             # Berechne Tile-Größe aus SVG-Original und Fog-Grid
             tile_width_px = (svg_width * current_scale) / self.fog.width
             tile_height_px = (svg_height * current_scale) / self.fog.height
@@ -1141,10 +1205,12 @@ class ProjectorWindow(tk.Toplevel):
             )
         
         self.canvas.photo = photo
+        print(f"✅ SVG-Rendering abgeschlossen: {viewport_img.size}")
     
     def destroy(self):
         """Aufräumen beim Schließen"""
-        self.is_animating = False
-        if self.animation_id:
+        if hasattr(self, 'is_animating'):
+            self.is_animating = False
+        if hasattr(self, 'animation_id') and self.animation_id:
             self.after_cancel(self.animation_id)
         super().destroy()

@@ -6,6 +6,9 @@ Pillow>=10.0.0         # Textur-Rendering, Bildbearbeitung
 numpy>=1.24.0          # Array-Operationen, Mathematik
 opencv-python>=4.8.0   # Webcam-Tracking, Bildverarbeitung
 
+# GPU Acceleration
+pyopencl>=2024.2       # OpenCL für GPU-Beschleunigung
+
 # Optional: Für erweiterte Features
 pygame>=2.5.0          # Sound-Effekte (optional)
 noise>=1.2.2           # Perlin-Noise für organische Texturen (optional)
