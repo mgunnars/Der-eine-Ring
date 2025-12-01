@@ -305,6 +305,7 @@ class HexagonMapEditor(tk.Toplevel):
         self.current_terrain = "PLAINS"
         self.current_weather = "RAIN"
         self.selected_tile: Optional[Tuple[int, int]] = None
+        self.current_file_path: Optional[str] = None  # Pfad zur geladenen/gespeicherten Datei
         
         # Zoom/Pan
         self.zoom = 1.0
@@ -954,22 +955,30 @@ class HexagonMapEditor(tk.Toplevel):
                  bg="#28a745", fg="white").grid(row=2, column=0, columnspan=2, pady=20)
     
     def _save_map(self):
+        # Wenn bereits ein Dateipfad bekannt, direkt speichern
+        initial_file = self.current_file_path if self.current_file_path else ""
+        
         filepath = filedialog.asksaveasfilename(
             title="Hexagon-Karte speichern",
             defaultextension=".json",
+            initialfile=os.path.basename(initial_file) if initial_file else "",
+            initialdir=os.path.dirname(initial_file) if initial_file else "maps",
             filetypes=[("JSON Dateien", "*.json"), ("Alle Dateien", "*.*")]
         )
         if filepath:
             self.hex_map.save(filepath)
+            self.current_file_path = filepath
             messagebox.showinfo("Gespeichert", f"Karte gespeichert:\n{filepath}")
     
     def _load_map(self):
         filepath = filedialog.askopenfilename(
             title="Hexagon-Karte laden",
+            initialdir="maps",
             filetypes=[("JSON Dateien", "*.json"), ("Alle Dateien", "*.*")]
         )
         if filepath:
             self.hex_map = HexagonMap.load(filepath)
+            self.current_file_path = filepath
             self.title(f"🔷 Hexagon-Editor: {self.hex_map.name}")
             self._update_stats()
             self._redraw()

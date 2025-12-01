@@ -8,6 +8,7 @@ V2.0 - Verbessertes UI-Framework mit FoundryVTT-inspirierten Features
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
+import json
 
 # UI-Framework importieren für konsistentes Design
 try:
@@ -753,6 +754,41 @@ class DerEineRingProApp(tk.Tk):
         except Exception as e:
             self._show_message("error", "Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
+    def _open_hexagon_editor_with_map(self, map_path: str):
+        """Öffne Hexagon-Editor mit einer vorhandenen Map-Datei"""
+        if not HEXAGON_AVAILABLE:
+            self._show_message("error", "Nicht verfügbar", 
+                "Hexagon-Map-System nicht geladen.")
+            return
+        
+        try:
+            # Lade die Hexagon-Map
+            hex_map = HexagonMap.load(map_path)
+            
+            if not hex_map:
+                self._show_message("error", "Fehler", f"Konnte Map nicht laden:\n{map_path}")
+                return
+            
+            # Prüfe ob bereits offen
+            if UI_FRAMEWORK_AVAILABLE:
+                existing = WindowManager.get("hexagon_editor")
+                if existing:
+                    existing.destroy()  # Schließe alte Instanz
+            
+            # Editor mit geladener Map öffnen
+            editor = HexagonMapEditor(self, hex_map)
+            editor.current_file_path = map_path  # Merke Dateipfad für Speichern
+            
+            if UI_FRAMEWORK_AVAILABLE:
+                WindowManager.register("hexagon_editor", editor)
+            
+            self._update_status(f"Hexagon-Map geladen: {os.path.basename(map_path)}")
+            
+        except Exception as e:
+            self._show_message("error", "Fehler", f"Hexagon-Editor konnte nicht gestartet werden:\n{e}")
+            import traceback
+            traceback.print_exc()
+    
     def start_hexagon_editor(self):
         """Hexagon-Karten-Editor öffnen"""
         if not HEXAGON_AVAILABLE:
@@ -1390,8 +1426,31 @@ class DerEineRingProApp(tk.Tk):
                     messagebox.showerror("SVG-Fehler", f"Fehler beim Laden:\n{e}")
                 return
             
-            # JSON → Lade als normale Karte
+            # JSON → Prüfe ob Hexagon-Map oder normale Karte
             try:
+                with open(filename, 'r', encoding='utf-8') as f:
+                    json_data = json.load(f)
+                
+                # Prüfe ob es eine Hexagon-Map ist (hat "hex_size" und "tiles" als Dict mit Koordinaten)
+                if "hex_size" in json_data and "tiles" in json_data and isinstance(json_data["tiles"], dict):
+                    # Das ist eine Hexagon-Map → öffne im Hexagon-Editor
+                    print(f"📐 Hexagon-Map erkannt: {os.path.basename(filename)}")
+                    
+                    tile_count = len(json_data.get("tiles", {}))
+                    hex_size = json_data.get("hex_size", 0)
+                    name = json_data.get("name", "Unbenannt")
+                    
+                    msg = (f"🗺️ Hexagon-Karte erkannt!\n\n"
+                           f"Name: {name}\n"
+                           f"Hex-Größe: {hex_size:.1f}\n"
+                           f"Tiles: {tile_count}\n\n"
+                           f"Im Hexagon-Editor öffnen?")
+                    
+                    if messagebox.askyesno("Hexagon-Map", msg):
+                        self._open_hexagon_editor_with_map(filename)
+                    return
+                
+                # Normale Karte → Lade mit MapSystem
                 from map_system import MapSystem
                 ms = MapSystem()
                 map_data = ms.load_map(filename)
