@@ -312,6 +312,7 @@ class HexagonMapEditor(tk.Toplevel):
         self.offset_x = 0
         self.offset_y = 0
         self.drag_start = None
+        self.pan_start = None  # Für mittlere/rechte Maustaste Panning
         
         # Hex-Zeichenmodus Variablen
         self.draw_hex_start: Optional[Tuple[float, float]] = None  # Zentrum des Template-Hex
@@ -600,6 +601,12 @@ class HexagonMapEditor(tk.Toplevel):
         self.stats_label = tk.Label(parent, text=f"Tiles: {len(self.hex_map.tiles)}",
                                     bg="#16213e", fg="white", font=("Arial", 10))
         self.stats_label.pack(anchor=tk.W, padx=10, pady=(15, 5))
+        
+        # === STEUERUNG HINWEIS ===
+        tk.Label(parent, text="🖱️ STEUERUNG", font=("Arial", 10, "bold"),
+                bg="#16213e", fg="#888").pack(anchor=tk.W, padx=10, pady=(15, 2))
+        tk.Label(parent, text="• Mausrad: Zoom\n• Mittlere Taste/Rechtsklick+Ziehen: Schwenken\n• Linksklick: Tool verwenden",
+                bg="#16213e", fg="#666", font=("Arial", 8), justify=tk.LEFT).pack(anchor=tk.W, padx=10)
     
     def _is_light_color(self, hex_color: str) -> bool:
         """Prüfe ob Farbe hell ist"""
@@ -633,6 +640,15 @@ class HexagonMapEditor(tk.Toplevel):
         self.canvas.bind("<MouseWheel>", self._on_scroll)
         self.canvas.bind("<Configure>", lambda e: self._redraw())
         
+        # Mittlere Maustaste für Panning (Schwenken)
+        self.canvas.bind("<Button-2>", self._on_pan_start)
+        self.canvas.bind("<B2-Motion>", self._on_pan_drag)
+        self.canvas.bind("<ButtonRelease-2>", self._on_pan_end)
+        
+        # Rechte Maustaste + Ziehen auch für Panning
+        self.canvas.bind("<B3-Motion>", self._on_pan_drag)
+        self.canvas.bind("<ButtonRelease-3>", self._on_pan_end)
+        
         # Double click für Properties
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
         
@@ -648,6 +664,24 @@ class HexagonMapEditor(tk.Toplevel):
         # Delete für ausgewählte Tiles löschen
         self.bind("<Delete>", self._delete_selected_tiles)
     
+    def _on_pan_start(self, event):
+        """Starte Panning mit mittlerer Maustaste"""
+        self.pan_start = (event.x, event.y)
+    
+    def _on_pan_drag(self, event):
+        """Panning mit mittlerer oder rechter Maustaste"""
+        if hasattr(self, 'pan_start') and self.pan_start:
+            dx = event.x - self.pan_start[0]
+            dy = event.y - self.pan_start[1]
+            self.offset_x += dx
+            self.offset_y += dy
+            self.pan_start = (event.x, event.y)
+            self._redraw()
+    
+    def _on_pan_end(self, event):
+        """Beende Panning"""
+        self.pan_start = None
+
     def _on_escape(self, event):
         """Escape drücken - Auswahl aufheben"""
         self.selected_tile = None
@@ -1987,8 +2021,11 @@ class HexagonMapEditor(tk.Toplevel):
         print(f"✅ Grid erstellt: {cols}×{rows} = {len(self.hex_map.tiles)} Tiles, Größe: {hex_size:.1f}px")
     
     def _on_right_click(self, event):
-        """Rechtsklick: Properties Dialog oder Extent löschen"""
+        """Rechtsklick: Properties Dialog oder Extent löschen, oder Panning starten"""
         x, y = self._canvas_to_map(event.x, event.y)
+        
+        # Panning-Start merken für Rechtsklick + Ziehen
+        self.pan_start = (event.x, event.y)
         
         # === EXTENT LÖSCHEN ===
         if self.current_tool == "place_extent":

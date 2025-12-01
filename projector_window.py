@@ -16,6 +16,36 @@ from PIL import Image
 import numpy as np
 from lighting_system import GPUAcceleratedLightingEngine, GPU_AVAILABLE
 
+# Mapping von Hexagon-Terrain-Typen zu Material-Namen des Texture-Managers
+HEXAGON_TERRAIN_TO_MATERIAL = {
+    'plains': 'grass',
+    'forest': 'forest',
+    'hills': 'mountain',  # Hügel -> Berge
+    'mountains': 'mountain',
+    'water': 'water',
+    'swamp': 'swamp',
+    'desert': 'sand',
+    'snow': 'snow',
+    'road': 'road',
+    'village': 'village',
+    'ruins': 'stone',
+    'dark_forest': 'forest',  # Düsterwald -> Wald (mit dunkler Tönung)
+}
+
+def normalize_terrain_to_material(terrain_name):
+    """Konvertiert Hexagon-Terrain-Namen zu Material-Namen für den Texture-Manager"""
+    if not isinstance(terrain_name, str):
+        return 'grass'
+    
+    terrain_lower = terrain_name.lower()
+    
+    # Prüfe ob es ein bekanntes Hexagon-Terrain ist
+    if terrain_lower in HEXAGON_TERRAIN_TO_MATERIAL:
+        return HEXAGON_TERRAIN_TO_MATERIAL[terrain_lower]
+    
+    # Fallback: Benutze den Namen direkt (für normale Maps)
+    return terrain_lower
+
 class ProjectorWindow(tk.Toplevel):
     """Vollbild-Projektor-Fenster für Spieler mit Fog-of-War"""
     
@@ -499,9 +529,18 @@ class ProjectorWindow(tk.Toplevel):
                     
                     # Tile-Zugriff: Unterstütze sowohl Dict als auch 2D-Liste
                     if tiles_is_dict:
-                        # Dictionary-Format: "x,y" -> terrain
+                        # Dictionary-Format: "x,y" -> terrain oder Hexagon-Tile-Dict
                         coord_key = f"{x},{y}"
-                        terrain = tiles.get(coord_key, "grass")
+                        tile_data = tiles.get(coord_key, "grass")
+                        
+                        # Hexagon-Map: tile_data ist ein Dict mit 'terrain', 'fill_color', etc.
+                        if isinstance(tile_data, dict):
+                            terrain = tile_data.get('terrain', 'PLAINS')
+                            # Konvertiere Hexagon-Terrain zu Material-Name
+                            terrain = normalize_terrain_to_material(terrain)
+                        else:
+                            # Normales String-Format
+                            terrain = tile_data
                     elif isinstance(tiles, list) and y < len(tiles) and isinstance(tiles[y], list) and x < len(tiles[y]):
                         terrain = tiles[y][x]
                     else:
@@ -868,13 +907,24 @@ class ProjectorWindow(tk.Toplevel):
         tiles_is_dict = isinstance(tiles, dict)
         
         if tiles_is_dict:
-            # Dictionary-Format: "x,y" -> material
-            for coord_key, material in tiles.items():
+            # Dictionary-Format: "x,y" -> material oder Hexagon-Tile-Daten
+            for coord_key, tile_data in tiles.items():
                 # Parse Koordinaten
                 try:
                     x, y = map(int, coord_key.split(','))
                 except:
                     continue
+                
+                # Hexagon-Map: tile_data ist ein Dict mit 'terrain', 'fill_color', etc.
+                # Normale Map: tile_data ist ein String (Material-Name)
+                if isinstance(tile_data, dict):
+                    # Hexagon-Tile-Format
+                    raw_terrain = tile_data.get('terrain', 'PLAINS')
+                    # Konvertiere zu Material-Name
+                    material = normalize_terrain_to_material(raw_terrain)
+                else:
+                    # Normales String-Format
+                    material = tile_data
                 
                 # Statistik sammeln
                 material_counts[material] = material_counts.get(material, 0) + 1
@@ -882,7 +932,7 @@ class ProjectorWindow(tk.Toplevel):
                 is_animated = False
                 if material in animated_materials:
                     is_animated = True
-                elif material.startswith('custom_'):
+                elif isinstance(material, str) and material.startswith('custom_'):
                     custom_info = self.texture_manager.custom_materials.get(material)
                     if custom_info and custom_info.get('frames', 0) > 1:
                         is_animated = True
