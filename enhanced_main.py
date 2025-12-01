@@ -47,6 +47,16 @@ except ImportError as e:
     FOUNDRY_FEATURES_AVAILABLE = False
     print(f"⚠️ FoundryVTT-Features nicht vollständig verfügbar: {e}")
 
+# Hexagon-Map-System importieren
+try:
+    from hexagon_map_system import HexagonMap, TerrainType, WeatherType
+    from hexagon_map_editor import HexagonMapEditor, open_hexagon_editor
+    HEXAGON_AVAILABLE = True
+    print("✅ Hexagon-Map-System geladen")
+except ImportError as e:
+    HEXAGON_AVAILABLE = False
+    print(f"⚠️ Hexagon-Map-System nicht verfügbar: {e}")
+
 
 class DerEineRingProApp(tk.Tk):
     """
@@ -202,6 +212,7 @@ class DerEineRingProApp(tk.Tk):
         # Tool-Buttons (links)
         tool_buttons = [
             ("🎨", "Editor", self.start_editor, "Karten bearbeiten (Ctrl+E)"),
+            ("🔷", "Hex-Map", self.start_hexagon_editor, "Hexagon-Karten Editor"),
             ("📺", "Projektor", self.start_projector, "Kartenprojektion (Ctrl+P)"),
             ("🎮", "GM Panel", self.start_gm_panel, "Spielleiter-Kontrolle (Ctrl+G)"),
             ("🎬", "Story", self.start_story_editor, "Story/Szenen Editor"),
@@ -742,6 +753,41 @@ class DerEineRingProApp(tk.Tk):
         except Exception as e:
             self._show_message("error", "Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
+    def start_hexagon_editor(self):
+        """Hexagon-Karten-Editor öffnen"""
+        if not HEXAGON_AVAILABLE:
+            self._show_message("error", "Nicht verfügbar", 
+                "Hexagon-Map-System nicht geladen.\n\n"
+                "Stelle sicher, dass hexagon_map_system.py und\n"
+                "hexagon_map_editor.py vorhanden sind.")
+            return
+        
+        try:
+            # Prüfe ob bereits offen
+            if UI_FRAMEWORK_AVAILABLE:
+                existing = WindowManager.get("hexagon_editor")
+                if existing:
+                    existing.lift()
+                    existing.focus_force()
+                    self._update_status("Hexagon-Editor bereits geöffnet")
+                    return
+            
+            # Erstelle neue Hexagon-Map oder lade vorhandene
+            hex_map = HexagonMap("Neue Hexagon-Karte")
+            
+            # Editor öffnen
+            editor = HexagonMapEditor(self, hex_map)
+            
+            if UI_FRAMEWORK_AVAILABLE:
+                WindowManager.register("hexagon_editor", editor)
+            
+            self._update_status("Hexagon-Editor geöffnet")
+            
+        except Exception as e:
+            self._show_message("error", "Fehler", f"Hexagon-Editor konnte nicht gestartet werden:\n{e}")
+            import traceback
+            traceback.print_exc()
+    
     def start_story_editor(self):
         """Story Editor für interaktive Abenteuer öffnen - mit WindowManager"""
         try:
@@ -812,6 +858,85 @@ class DerEineRingProApp(tk.Tk):
                 "Bitte stelle sicher, dass alle story_editor_*.py Dateien vorhanden sind.")
         except Exception as e:
             self._show_message("error", "Fehler", f"Story Editor konnte nicht gestartet werden:\n{e}")
+
+    def start_hexagon_editor(self):
+        """Hexagon-Karten-Editor öffnen"""
+        if not HEXAGON_AVAILABLE:
+            self._show_message("error", "Nicht verfügbar", 
+                "Das Hexagon-Map-System ist nicht verfügbar.\n\n"
+                "Bitte stelle sicher, dass hexagon_map_system.py und hexagon_map_editor.py vorhanden sind.")
+            return
+        
+        try:
+            # Frage ob neue oder bestehende Karte
+            choice = messagebox.askyesnocancel(
+                "Hexagon-Editor",
+                "Möchtest du eine SVG-Karte laden?\n\n"
+                "Ja = SVG laden und Hexagone erkennen\n"
+                "Nein = Leeres Grid erstellen\n"
+                "Abbrechen = Zurück"
+            )
+            
+            if choice is None:
+                return
+            
+            hex_map = HexagonMap("Neue Hexagon-Karte")
+            bg_image = None  # Hintergrundbild
+            
+            if choice:  # SVG laden
+                filepath = filedialog.askopenfilename(
+                    title="SVG-Karte für Hexagon-Editor laden",
+                    filetypes=[("SVG Dateien", "*.svg"), ("PNG Bilder", "*.png"), ("Alle Dateien", "*.*")]
+                )
+                if filepath:
+                    # WICHTIG: Lade Hintergrundbild ZUERST
+                    if filepath.lower().endswith('.svg'):
+                        try:
+                            import cairosvg
+                            from io import BytesIO
+                            from PIL import Image
+                            print(f"📂 Lade SVG als Hintergrund: {filepath}")
+                            png_data = cairosvg.svg2png(url=filepath, scale=1)
+                            bg_image = Image.open(BytesIO(png_data))
+                            hex_map.image_width = bg_image.width
+                            hex_map.image_height = bg_image.height
+                            print(f"✅ Hintergrundbild geladen: {bg_image.size}")
+                        except Exception as e:
+                            print(f"⚠️ Konnte SVG nicht als Bild laden: {e}")
+                    else:
+                        try:
+                            from PIL import Image
+                            bg_image = Image.open(filepath)
+                            hex_map.image_width = bg_image.width
+                            hex_map.image_height = bg_image.height
+                            print(f"✅ Bild geladen: {bg_image.size}")
+                        except Exception as e:
+                            print(f"⚠️ Konnte Bild nicht laden: {e}")
+                    
+                    # Dann Hexagone erkennen
+                    success = hex_map.load_from_svg(filepath)
+                    if not success:
+                        # Frage nach manuellem Grid
+                        if self._ask_yes_no("Keine Hexagone erkannt",
+                            "In der SVG wurden keine Hexagone erkannt.\n\n"
+                            "Soll ein Grid manuell erstellt werden?"):
+                            hex_map.create_grid(10, 8, hex_size=45)
+                else:
+                    return
+            else:  # Neues Grid
+                hex_map.create_grid(10, 8, hex_size=45)
+            
+            # Editor öffnen MIT Hintergrundbild
+            editor = HexagonMapEditor(self, hex_map)
+            if bg_image:
+                editor.bg_image = bg_image
+                editor._redraw()
+            self._update_status(f"Hexagon-Editor geöffnet: {len(hex_map.tiles)} Tiles")
+            
+        except Exception as e:
+            self._show_message("error", "Fehler", f"Hexagon-Editor konnte nicht gestartet werden:\n{e}")
+            import traceback
+            traceback.print_exc()
 
     def _open_projector_for_scene(self, scene, source):
         """Öffnet den Projektor direkt mit einer Szene (ohne Beispielmap)"""

@@ -27,6 +27,7 @@ class SceneType(Enum):
     VIDEO = "video"           # MP4 Video aus Unity/Blender
     MAP_JSON = "map_json"     # JSON-basierte Tile-Map
     MAP_SVG = "map_svg"       # SVG Vektor-Map
+    MAP_HEX = "map_hex"       # Hexagon-Karte (JSON)
     IMAGE = "image"           # Statisches Bild
     CUTSCENE = "cutscene"     # Video ohne Interaktion
 
@@ -36,6 +37,8 @@ class TriggerType(Enum):
     CLICK = "click"                   # Spieler klickt auf Bereich
     ENTER_ZONE = "enter_zone"         # Spieler betritt Zone
     LEAVE_ZONE = "leave_zone"         # Spieler verlässt Zone
+    ENTER_HEX = "enter_hex"           # Spieler betritt Hexagon
+    LEAVE_HEX = "leave_hex"           # Spieler verlässt Hexagon
     TIME_ELAPSED = "time_elapsed"     # Zeit vergangen
     CONDITION_MET = "condition_met"   # Bedingung erfüllt
     ITEM_USED = "item_used"           # Gegenstand benutzt
@@ -55,10 +58,13 @@ class ActionType(Enum):
     SPAWN_ENCOUNTER = "spawn_encounter"   # Begegnung erstellen
     PLAY_SOUND = "play_sound"             # Sound abspielen
     SET_WEATHER = "set_weather"           # Wetter ändern
+    SET_HEX_WEATHER = "set_hex_weather"   # Wetter für Hexagon setzen
     SET_TIME = "set_time"                 # Tageszeit setzen
     SHOW_OVERLAY = "show_overlay"         # Overlay anzeigen
     HIDE_OVERLAY = "hide_overlay"         # Overlay verstecken
     TELEPORT = "teleport"                 # Spieler teleportieren
+    TELEPORT_HEX = "teleport_hex"         # Auf Hexagon teleportieren
+    TRIGGER_HEX_EVENT = "trigger_hex_event"  # Event auf Hexagon auslösen
     CUSTOM = "custom"                     # Benutzerdefinierte Aktion
 
 
@@ -1018,6 +1024,7 @@ def create_weather_overlay(weather_type: str, video_path: str) -> Overlay:
     )
 
 
+
 def create_effect_overlay(name: str, video_path: str, opacity: float = 1.0) -> Overlay:
     """Erstellt ein Effekt-Overlay"""
     return Overlay(
@@ -1028,4 +1035,197 @@ def create_effect_overlay(name: str, video_path: str, opacity: float = 1.0) -> O
         blend_mode="normal",
         z_index=150,
         loop=True
+    )
+
+
+# =============================================================================
+# HEXAGON MAP INTEGRATION
+# =============================================================================
+
+class HexMapSceneHandler:
+    """Handler für Hexagon-Karten in Szenen"""
+    
+    def __init__(self, engine: 'StoryboardEngine'):
+        self.engine = engine
+        self.hex_map = None
+        self.player_hex: Optional[Tuple[int, int]] = None  # Aktuelle Position
+        self.movement_callback: Optional[Callable] = None
+        
+    def load_hex_map(self, filepath: str) -> bool:
+        """Lade Hexagon-Karte"""
+        try:
+            from hexagon_map_system import HexagonMap
+            self.hex_map = HexagonMap.load(filepath)
+            print(f"✅ Hexagon-Karte geladen: {self.hex_map.name}")
+            return True
+        except Exception as e:
+            print(f"❌ Fehler beim Laden der Hexagon-Karte: {e}")
+            return False
+    
+    def move_to_hex(self, q: int, r: int) -> bool:
+        """Bewege Spieler auf Hexagon"""
+        if not self.hex_map:
+            return False
+        
+        if (q, r) not in self.hex_map.tiles:
+            return False
+        
+        old_hex = self.player_hex
+        self.player_hex = (q, r)
+        tile = self.hex_map.tiles[(q, r)]
+        
+        # Trigger LEAVE_HEX
+        if old_hex:
+            self._trigger_hex_event(old_hex, "leave")
+        
+        # Trigger ENTER_HEX
+        self._trigger_hex_event((q, r), "enter")
+        
+        # Prüfe auf Events im Tile
+        self._check_tile_events(tile)
+        
+        if self.movement_callback:
+            self.movement_callback(q, r, tile)
+        
+        return True
+    
+    def _trigger_hex_event(self, hex_pos: Tuple[int, int], event_type: str):
+        """Löse Hex-spezifische Trigger aus"""
+        if not self.engine.current_scene:
+            return
+        
+        trigger_type = TriggerType.ENTER_HEX if event_type == "enter" else TriggerType.LEAVE_HEX
+        
+        for trigger in self.engine.current_scene.triggers:
+            if trigger.trigger_type == trigger_type:
+                # Prüfe ob Zone mit Hex übereinstimmt
+                if self._zone_matches_hex(trigger.zone, hex_pos):
+                    self.engine._activate_trigger(trigger)
+    
+    def _zone_matches_hex(self, zone: dict, hex_pos: Tuple[int, int]) -> bool:
+        """Prüfe ob Zone mit Hex-Position übereinstimmt"""
+        if not zone:
+            return True  # Leere Zone = alle Hexes
+        
+        zone_q = zone.get("q")
+        zone_r = zone.get("r")
+        
+        if zone_q is not None and zone_r is not None:
+            return (zone_q, zone_r) == hex_pos
+        
+        # Bereichs-Check
+        if "q_min" in zone and "q_max" in zone:
+            q, r = hex_pos
+            if not (zone["q_min"] <= q <= zone["q_max"]):
+                return False
+            if "r_min" in zone and "r_max" in zone:
+                if not (zone["r_min"] <= r <= zone["r_max"]):
+                    return False
+            return True
+        
+        return False
+    
+    def _check_tile_events(self, tile):
+        """Prüfe und aktiviere Tile-Events"""
+        if not tile.events:
+            return
+        
+        import random
+        
+        for event in tile.events:
+            # Random Events haben Wahrscheinlichkeit
+            if event.get("is_random", False):
+                prob = event.get("probability", 1.0)
+                if random.random() > prob:
+                    continue
+            
+            # Erstelle Aktion basierend auf Event-Typ
+            event_type = event.get("event_type", "custom")
+            
+            if event_type == "enemy":
+                action = Action(
+                    action_type=ActionType.SPAWN_ENCOUNTER,
+                    target=event.get("name", "Unbekannter Gegner"),
+                    parameters={
+                        "difficulty": event.get("difficulty", 1),
+                        "hex": (tile.q, tile.r)
+                    }
+                )
+                self.engine._execute_action(action)
+                
+            elif event_type == "treasure":
+                action = Action(
+                    action_type=ActionType.ADD_ITEM,
+                    target=event.get("name", "Schatz"),
+                    parameters={"hex": (tile.q, tile.r)}
+                )
+                self.engine._execute_action(action)
+    
+    def get_adjacent_hexes(self, q: int, r: int) -> List[Tuple[int, int]]:
+        """Gibt benachbarte Hexagone zurück"""
+        # Axial coordinate neighbors
+        directions = [
+            (+1, 0), (+1, -1), (0, -1),
+            (-1, 0), (-1, +1), (0, +1)
+        ]
+        
+        neighbors = []
+        for dq, dr in directions:
+            nq, nr = q + dq, r + dr
+            if self.hex_map and (nq, nr) in self.hex_map.tiles:
+                neighbors.append((nq, nr))
+        
+        return neighbors
+    
+    def get_movement_cost(self, from_hex: Tuple[int, int], to_hex: Tuple[int, int]) -> float:
+        """Berechne Bewegungskosten zwischen zwei Hexes"""
+        if not self.hex_map:
+            return 1.0
+        
+        to_tile = self.hex_map.tiles.get(to_hex)
+        if not to_tile:
+            return float('inf')
+        
+        return to_tile.total_difficulty
+    
+    def get_weather_at_hex(self, q: int, r: int) -> str:
+        """Hole Wetter an Position (lokal oder global)"""
+        if not self.hex_map:
+            return "CLEAR"
+        
+        tile = self.hex_map.tiles.get((q, r))
+        if tile and tile.local_weather:
+            return tile.local_weather
+        
+        return self.hex_map.global_weather
+
+
+def create_hex_map_scene(name: str, hex_map_path: str, bg_image: str = "") -> Scene:
+    """Erstellt eine Szene mit Hexagon-Karte"""
+    return Scene(
+        name=name,
+        scene_type=SceneType.MAP_HEX,
+        file_path=hex_map_path,
+        background_image=bg_image
+    )
+
+
+def create_hex_enter_trigger(hex_q: int, hex_r: int, name: str, actions: List[Action]) -> Trigger:
+    """Erstellt einen Trigger der beim Betreten eines Hexagons ausgelöst wird"""
+    return Trigger(
+        trigger_type=TriggerType.ENTER_HEX,
+        zone={"q": hex_q, "r": hex_r},
+        name=name,
+        actions=actions
+    )
+
+
+def create_hex_region_trigger(q_min: int, q_max: int, r_min: int, r_max: int,
+                              name: str, actions: List[Action]) -> Trigger:
+    """Erstellt einen Trigger für eine Region von Hexagonen"""
+    return Trigger(
+        trigger_type=TriggerType.ENTER_HEX,
+        zone={"q_min": q_min, "q_max": q_max, "r_min": r_min, "r_max": r_max},
+        name=name,
+        actions=actions
     )
