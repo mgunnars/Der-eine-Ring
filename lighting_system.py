@@ -1419,6 +1419,10 @@ class GPUAcceleratedLightingEngine(LightingEngine):
     def __init__(self):
         super().__init__()
         self.gpu_renderer = None
+        self._cached_kernel = None
+        self._cached_noise_gpu = None
+        self._cached_noise_size = (0, 0)
+        self._debug_gpu = False  # Set True for verbose GPU debugging
         self._init_gpu()
     
     def _init_gpu(self):
@@ -1433,88 +1437,87 @@ class GPUAcceleratedLightingEngine(LightingEngine):
             self.gpu_context = self.gpu_renderer.context
             self.gpu_queue = self.gpu_renderer.queue
             self.gpu_program = self.gpu_renderer.program
-            print("✅ Vollständige GPU-Rendering-Pipeline initialisiert")
+            # Cache the kernel to avoid repeated retrieval warning
+            self._cached_kernel = cl.Kernel(self.gpu_program, 'compute_light_mask')
+            print("✅ GPU-Rendering-Pipeline initialisiert")
             
         except Exception as e:
             print(f"⚠️ GPU-Initialisierung fehlgeschlagen: {e}")
             self.gpu_renderer = None
     
     def render_lighting_gpu(self, width: int, height: int, tile_size: int, time_offset: float = 0.0, radius_scale: float = 1.0) -> Image.Image:
-        """GPU-beschleunigte Licht-Rendering"""
+        """GPU-beschleunigte Licht-Rendering - optimiert für Performance"""
         # Darkness polygons require CPU rendering for now
         if self.lighting_mode == "day" and self.darkness_polygons:
-            # Silent fallback - keine Meldung jeden Frame
             return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
         
         if not getattr(self, 'gpu_context', None) or not self.lights:
-            # Fallback zur CPU-Version — call parent to avoid recursion
             return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
         
         try:
-            # Vereinfachte GPU-Version für Performance
+            # Berechne Bounding Box für alle Lichter
             margin_tiles = 5
-            if self.lights:
-                min_x = min([l.x for l in self.lights]) - margin_tiles
-                max_x = max([l.x for l in self.lights]) + margin_tiles
-                min_y = min([l.y for l in self.lights]) - margin_tiles
-                max_y = max([l.y for l in self.lights]) + margin_tiles
-            else:
-                min_x = max_x = min_y = max_y = 0
+            min_x = min([l.x for l in self.lights]) - margin_tiles
+            max_x = max([l.x for l in self.lights]) + margin_tiles
+            min_y = min([l.y for l in self.lights]) - margin_tiles
+            max_y = max([l.y for l in self.lights]) + margin_tiles
             
             img_width = max(1, (max_x - min_x + 1) * tile_size)
             img_height = max(1, (max_y - min_y + 1) * tile_size)
             
-            # Guard: make sure gpu_renderer/program/queue exist and there are lights
-            if not getattr(self, 'gpu_renderer', None) or not getattr(self, 'gpu_program', None):
-                # Not properly initialized: fall back to CPU
-                print('⚠️ GPU-Renderer intern nicht initialisiert — Fallback zu CPU')
+            # Guard: make sure gpu_renderer/program/queue exist
+            if not getattr(self, 'gpu_renderer', None) or not getattr(self, '_cached_kernel', None):
+                if self._debug_gpu:
+                    print('⚠️ GPU-Renderer intern nicht initialisiert — Fallback zu CPU')
                 return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
+
+            # Cached noise map (regenerate only when size changes)
+            if self._cached_noise_size != (img_height, img_width):
+                noise_map = np.random.randn(img_height, img_width).astype(np.float32) * 0.1
+                self._cached_noise_gpu = cl_array.to_device(self.gpu_queue, noise_map)
+                self._cached_noise_size = (img_height, img_width)
 
             # GPU Buffer für Gesamt-Lichtmaske (RGBA)
             final_mask = cl_array.zeros(self.gpu_queue, (img_height, img_width, 4), dtype=np.float32)
-            print(f"🎯 GPU: render_lighting_gpu: creating final_mask {img_width}x{img_height}, lights={len(self.lights)}")
             
-            # Für jedes Licht: GPU-Kernel ausführen
-            for light in self.lights[:3]:  # Max 3 Lichter für Performance
+            if self._debug_gpu:
+                print(f"🎯 GPU: rendering {img_width}x{img_height}, {len(self.lights)} lights")
+            
+            # Für jedes Licht: GPU-Kernel ausführen (alle Lichter, nicht nur 3)
+            for light in self.lights:
                 cx = (light.x - min_x) * tile_size + tile_size / 2
                 cy = (light.y - min_y) * tile_size + tile_size / 2
                 final_radius_scale = radius_scale * self.global_radius_scale
                 radius_px = light.radius * tile_size * final_radius_scale
                 current_intensity = light.get_current_intensity(time_offset)
-                
-                # Noise-Map generieren (einfache Version)
-                noise_map = np.random.randn(img_height, img_width).astype(np.float32) * 0.1
-                noise_gpu = cl_array.to_device(self.gpu_queue, noise_map)
 
                 # Per-light temporary RGBA buffer
                 light_mask = cl_array.zeros(self.gpu_queue, (img_height, img_width, 4), dtype=np.float32)
 
-                # Kernel ausführen (compute_light_mask expects a float4 buffer)
-                self.gpu_program.compute_light_mask(
-                    self.gpu_queue, (img_width, img_height), None,
+                # Use cached kernel instead of retrieving it each time
+                self._cached_kernel.set_args(
                     light_mask.data,
                     np.int32(img_width), np.int32(img_height),
                     np.float32(cx), np.float32(cy), np.float32(radius_px),
                     np.float32(light.falloff_exponent), np.float32(light.core_brightness),
                     np.float32(current_intensity), np.float32(0.12),
-                    noise_gpu.data
+                    self._cached_noise_gpu.data
                 )
+                cl.enqueue_nd_range_kernel(self.gpu_queue, self._cached_kernel, (img_width, img_height), None)
 
                 # Akkumulieren (GPU-to-GPU Add)
                 final_mask = final_mask + light_mask
-                print(f"   ✔️ GPU: added light @ ({light.x},{light.y}), radius_px={radius_px}, intensity={current_intensity:.2f}")
             
-            # Ergebnis zurück zur CPU holen (RGBA float32)
+            # Synchronize and get result
+            self.gpu_queue.finish()
             rgba_np = final_mask.get()
-            nonzero = np.count_nonzero(rgba_np)
-            print(f"🎯 GPU: finished accumulation — buffer nonzero count: {nonzero}")
+            
             # Falls kernel nur schrieb 1 channel intensity, expand it
             if rgba_np.ndim == 2:
                 rgba_np = np.stack([rgba_np]*3 + [np.ones_like(rgba_np)], axis=2)
 
             # Clamp and convert to uint8
             rgba_array = np.clip(rgba_np * 255.0, 0, 255).astype(np.uint8)
-            print(f"🎯 GPU: converted rgba_array -> shape {rgba_array.shape}, dtype {rgba_array.dtype}")
             
             # If we have alpha channel use RGBA, else convert to RGB
             if rgba_array.shape[2] == 4:

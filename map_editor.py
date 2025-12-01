@@ -20,7 +20,7 @@ from material_manager import MaterialBar, MaterialManagerWindow
 from material_bundle_manager import MaterialBundleManager
 from layer_manager import LayerManager, LayerPanel
 from advanced_drawing_tools import BezierCurveTool, PolygonTool, TextTool, TransformTool
-from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS
+from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS, GPUAcceleratedLightingEngine, GPU_AVAILABLE
 from map_editor_extensions import SelectTool, ContextPanel, SmoothPolygonDrawer, GeometryTools
 from edge_detection import EdgeDetector, SmartDarknessDrawer
 
@@ -188,8 +188,13 @@ class MapEditor(tk.Frame):
         self.smart_darkness_drawer = SmartDarknessDrawer(self.edge_detector)
         self.enable_edge_snap = tk.BooleanVar(value=False)  # Optional, aus per default
         
-        # Lighting System
-        self.lighting_engine = LightingEngine()
+        # Lighting System - GPU-beschleunigt wenn verfügbar
+        if GPU_AVAILABLE:
+            self.lighting_engine = GPUAcceleratedLightingEngine()
+            print("🚀 GPU-beschleunigtes Lighting aktiviert")
+        else:
+            self.lighting_engine = LightingEngine()
+            print("⚠️ CPU-Lighting (GPU nicht verfügbar)")
         self.show_lighting = tk.BooleanVar(value=False)
         self.selected_light_preset = "torch"
         self.selected_light_index = None  # Aktuell ausgewählte Lichtquelle
