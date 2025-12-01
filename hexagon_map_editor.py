@@ -403,6 +403,11 @@ class HexagonMapEditor(tk.Toplevel):
                  bg="#dc3545", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
         
+        # Terrain Auto-Erkennung
+        tk.Button(toolbar, text="🎨 Auto-Terrain", command=self._auto_detect_terrain,
+                 bg="#17a2b8", fg="white", font=("Arial", 10),
+                 relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
+        
         # Random Events
         tk.Button(toolbar, text="🎲 Zufalls-Events", command=self._random_events_dialog,
                  bg="#16213e", fg="white", font=("Arial", 10),
@@ -1458,18 +1463,148 @@ class HexagonMapEditor(tk.Toplevel):
         return None
     
     def _apply_colors_to_tiles(self):
-        """Wende Hintergrundfarben auf alle Tiles an"""
+        """Wende Hintergrundfarben auf alle Tiles an und erkenne Terrain"""
         if not self.bg_image:
             return
         
         print("🎨 Extrahiere Farben aus Hintergrundbild...")
         
+        terrain_counts = {}
+        
         for tile in self.hex_map.tiles.values():
             color = self._get_color_at_position(tile.center_x, tile.center_y)
             if color:
                 tile.fill_color = color
+                
+                # Versuche Terrain aus Farbe zu erkennen
+                terrain = self._detect_terrain_from_color(color)
+                if terrain:
+                    tile.terrain = terrain
+                    terrain_counts[terrain] = terrain_counts.get(terrain, 0) + 1
+        
+        # Zeige Statistik
+        if terrain_counts:
+            print(f"🗺️ Terrain erkannt:")
+            for terrain, count in sorted(terrain_counts.items(), key=lambda x: -x[1]):
+                print(f"   {terrain}: {count} Tiles")
         
         print(f"✅ Farben für {len(self.hex_map.tiles)} Tiles extrahiert")
+    
+    def _detect_terrain_from_color(self, hex_color: str) -> Optional[str]:
+        """Erkenne Terrain-Typ basierend auf Farbe"""
+        # Konvertiere Hex zu RGB
+        try:
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+        except:
+            return None
+        
+        # Berechne HSV-ähnliche Werte für bessere Erkennung
+        max_c = max(r, g, b)
+        min_c = min(r, g, b)
+        brightness = (max_c + min_c) / 2 / 255  # 0-1
+        saturation = 0 if max_c == min_c else (max_c - min_c) / (255 - abs(max_c + min_c - 255))
+        
+        # Farbton (vereinfacht)
+        if max_c == min_c:
+            hue = 0
+        elif max_c == r:
+            hue = 60 * ((g - b) / (max_c - min_c) % 6)
+        elif max_c == g:
+            hue = 60 * ((b - r) / (max_c - min_c) + 2)
+        else:
+            hue = 60 * ((r - g) / (max_c - min_c) + 4)
+        
+        # === TERRAIN-ERKENNUNG ===
+        
+        # Wasser: Blautöne
+        if 180 <= hue <= 250 and saturation > 0.2 and brightness < 0.7:
+            return "WATER"
+        
+        # Schnee/Eis: Sehr hell, wenig Sättigung
+        if brightness > 0.85 and saturation < 0.2:
+            return "SNOW"
+        
+        # Wüste/Sand: Gelb-Orange, hell
+        if 30 <= hue <= 50 and brightness > 0.5 and saturation > 0.2:
+            return "DESERT"
+        
+        # Berge/Felsen: Grau, mittlere Helligkeit
+        if saturation < 0.15 and 0.25 < brightness < 0.65:
+            return "MOUNTAINS"
+        
+        # Dunkler Wald: Dunkelgrün
+        if 80 <= hue <= 160 and brightness < 0.25 and g > r:
+            return "DARK_FOREST"
+        
+        # Wald: Grüntöne, mittel-dunkel
+        if 70 <= hue <= 170 and saturation > 0.2 and brightness < 0.5 and g > r:
+            return "FOREST"
+        
+        # Sumpf: Dunkelgrün-braun
+        if 60 <= hue <= 100 and brightness < 0.4 and saturation < 0.4:
+            return "SWAMP"
+        
+        # Hügel: Brauntöne
+        if 20 <= hue <= 45 and saturation > 0.2 and 0.3 < brightness < 0.6:
+            return "HILLS"
+        
+        # Straße: Hellbraun
+        if 25 <= hue <= 40 and 0.4 < brightness < 0.65 and saturation > 0.15:
+            return "ROAD"
+        
+        # Ebene/Gras: Hellgrün
+        if 70 <= hue <= 150 and saturation > 0.15 and brightness > 0.35:
+            return "PLAINS"
+        
+        # Ruinen: Dunkelgrau
+        if saturation < 0.1 and 0.2 < brightness < 0.45:
+            return "RUINS"
+        
+        # Default: Ebene
+        return "PLAINS"
+    
+    def _auto_detect_terrain(self):
+        """Automatische Terrain-Erkennung für alle Tiles basierend auf Farben"""
+        if not self.hex_map.tiles:
+            messagebox.showinfo("Info", "Keine Tiles vorhanden!\n\nErstelle zuerst Tiles mit dem Norm-Hexagon-Workflow.")
+            return
+        
+        if not self.bg_image:
+            # Kein Hintergrundbild - nutze vorhandene fill_colors
+            terrain_counts = {}
+            for tile in self.hex_map.tiles.values():
+                if tile.fill_color:
+                    terrain = self._detect_terrain_from_color(tile.fill_color)
+                    if terrain:
+                        tile.terrain = terrain
+                        terrain_counts[terrain] = terrain_counts.get(terrain, 0) + 1
+            
+            if terrain_counts:
+                msg = "🗺️ Terrain erkannt:\n\n"
+                for terrain, count in sorted(terrain_counts.items(), key=lambda x: -x[1]):
+                    msg += f"• {terrain}: {count} Tiles\n"
+                messagebox.showinfo("Auto-Terrain", msg)
+            else:
+                messagebox.showwarning("Warnung", "Keine Tiles mit Farben gefunden.\n\nLade zuerst ein Hintergrundbild und erstelle Tiles.")
+        else:
+            # Mit Hintergrundbild - extrahiere Farben und erkenne Terrain
+            self._apply_colors_to_tiles()
+            
+            # Zähle Terrain-Typen
+            terrain_counts = {}
+            for tile in self.hex_map.tiles.values():
+                terrain = tile.terrain
+                terrain_counts[terrain] = terrain_counts.get(terrain, 0) + 1
+            
+            msg = "🗺️ Terrain aus Hintergrundbild erkannt:\n\n"
+            for terrain, count in sorted(terrain_counts.items(), key=lambda x: -x[1]):
+                msg += f"• {terrain}: {count} Tiles\n"
+            messagebox.showinfo("Auto-Terrain", msg)
+        
+        # Zeichne neu mit Terrain-Farben
+        self._draw_all()
     
     def _generate_hex_preview(self, cx: float, cy: float, size: float) -> List[Tuple[int, int]]:
         """Generiere Hexagon-Vertices für Vorschau (pointy-top)"""

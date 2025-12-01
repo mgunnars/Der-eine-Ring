@@ -676,9 +676,20 @@ class HexagonMap:
         return round(q), round(r)
     
     def get_tile_at_pixel(self, x: float, y: float) -> Optional[HexTile]:
-        """Finde Tile an Pixel-Position"""
-        q, r = self._pixel_to_axial(x, y)
-        return self.tiles.get((q, r))
+        """Finde Tile an Pixel-Position - prüft tatsächliche Tile-Zentren"""
+        best_tile = None
+        best_dist = float('inf')
+        
+        # Finde das Tile dessen Zentrum am nächsten zur Klick-Position ist
+        for tile in self.tiles.values():
+            dist = math.sqrt((x - tile.center_x)**2 + (y - tile.center_y)**2)
+            
+            # Nur wenn innerhalb des Hex-Radius
+            if dist < self.hex_size and dist < best_dist:
+                best_dist = dist
+                best_tile = tile
+        
+        return best_tile
     
     def set_terrain(self, q: int, r: int, terrain: str, name: str = ""):
         """Setze Terrain für ein Tile"""
