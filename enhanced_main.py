@@ -19,6 +19,7 @@ class DerEineRingProApp(tk.Tk):
         self.current_editor = None
         self.projector_window = None
         self.gm_panel = None
+        self.story_editor = None  # Story Editor Referenz
         
         # Webcam-Tracker initialisieren
         from webcam_tracker import WebcamTracker
@@ -50,9 +51,10 @@ class DerEineRingProApp(tk.Tk):
             ("🎨 Karten-Editor", self.start_editor, "#2a7d2a"),
             ("📺 Projektor-Modus", self.start_projector, "#2a5d8d"),
             ("🎮 Gamemaster Panel", self.start_gm_panel, "#8b4513"),
+            ("🎬 Story Editor", self.start_story_editor, "#9b2d6e"),
             ("📁 Karte laden", self.load_map, "#7d5d2a"),
-            ("�️ PNG-Karte importieren", self.import_png_map, "#2a7d7d"),
-            ("�📋 Karten-Liste", self.show_map_list, "#5d2a7d"),
+            ("🖼️ PNG-Karte importieren", self.import_png_map, "#2a7d7d"),
+            ("📋 Karten-Liste", self.show_map_list, "#5d2a7d"),
             ("❓ Hilfe", self.show_help, "#555555"),
         ]
         
@@ -198,6 +200,239 @@ class DerEineRingProApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
+    def start_story_editor(self):
+        """Story Editor für interaktive Abenteuer öffnen"""
+        try:
+            from story_editor import StoryEditor
+            
+            # Wenn Editor schon offen, in Vordergrund holen
+            if hasattr(self, 'story_editor') and self.story_editor and self.story_editor.winfo_exists():
+                self.story_editor.lift()
+                return
+            
+            # Callback für Szenen-Vorschau im Projektor
+            def preview_scene(scene):
+                """Zeigt die aktuelle Szene im Projektor an"""
+                from storyboard_system import SceneType
+                import os
+                import json
+                
+                # Prüfe ob eine Quelle gesetzt ist
+                source = scene.background_source or scene.content_path
+                if not source:
+                    messagebox.showwarning("Keine Quelle", 
+                        f"Die Szene '{scene.name}' hat keine Hintergrund-Datei.\n\n"
+                        "Doppelklicke auf die Szene und wähle eine Datei unter '🎬 Medien'.")
+                    return
+                
+                # Prüfe ob Datei existiert
+                if not os.path.exists(source):
+                    messagebox.showerror("Datei nicht gefunden", 
+                        f"Die Datei wurde nicht gefunden:\n{source}")
+                    return
+                
+                # Projektor prüfen/öffnen
+                if not self.projector_window or not self.projector_window.winfo_exists():
+                    # Projektor öffnen mit der Szene direkt
+                    result = messagebox.askyesno("Projektor öffnen?",
+                        "Der Projektor ist nicht geöffnet.\n\n"
+                        "Soll der Projektor-Modus gestartet werden?")
+                    if result:
+                        # Öffne Projektor direkt mit Szenen-Daten (nicht start_projector!)
+                        self._open_projector_for_scene(scene, source)
+                    return
+                
+                self._load_scene_to_projector(scene, source)
+            
+            # Story Editor öffnen
+            self.story_editor = StoryEditor(
+                self,
+                storyboard=None,  # Neues Storyboard
+                on_scene_preview=preview_scene
+            )
+            
+        except ImportError as e:
+            messagebox.showerror("Fehler", 
+                f"Story Editor Module nicht gefunden:\n{e}\n\n"
+                "Bitte stelle sicher, dass alle story_editor_*.py Dateien vorhanden sind.")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Story Editor konnte nicht gestartet werden:\n{e}")
+
+    def _open_projector_for_scene(self, scene, source):
+        """Öffnet den Projektor direkt mit einer Szene (ohne Beispielmap)"""
+        from storyboard_system import SceneType
+        from projector_window import ProjectorWindow
+        import json
+        import os
+        
+        try:
+            print(f"🎬 Öffne Projektor für Szene '{scene.name}'...")
+            print(f"   Szenen-Typ: {scene.scene_type}")
+            print(f"   Quelle: {source}")
+            
+            # Schließe existierenden Projektor
+            if self.projector_window and self.projector_window.winfo_exists():
+                self.projector_window.destroy()
+            
+            # Map-Daten basierend auf Szenentyp vorbereiten
+            map_data = None
+            svg_path = None
+            
+            if scene.scene_type == SceneType.MAP_JSON:
+                # JSON-Map laden
+                with open(source, 'r', encoding='utf-8') as f:
+                    map_data = json.load(f)
+                print(f"   ✅ JSON-Map geladen:")
+                print(f"      Größe: {map_data.get('width', '?')}x{map_data.get('height', '?')}")
+                print(f"      Name: {map_data.get('name', 'unbenannt')}")
+                tiles = map_data.get('tiles', [])
+                print(f"      Tiles: {len(tiles) if isinstance(tiles, list) else 'dict' if isinstance(tiles, dict) else 'keine'}")
+                
+                # Prüfe ob die JSON-Map einen SVG-Hintergrund hat
+                if map_data.get('is_svg_mode') and map_data.get('svg_path'):
+                    svg_path = map_data.get('svg_path')
+                    print(f"      🎨 SVG-Modus aktiv: {os.path.basename(svg_path)}")
+                    
+            elif scene.scene_type == SceneType.MAP_SVG:
+                # SVG-Map - parse zu Map-Daten
+                svg_path = source
+                map_data = self.parse_svg_to_map(source)
+                if map_data:
+                    map_data["svg_path"] = source
+                print(f"   ✅ SVG-Map vorbereitet")
+                    
+            elif scene.scene_type == SceneType.IMAGE:
+                # Bild - erstelle minimale Map-Daten
+                from PIL import Image
+                img = Image.open(source)
+                map_data = {
+                    "width": max(1, img.width // 32),
+                    "height": max(1, img.height // 32),
+                    "tile_size": 32,
+                    "background_image": source,
+                    "tiles": {},
+                    "name": scene.name
+                }
+                print(f"   ✅ Bild-Map erstellt ({img.width}x{img.height})")
+            else:
+                # Fallback: Minimale leere Map
+                map_data = {
+                    "width": 30,
+                    "height": 20,
+                    "tile_size": 32,
+                    "tiles": {},
+                    "name": scene.name
+                }
+                print(f"   ⚠️ Fallback zu leerer Map")
+            
+            # Projektor öffnen
+            if svg_path:
+                self.projector_window = ProjectorWindow(
+                    self,
+                    map_data=map_data,
+                    svg_path=svg_path,
+                    webcam_tracker=self.webcam_tracker
+                )
+            else:
+                self.projector_window = ProjectorWindow(
+                    self,
+                    map_data,
+                    self.webcam_tracker
+                )
+            
+            print(f"   ✅ Projektor geöffnet mit Szene '{scene.name}'")
+            
+            # Status im Story Editor aktualisieren
+            if hasattr(self, 'story_editor') and self.story_editor:
+                self.story_editor._set_status(f"✅ Projektor geöffnet mit '{scene.name}'")
+                
+        except Exception as e:
+            print(f"   ❌ Fehler: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Fehler", 
+                f"Projektor konnte nicht mit Szene geöffnet werden:\n\n{e}")
+
+    def _load_scene_to_projector(self, scene, source):
+        """Lädt eine Szene in den Projektor"""
+        from storyboard_system import SceneType
+        import json
+        import os
+        
+        try:
+            if not self.projector_window or not self.projector_window.winfo_exists():
+                print("⚠️ Projektor nicht verfügbar")
+                return
+            
+            print(f"🎬 Lade Szene '{scene.name}' in Projektor...")
+            print(f"   Typ: {scene.scene_type.value}")
+            print(f"   Quelle: {source}")
+            
+            # Je nach Szenentyp laden
+            if scene.scene_type == SceneType.MAP_JSON:
+                # JSON-Map laden
+                with open(source, 'r', encoding='utf-8') as f:
+                    map_data = json.load(f)
+                self.projector_window.update_map(map_data)
+                print(f"   ✅ JSON-Map geladen")
+                
+            elif scene.scene_type == SceneType.MAP_SVG:
+                # SVG-Map laden
+                if hasattr(self.projector_window, 'load_svg_map'):
+                    self.projector_window.load_svg_map(source)
+                    print(f"   ✅ SVG-Map geladen")
+                else:
+                    # Fallback: Parse SVG zu Map-Daten
+                    map_data = self.parse_svg_to_map(source)
+                    if map_data:
+                        self.projector_window.update_map(map_data)
+                        print(f"   ✅ SVG als Map-Daten geladen")
+                    
+            elif scene.scene_type == SceneType.IMAGE:
+                # Bild als Hintergrund laden
+                from PIL import Image, ImageTk
+                img = Image.open(source)
+                
+                # Erstelle einfache Map-Daten mit Bild als Hintergrund
+                map_data = {
+                    "width": img.width // 32 + 1,
+                    "height": img.height // 32 + 1,
+                    "tile_size": 32,
+                    "background_image": source,
+                    "tiles": {},
+                    "name": scene.name
+                }
+                
+                # Wenn Projektor Bild-Modus unterstützt
+                if hasattr(self.projector_window, 'set_background_image'):
+                    self.projector_window.set_background_image(source)
+                else:
+                    self.projector_window.update_map(map_data)
+                print(f"   ✅ Bild geladen")
+                
+            elif scene.scene_type == SceneType.VIDEO:
+                # Video-Szene (noch nicht implementiert)
+                messagebox.showinfo("Video-Szene", 
+                    f"Video-Szenen werden noch nicht unterstützt.\n\n"
+                    f"Datei: {source}")
+                print(f"   ⚠️ Video noch nicht unterstützt")
+                
+            elif scene.scene_type == SceneType.CUTSCENE:
+                # Cutscene (noch nicht implementiert)
+                messagebox.showinfo("Cutscene", 
+                    f"Cutscenes werden noch nicht unterstützt.\n\n"
+                    f"Datei: {source}")
+                print(f"   ⚠️ Cutscene noch nicht unterstützt")
+            
+            # Status aktualisieren
+            if hasattr(self, 'story_editor') and self.story_editor:
+                self.story_editor._set_status(f"✅ Szene '{scene.name}' im Projektor geladen")
+                
+        except Exception as e:
+            print(f"   ❌ Fehler: {e}")
+            messagebox.showerror("Fehler beim Laden", 
+                f"Die Szene konnte nicht geladen werden:\n\n{e}")
+
     def parse_svg_to_map(self, svg_path):
         """Parst SVG und erstellt Map-Daten für Editor"""
         try:

@@ -70,6 +70,18 @@ class ProjectorWindow(tk.Toplevel):
         
         # Map-Daten
         self.map_data = map_data or {"width": 50, "height": 50, "tiles": []}
+        
+        # DEBUG: Zeige was wir bekommen haben
+        print(f"🎯 ProjectorWindow initialisiert:")
+        print(f"   map_data Parameter: {type(map_data)}")
+        if map_data:
+            print(f"   Map-Größe: {map_data.get('width', '?')}x{map_data.get('height', '?')}")
+            print(f"   Map-Name: {map_data.get('name', 'unbenannt')}")
+            tiles = map_data.get('tiles', [])
+            print(f"   Tiles vorhanden: {len(tiles) if isinstance(tiles, list) else 'dict' if isinstance(tiles, dict) else 'keine'}")
+        else:
+            print(f"   ⚠️ KEINE map_data übergeben - verwende Default!")
+        
         self.river_directions = self.map_data.get("river_directions", {})  # River flow directions
         
         # Fog-of-War System
@@ -178,7 +190,7 @@ class ProjectorWindow(tk.Toplevel):
 
         # Detail-Map System (für zukünftige Erweiterungen)
         from detail_map_system import DetailMapSystem
-        self.detail_system = DetailMapSystem(map_data or {"width": 50, "height": 50, "tiles": []})
+        self.detail_system = DetailMapSystem(self.map_data)  # Nutze self.map_data für Konsistenz
         
         self.setup_ui()
         
@@ -419,9 +431,26 @@ class ProjectorWindow(tk.Toplevel):
         height = current_map.get("height", 50)
         tiles = current_map.get("tiles", [])
         
-        # Wenn tiles leer ist, erstelle leere Karte
-        if not tiles:
+        # DEBUG: Zeige detaillierte Map-Info (nur einmal beim ersten Render)
+        if not hasattr(self, '_render_debug_shown'):
+            self._render_debug_shown = True
+            print(f"🗺️ render_map DEBUG:")
+            print(f"   Map-Name: {current_map.get('name', 'unbenannt')}")
+            print(f"   Größe: {width}x{height}")
+            print(f"   tiles type={type(tiles).__name__}, len={len(tiles) if isinstance(tiles, (list, dict)) else 0}")
+            if isinstance(tiles, list) and len(tiles) > 0:
+                print(f"   Erste Zeile: {tiles[0][:5] if len(tiles[0]) >= 5 else tiles[0]}...")
+            elif isinstance(tiles, dict) and len(tiles) > 0:
+                first_keys = list(tiles.keys())[:5]
+                print(f"   Erste Keys: {first_keys}")
+        
+        # Tiles-Format erkennen: Liste (2D-Array) oder Dictionary
+        tiles_is_dict = isinstance(tiles, dict)
+        
+        # Wenn tiles leer ist UND kein Dict, erstelle leere Karte
+        if not tiles and not tiles_is_dict:
             tiles = [["grass" for _ in range(width)] for _ in range(height)]
+            print(f"   ⚠️ Keine Tiles - erstelle Default grass-Map")
         
         # Canvas-Größe ermitteln für Zentrierung
         try:
@@ -468,7 +497,12 @@ class ProjectorWindow(tk.Toplevel):
                     paste_x = x * current_tile_size
                     paste_y = y * current_tile_size
                     
-                    if y < len(tiles) and x < len(tiles[y]):
+                    # Tile-Zugriff: Unterstütze sowohl Dict als auch 2D-Liste
+                    if tiles_is_dict:
+                        # Dictionary-Format: "x,y" -> terrain
+                        coord_key = f"{x},{y}"
+                        terrain = tiles.get(coord_key, "grass")
+                    elif isinstance(tiles, list) and y < len(tiles) and isinstance(tiles[y], list) and x < len(tiles[y]):
                         terrain = tiles[y][x]
                     else:
                         terrain = "grass"
@@ -824,22 +858,31 @@ class ProjectorWindow(tk.Toplevel):
         animated_materials = {'water', 'forest', 'animated_forest', 'animated_grass', 'village'}
         
         tiles = self.map_data.get('tiles', [])
+        width = self.map_data.get('width', 50)
+        height = self.map_data.get('height', 50)
         
         # DEBUG: Sammle Material-Statistik
         material_counts = {}
         
-        # Sammle ALLE animierten Positionen
-        for y, row in enumerate(tiles):
-            for x, material in enumerate(row):
+        # Prüfe ob tiles ein Dict oder Liste ist
+        tiles_is_dict = isinstance(tiles, dict)
+        
+        if tiles_is_dict:
+            # Dictionary-Format: "x,y" -> material
+            for coord_key, material in tiles.items():
+                # Parse Koordinaten
+                try:
+                    x, y = map(int, coord_key.split(','))
+                except:
+                    continue
+                
                 # Statistik sammeln
                 material_counts[material] = material_counts.get(material, 0) + 1
                 
                 is_animated = False
-                
                 if material in animated_materials:
                     is_animated = True
                 elif material.startswith('custom_'):
-                    # Prüfe custom materials mit Frames
                     custom_info = self.texture_manager.custom_materials.get(material)
                     if custom_info and custom_info.get('frames', 0) > 1:
                         is_animated = True
@@ -847,6 +890,28 @@ class ProjectorWindow(tk.Toplevel):
                 if is_animated:
                     self.animated_positions.append((x, y, material))
                     self.has_animated_tiles = True
+        else:
+            # 2D-Liste Format
+            for y, row in enumerate(tiles):
+                if not isinstance(row, list):
+                    continue
+                for x, material in enumerate(row):
+                    # Statistik sammeln
+                    material_counts[material] = material_counts.get(material, 0) + 1
+                    
+                    is_animated = False
+                    
+                    if material in animated_materials:
+                        is_animated = True
+                    elif material.startswith('custom_'):
+                        # Prüfe custom materials mit Frames
+                        custom_info = self.texture_manager.custom_materials.get(material)
+                        if custom_info and custom_info.get('frames', 0) > 1:
+                            is_animated = True
+                    
+                    if is_animated:
+                        self.animated_positions.append((x, y, material))
+                        self.has_animated_tiles = True
     
     def start_animation(self):
         """Startet die Animation für Wasser, Wälder, etc."""

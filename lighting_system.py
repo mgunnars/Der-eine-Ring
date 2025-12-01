@@ -872,8 +872,6 @@ class LightingEngine:
         Returns: RGBA Image mit farbigem Licht und Schatten
         """
         self.time_offset = time_offset
-        print(f"DEBUG: render_lighting darkness_polygons = {self.darkness_polygons}")
-        
 
         # TILE-BASIERTES RENDERING: Nur sichtbarer Bereich
         # Hole sichtbare Tiles aus MapEditor (Standard: alles, aber kann optimiert werden)
@@ -1175,7 +1173,6 @@ class LightingEngine:
             for polygon in self.darkness_polygons:
                 # Polygone sind in relativen Koordinaten (0-1) gespeichert, konvertiere zu Pixeln
                 pixel_poly = [(int(x * width * tile_size + 0.5), int(y * height * tile_size + 0.5)) for x, y in polygon]
-                print(f"DEBUG: polygon {polygon} -> pixel_poly {pixel_poly} (converted from relative to pixels)")
                 # Basis-Schatten-Intensität (nie 100% schwarz wegen Ambient)
                 # darkness_opacity = 0.85 → 85% dunkel → Pixel-Wert 217 (von 255)
                 shadow_intensity = int(self.darkness_opacity * 255)
@@ -1335,6 +1332,11 @@ class LightingEngine:
         GPU-beschleunigte Textur-Generierung
         Fallback auf CPU wenn GPU nicht verfügbar
         """
+        # GPU-Renderer Verfügbarkeit prüfen BEVOR wir es versuchen
+        # Das verhindert hunderte von Warnungen für jedes Tile
+        if not hasattr(self, 'gpu_renderer') or not self.gpu_renderer:
+            return None  # Silent fallback - keine Warnung nötig
+        
         cache_key = f"gpu_{material_id}_{size}_{animation_frame}_{river_direction}"
         
         # Cache prüfen
@@ -1362,7 +1364,10 @@ class LightingEngine:
                 
                 return pil_image
             except Exception as e:
-                print(f"⚠️ GPU-Textur-Generierung fehlgeschlagen für {material_id}: {e}")
+                # Nur einmalig warnen, nicht für jedes Tile
+                if not hasattr(self, '_gpu_texture_warning_shown'):
+                    print(f"⚠️ GPU-Textur-Generierung fehlgeschlagen: {e} (weitere Warnungen unterdrückt)")
+                    self._gpu_texture_warning_shown = True
         
         # Fallback auf CPU
         return None
@@ -1438,12 +1443,11 @@ class GPUAcceleratedLightingEngine(LightingEngine):
         """GPU-beschleunigte Licht-Rendering"""
         # Darkness polygons require CPU rendering for now
         if self.lighting_mode == "day" and self.darkness_polygons:
-            print("🎯 GPU: Darkness polygons detected in day mode, using CPU fallback")
+            # Silent fallback - keine Meldung jeden Frame
             return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
         
         if not getattr(self, 'gpu_context', None) or not self.lights:
             # Fallback zur CPU-Version — call parent to avoid recursion
-            print('⚠️ GPU render path not ready or no lights — use CPU fallback')
             return super().render_lighting(width, height, tile_size, time_offset, radius_scale)
         
         try:
