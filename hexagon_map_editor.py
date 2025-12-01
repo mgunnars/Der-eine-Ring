@@ -14,7 +14,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser
 from PIL import Image, ImageTk, ImageDraw
 import math
 import os
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Set
 
 from hexagon_map_system import (
     HexagonMap, HexTile, HexagonDetector,
@@ -326,9 +326,17 @@ class HexagonMapEditor(tk.Toplevel):
         self.resizing_norm_hex: bool = False  # Wird gerade die Größe geändert?
         self.dragging_extent: Optional[int] = None  # Index des gezogenen Extent-Punkts
         
+        # === MEHRFACHAUSWAHL ===
+        self.selected_tiles: Set[Tuple[int, int]] = set()  # Mehrere ausgewählte Tiles
+        self.selection_rect_start: Optional[Tuple[int, int]] = None  # Start der Rechteck-Auswahl
+        self.shift_held: bool = False  # Shift für additive Auswahl
+        
         # Background image
         self.bg_image: Optional[Image.Image] = None
         self.bg_photo: Optional[ImageTk.PhotoImage] = None
+        self.bg_visible: bool = True  # Hintergrund sichtbar?
+        self.bg_opacity: float = 1.0  # Hintergrund-Transparenz (0-1)
+        self.bg_on_top: bool = False  # Hintergrund über Tiles?
         
         self.title(f"🔷 Hexagon-Editor: {self.hex_map.name}")
         self.configure(bg="#1a1a2e")
@@ -408,6 +416,22 @@ class HexagonMapEditor(tk.Toplevel):
         tk.Button(toolbar, text="🎨 Auto-Terrain", command=self._auto_detect_terrain,
                  bg="#17a2b8", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
+        
+        # Separator
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=8)
+        
+        # Hintergrund-Steuerung
+        tk.Button(toolbar, text="🖼️ BG ein/aus", command=self._toggle_background,
+                 bg="#6c757d", fg="white", font=("Arial", 10),
+                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
+        
+        tk.Button(toolbar, text="⬆️ BG oben", command=self._toggle_bg_on_top,
+                 bg="#6c757d", fg="white", font=("Arial", 10),
+                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
+        
+        tk.Button(toolbar, text="🗑️ BG entfernen", command=self._remove_background,
+                 bg="#dc3545", fg="white", font=("Arial", 10),
+                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
         
         # Random Events
         tk.Button(toolbar, text="🎲 Zufalls-Events", command=self._random_events_dialog,
@@ -574,6 +598,46 @@ class HexagonMapEditor(tk.Toplevel):
         
         # Double click für Properties
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
+        
+        # Shift für Mehrfachauswahl
+        self.bind("<Shift_L>", lambda e: setattr(self, 'shift_held', True))
+        self.bind("<Shift_R>", lambda e: setattr(self, 'shift_held', True))
+        self.bind("<KeyRelease-Shift_L>", lambda e: setattr(self, 'shift_held', False))
+        self.bind("<KeyRelease-Shift_R>", lambda e: setattr(self, 'shift_held', False))
+        
+        # Escape zum Abbrechen/Deselektieren
+        self.bind("<Escape>", self._on_escape)
+        
+        # Delete für ausgewählte Tiles löschen
+        self.bind("<Delete>", self._delete_selected_tiles)
+    
+    def _on_escape(self, event):
+        """Escape drücken - Auswahl aufheben"""
+        self.selected_tile = None
+        self.selected_tiles.clear()
+        self._redraw()
+    
+    def _delete_selected_tiles(self, event):
+        """Lösche alle ausgewählten Tiles"""
+        count = 0
+        
+        # Einzelauswahl
+        if self.selected_tile and self.selected_tile in self.hex_map.tiles:
+            del self.hex_map.tiles[self.selected_tile]
+            count += 1
+            self.selected_tile = None
+        
+        # Mehrfachauswahl
+        for coord in list(self.selected_tiles):
+            if coord in self.hex_map.tiles:
+                del self.hex_map.tiles[coord]
+                count += 1
+        self.selected_tiles.clear()
+        
+        if count > 0:
+            print(f"🗑️ {count} Tile(s) gelöscht")
+            self._update_stats()
+            self._redraw()
     
     def _select_terrain(self, terrain: str):
         self.current_terrain = terrain
@@ -1066,23 +1130,53 @@ class HexagonMapEditor(tk.Toplevel):
         tile = self.hex_map.get_tile_at_pixel(x, y)
         
         if tile:
+            coord = (tile.q, tile.r)
+            
             if self.current_tool == "select":
-                self.selected_tile = (tile.q, tile.r)
+                if self.shift_held:
+                    # Shift gehalten -> zur Mehrfachauswahl hinzufügen/entfernen
+                    if coord in self.selected_tiles:
+                        self.selected_tiles.remove(coord)
+                    else:
+                        self.selected_tiles.add(coord)
+                else:
+                    # Normaler Klick -> Einzelauswahl (Mehrfachauswahl leeren)
+                    self.selected_tiles.clear()
+                    self.selected_tile = coord
                 self._update_info(tile)
                 
             elif self.current_tool == "terrain":
-                tile.terrain = self.current_terrain
+                # Terrain auf ausgewählte Tiles anwenden
+                if self.selected_tiles:
+                    for sel_coord in self.selected_tiles:
+                        if sel_coord in self.hex_map.tiles:
+                            self.hex_map.tiles[sel_coord].terrain = self.current_terrain
+                else:
+                    tile.terrain = self.current_terrain
                 
             elif self.current_tool == "weather":
-                tile.local_weather = self.current_weather
-                tile.weather_intensity = 1.0
+                # Wetter auf ausgewählte Tiles anwenden
+                if self.selected_tiles:
+                    for sel_coord in self.selected_tiles:
+                        if sel_coord in self.hex_map.tiles:
+                            self.hex_map.tiles[sel_coord].local_weather = self.current_weather
+                            self.hex_map.tiles[sel_coord].weather_intensity = 1.0
+                else:
+                    tile.local_weather = self.current_weather
+                    tile.weather_intensity = 1.0
                 
             elif self.current_tool == "event":
                 # Zeige Event-Dialog
                 dialog = EventEditDialog(self, None)
                 self.wait_window(dialog)
                 if dialog.result:
-                    tile.events.append(dialog.result)
+                    # Event auf ausgewählte Tiles anwenden
+                    if self.selected_tiles:
+                        for sel_coord in self.selected_tiles:
+                            if sel_coord in self.hex_map.tiles:
+                                self.hex_map.tiles[sel_coord].events.append(dialog.result.copy())
+                    else:
+                        tile.events.append(dialog.result)
             
             self._redraw()
         else:
@@ -1613,7 +1707,35 @@ class HexagonMapEditor(tk.Toplevel):
             messagebox.showinfo("Auto-Terrain", msg)
         
         # Zeichne neu mit Terrain-Farben
-        self._draw_all()
+        self._redraw()
+    
+    def _toggle_background(self):
+        """Schalte Hintergrund-Sichtbarkeit um"""
+        self.bg_visible = not self.bg_visible
+        status = "sichtbar" if self.bg_visible else "ausgeblendet"
+        print(f"🖼️ Hintergrund: {status}")
+        self._redraw()
+    
+    def _toggle_bg_on_top(self):
+        """Schalte Hintergrund zwischen oben/unten"""
+        self.bg_on_top = not self.bg_on_top
+        status = "über Tiles" if self.bg_on_top else "unter Tiles"
+        print(f"🖼️ Hintergrund: {status}")
+        self._redraw()
+    
+    def _remove_background(self):
+        """Entferne Hintergrundbild komplett"""
+        if not self.bg_image:
+            messagebox.showinfo("Info", "Kein Hintergrundbild geladen.")
+            return
+        
+        if messagebox.askyesno("Hintergrund entfernen", 
+                               "Hintergrundbild wirklich entfernen?\n\n"
+                               "Die Tile-Farben bleiben erhalten."):
+            self.bg_image = None
+            self.bg_photo = None
+            print("🗑️ Hintergrundbild entfernt")
+            self._redraw()
     
     def _generate_hex_preview(self, cx: float, cy: float, size: float) -> List[Tuple[int, int]]:
         """Generiere Hexagon-Vertices für Vorschau (pointy-top)"""
@@ -1819,28 +1941,44 @@ class HexagonMapEditor(tk.Toplevel):
     def _update_stats(self):
         self.stats_label.configure(text=f"Tiles: {len(self.hex_map.tiles)}")
     
+    def _draw_background(self):
+        """Zeichne Hintergrundbild"""
+        if not self.bg_image:
+            return
+        # Skaliere und positioniere Bild
+        w = int(self.bg_image.width * self.zoom)
+        h = int(self.bg_image.height * self.zoom)
+        scaled = self.bg_image.resize((w, h), Image.LANCZOS)
+        self.bg_photo = ImageTk.PhotoImage(scaled)
+        self.canvas.create_image(self.offset_x, self.offset_y, 
+                                image=self.bg_photo, anchor=tk.NW, tags="background")
+    
     def _redraw(self):
         """Zeichne Canvas neu"""
         self.canvas.delete("all")
         
-        # Hintergrundbild
-        if self.bg_image:
-            # Skaliere und positioniere Bild
-            w = int(self.bg_image.width * self.zoom)
-            h = int(self.bg_image.height * self.zoom)
-            scaled = self.bg_image.resize((w, h), Image.LANCZOS)
-            self.bg_photo = ImageTk.PhotoImage(scaled)
-            self.canvas.create_image(self.offset_x, self.offset_y, 
-                                    image=self.bg_photo, anchor=tk.NW)
+        # Hintergrundbild (unten) - nur wenn sichtbar und NICHT oben
+        if self.bg_image and self.bg_visible and not self.bg_on_top:
+            self._draw_background()
         
         # Zeichne Hexagone
         for (q, r), tile in self.hex_map.tiles.items():
             self._draw_hexagon(tile)
         
-        # Zeichne Auswahl
+        # Hintergrundbild (oben) - nur wenn sichtbar und oben
+        if self.bg_image and self.bg_visible and self.bg_on_top:
+            self._draw_background()
+        
+        # Zeichne Auswahl (einzeln)
         if self.selected_tile and self.selected_tile in self.hex_map.tiles:
             tile = self.hex_map.tiles[self.selected_tile]
             self._draw_hexagon_outline(tile, "#ffff00", 3)
+        
+        # Zeichne Mehrfachauswahl
+        for coord in self.selected_tiles:
+            if coord in self.hex_map.tiles:
+                tile = self.hex_map.tiles[coord]
+                self._draw_hexagon_outline(tile, "#00ffff", 2)
         
         # === TAG/NACHT OVERLAY ===
         darkness = self.darkness_var.get()
