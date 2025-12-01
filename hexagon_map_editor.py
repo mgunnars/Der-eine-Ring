@@ -301,7 +301,7 @@ class HexagonMapEditor(tk.Toplevel):
         super().__init__(parent)
         
         self.hex_map = hex_map or HexagonMap("Neue Hexagon-Karte")
-        self.current_tool = "select"  # select, draw_hex, terrain, event, weather
+        self.current_tool = "select"  # select, draw_hex, place_extent, terrain, event, weather
         self.current_terrain = "PLAINS"
         self.current_weather = "RAIN"
         self.selected_tile: Optional[Tuple[int, int]] = None
@@ -316,6 +316,14 @@ class HexagonMapEditor(tk.Toplevel):
         self.draw_hex_start: Optional[Tuple[float, float]] = None  # Zentrum des Template-Hex
         self.template_hex_size: float = 0.0  # Größe des gezeichneten Hex
         self.preview_hex: Optional[List[Tuple[int, int]]] = None  # Vorschau-Vertices
+        
+        # === NORM-HEXAGON SYSTEM ===
+        self.norm_hex_center: Optional[Tuple[float, float]] = None  # Zentrum des Norm-Hexagons
+        self.norm_hex_size: float = 50.0  # Radius des Norm-Hexagons
+        self.extent_hexagons: List[Tuple[float, float]] = []  # Liste von Extent-Punkten (Polygon-Grenze)
+        self.dragging_norm_hex: bool = False  # Wird gerade das Norm-Hex verschoben?
+        self.resizing_norm_hex: bool = False  # Wird gerade die Größe geändert?
+        self.dragging_extent: Optional[int] = None  # Index des gezogenen Extent-Punkts
         
         # Background image
         self.bg_image: Optional[Image.Image] = None
@@ -350,17 +358,19 @@ class HexagonMapEditor(tk.Toplevel):
         # Tool Buttons
         tools = [
             ("🖱️ Auswahl", "select"),
-            ("✏️ Hex zeichnen", "draw_hex"),
+            ("✏️ Norm-Hex", "draw_hex"),
+            ("📍 Extents", "place_extent"),
+            ("🔲 Interpolieren", "interpolate"),
+            ("🗑️ Löschen", "delete"),
             ("🗺️ Terrain", "terrain"),
             ("⚔️ Events", "event"),
-            ("🌦️ Wetter", "weather"),
         ]
         
         self.tool_buttons = {}
         for text, tool in tools:
             btn = tk.Button(toolbar, text=text, command=lambda t=tool: self._set_tool(t),
                            bg="#16213e", fg="white", font=("Arial", 10),
-                           relief=tk.FLAT, padx=10, pady=5)
+                           relief=tk.FLAT, padx=8, pady=5)
             btn.pack(side=tk.LEFT, padx=2, pady=8)
             self.tool_buttons[tool] = btn
         
@@ -386,6 +396,11 @@ class HexagonMapEditor(tk.Toplevel):
         # Grid Button
         tk.Button(toolbar, text="🔲 Grid erstellen", command=self._create_grid_dialog,
                  bg="#16213e", fg="white", font=("Arial", 10),
+                 relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
+        
+        # Alle Löschen Button
+        tk.Button(toolbar, text="🗑️ Alle löschen", command=self._clear_all_tiles,
+                 bg="#dc3545", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
         
         # Random Events
@@ -554,14 +569,6 @@ class HexagonMapEditor(tk.Toplevel):
         # Double click für Properties
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
     
-    def _set_tool(self, tool: str):
-        self.current_tool = tool
-        for t, btn in self.tool_buttons.items():
-            if t == tool:
-                btn.configure(bg="#e94560", relief=tk.SUNKEN)
-            else:
-                btn.configure(bg="#16213e", relief=tk.FLAT)
-    
     def _select_terrain(self, terrain: str):
         self.current_terrain = terrain
         for t, btn in self.terrain_buttons.items():
@@ -622,40 +629,25 @@ class HexagonMapEditor(tk.Toplevel):
         if self.bg_image:
             print(f"   Zeige Hintergrundbild: {self.bg_image.size}", flush=True)
             self._redraw()
+            
+            # Zeige Anleitung für den Norm-Hex Workflow (KEINE automatische Erkennung!)
+            messagebox.showinfo(
+                "Karte geladen",
+                f"Karte geladen: {self.bg_image.width}×{self.bg_image.height}px\n\n"
+                "Jetzt Grid manuell erstellen:\n"
+                "1. Wähle '✏️ Norm-Hex' und zeichne ein Hexagon\n"
+                "2. Verschiebe es auf ein Karten-Hexagon\n"
+                "3. Wähle '📍 Extents' und markiere die Ecken\n"
+                "4. Klicke '🔲 Interpolieren'\n\n"
+                "Oder: '🔲 Grid erstellen' für manuelles Raster"
+            )
         else:
             messagebox.showwarning("Hintergrund", 
                                   "Konnte Kartenbild nicht laden.\n"
                                   "Die Hexagone werden ohne Hintergrund angezeigt.")
         
-        # DANN Hexagone erkennen
-        print("   Starte Hexagon-Erkennung...", flush=True)
-        success = self.hex_map.load_from_svg(filepath)
-        
-        # Zeige Ergebnis
-        tile_count = len(self.hex_map.tiles)
-        print(f"   {tile_count} Tiles nach Erkennung, hex_size={self.hex_map.hex_size:.1f}")
-        
-        if tile_count > 0:
-            # Automatisch Grid vervollständigen wenn zu wenige erkannt
-            # (Erkannte Hexagone dienen als Referenz für Größe/Position)
-            result = messagebox.askyesnocancel(
-                "Grid vervollständigen?",
-                f"{tile_count} Hexagone erkannt (Größe: {self.hex_map.hex_size:.0f}px).\n\n"
-                f"Ja = Grid automatisch ausfüllen\n"
-                f"Nein = Nur erkannte Hexagone behalten\n"
-                f"Abbrechen = Hex-Größe manuell eingeben"
-            )
-            
-            if result is True:  # Ja
-                self._complete_grid_from_detected()
-            elif result is None:  # Abbrechen -> manuell
-                self._manual_hex_size_dialog()
-        elif not success:
-            # Fallback: Frage nach manueller Grid-Erstellung
-            if messagebox.askyesno("Keine Hexagone erkannt",
-                                   "Keine Hexagone erkannt.\n"
-                                   "Möchtest du ein Grid manuell erstellen?"):
-                self._create_grid_dialog()
+        # KEINE automatische Hexagon-Erkennung mehr!
+        # Der User erstellt das Grid manuell mit dem Norm-Hex Workflow
         
         self._update_stats()
         print(f"   Rufe _redraw auf, bg_image={self.bg_image is not None}")
@@ -895,6 +887,40 @@ class HexagonMapEditor(tk.Toplevel):
         tk.Button(dialog, text="Erstellen", command=create,
                  bg="#28a745", fg="white").grid(row=3, column=0, columnspan=2, pady=20)
     
+    def _clear_all_tiles(self):
+        """Lösche alle Hexagone"""
+        tile_count = len(self.hex_map.tiles)
+        
+        if tile_count == 0:
+            messagebox.showinfo("Keine Tiles", "Es gibt keine Hexagone zum Löschen.")
+            return
+        
+        result = messagebox.askyesnocancel(
+            "Alle löschen?",
+            f"Es gibt {tile_count} Hexagone.\n\n"
+            "Ja = Alle Hexagone löschen\n"
+            "Nein = Nur das Grid löschen (Norm-Hex behalten)\n"
+            "Abbrechen = Nichts löschen"
+        )
+        
+        if result is True:
+            # Alles löschen
+            self.hex_map.tiles.clear()
+            self.norm_hex_center = None
+            self.norm_hex_size = 50.0
+            self.extent_hexagons.clear()
+            print(f"🗑️ Alle {tile_count} Hexagone und Norm-Hex gelöscht")
+        elif result is False:
+            # Nur Grid löschen, Norm-Hex behalten
+            self.hex_map.tiles.clear()
+            self.extent_hexagons.clear()
+            print(f"🗑️ Alle {tile_count} Hexagone gelöscht (Norm-Hex beibehalten)")
+        else:
+            return
+        
+        self._update_stats()
+        self._redraw()
+    
     def _random_events_dialog(self):
         """Dialog für Zufalls-Events"""
         dialog = tk.Toplevel(self)
@@ -945,6 +971,84 @@ class HexagonMapEditor(tk.Toplevel):
     
     def _on_click(self, event):
         x, y = self._canvas_to_map(event.x, event.y)
+        
+        # === NORM-HEXAGON MODUS ===
+        if self.current_tool == "draw_hex":
+            # Prüfe ob Klick auf bestehendes Norm-Hex
+            if self.norm_hex_center:
+                dist = math.sqrt((x - self.norm_hex_center[0])**2 + (y - self.norm_hex_center[1])**2)
+                
+                # Klick auf Rand (±20%) -> Größe ändern
+                if abs(dist - self.norm_hex_size) < self.norm_hex_size * 0.25:
+                    self.resizing_norm_hex = True
+                    self.drag_start = (event.x, event.y)
+                    print(f"📐 Größenänderung gestartet (aktuell: {self.norm_hex_size:.0f}px)")
+                    return
+                
+                # Klick in Mitte -> Verschieben
+                if dist < self.norm_hex_size * 0.75:
+                    self.dragging_norm_hex = True
+                    self.drag_start = (event.x, event.y)
+                    return
+            
+            # Neues Norm-Hex zeichnen
+            self.draw_hex_start = (x, y)
+            self.template_hex_size = 0
+            self.preview_hex = None
+            return
+        
+        # === EXTENT PLATZIEREN/BEARBEITEN ===
+        if self.current_tool == "place_extent":
+            if not self.norm_hex_center or self.norm_hex_size < 10:
+                messagebox.showwarning("Kein Norm-Hexagon", 
+                    "Bitte zuerst ein Norm-Hexagon zeichnen!\n\n"
+                    "1. Wähle '✏️ Norm-Hex'\n"
+                    "2. Klicke und ziehe um Größe zu definieren\n"
+                    "3. Verschiebe es auf ein Karten-Hexagon")
+                return
+            
+            # Prüfe ob Klick auf bestehenden Extent (zum Verschieben)
+            for i, (ex, ey) in enumerate(self.extent_hexagons):
+                dist = math.sqrt((x - ex)**2 + (y - ey)**2)
+                if dist < self.norm_hex_size * 0.6:
+                    # Extent verschieben
+                    self.dragging_extent = i
+                    self.drag_start = (event.x, event.y)
+                    print(f"📍 Extent E{i+1} wird verschoben")
+                    return
+            
+            # Neuen Extent-Punkt platzieren
+            self.extent_hexagons.append((x, y))
+            print(f"📍 Extent-Punkt {len(self.extent_hexagons)} platziert bei ({x:.0f}, {y:.0f})")
+            self._redraw()
+            
+            if len(self.extent_hexagons) == 3:
+                messagebox.showinfo("Polygon definiert",
+                    f"{len(self.extent_hexagons)} Extent-Punkte = Dreieck.\n\n"
+                    "• Weitere Punkte für komplexere Formen\n"
+                    "• Rechtsklick auf Punkt zum Löschen\n"
+                    "• '🔲 Interpolieren' erstellt Grid im Polygon")
+            return
+        
+        # === INTERPOLIEREN ===
+        if self.current_tool == "interpolate":
+            self._interpolate_grid()
+            return
+        
+        # === LÖSCHEN MODUS ===
+        if self.current_tool == "delete":
+            tile = self.hex_map.get_tile_at_pixel(x, y)
+            if tile:
+                # Lösche einzelnes Hexagon
+                key = (tile.q, tile.r)
+                if key in self.hex_map.tiles:
+                    del self.hex_map.tiles[key]
+                    print(f"🗑️ Hexagon ({tile.q}, {tile.r}) gelöscht")
+                    self._update_stats()
+                    self._redraw()
+            return
+        
+        # === STANDARD TILE-OPERATIONEN ===
         tile = self.hex_map.get_tile_at_pixel(x, y)
         
         if tile:
@@ -968,17 +1072,38 @@ class HexagonMapEditor(tk.Toplevel):
             
             self._redraw()
         else:
-            # Kein Tile getroffen
-            if self.current_tool == "draw_hex":
-                # Starte neues Hex-Zeichnen: Setze Zentrum
-                self.draw_hex_start = (x, y)
-                self.template_hex_size = 0
-                self.preview_hex = None
-            else:
-                # Pan starten
-                self.drag_start = (event.x, event.y)
+            # Pan starten
+            self.drag_start = (event.x, event.y)
     
     def _on_drag(self, event):
+        # === NORM-HEX GRÖßE ÄNDERN ===
+        if self.resizing_norm_hex and self.norm_hex_center:
+            x, y = self._canvas_to_map(event.x, event.y)
+            cx, cy = self.norm_hex_center
+            # Neue Größe = Abstand zum Zentrum
+            new_size = math.sqrt((x - cx)**2 + (y - cy)**2)
+            if new_size > 15:  # Mindestgröße
+                self.norm_hex_size = new_size
+                self.hex_map.hex_size = new_size
+            self._redraw()
+            return
+        
+        # === NORM-HEX VERSCHIEBEN ===
+        if self.dragging_norm_hex and self.norm_hex_center:
+            dx = (event.x - self.drag_start[0]) / self.zoom
+            dy = (event.y - self.drag_start[1]) / self.zoom
+            self.norm_hex_center = (self.norm_hex_center[0] + dx, self.norm_hex_center[1] + dy)
+            self.drag_start = (event.x, event.y)
+            self._redraw()
+            return
+        
+        # === EXTENT VERSCHIEBEN ===
+        if self.dragging_extent is not None and self.dragging_extent < len(self.extent_hexagons):
+            x, y = self._canvas_to_map(event.x, event.y)
+            self.extent_hexagons[self.dragging_extent] = (x, y)
+            self._redraw()
+            return
+        
         # Hex-Zeichenmodus: Ziehen definiert Größe
         if self.current_tool == "draw_hex" and self.draw_hex_start:
             x, y = self._canvas_to_map(event.x, event.y)
@@ -1004,15 +1129,347 @@ class HexagonMapEditor(tk.Toplevel):
             if tile:
                 tile.terrain = self.current_terrain
                 self._redraw()
+        elif self.current_tool == "delete":
+            # Continuous delete
+            x, y = self._canvas_to_map(event.x, event.y)
+            tile = self.hex_map.get_tile_at_pixel(x, y)
+            if tile:
+                key = (tile.q, tile.r)
+                if key in self.hex_map.tiles:
+                    del self.hex_map.tiles[key]
+                    self._update_stats()
+                    self._redraw()
     
     def _on_release(self, event):
-        # Hex-Zeichenmodus: Beende und zeige Grid-Dialog
+        # === NORM-HEX GRÖßE ÄNDERN BEENDEN ===
+        if self.resizing_norm_hex:
+            self.resizing_norm_hex = False
+            self.drag_start = None
+            print(f"📐 Norm-Hexagon Größe geändert: {self.norm_hex_size:.0f}px")
+            return
+        
+        # === NORM-HEX VERSCHIEBEN BEENDEN ===
+        if self.dragging_norm_hex:
+            self.dragging_norm_hex = False
+            self.drag_start = None
+            print(f"📐 Norm-Hexagon verschoben zu ({self.norm_hex_center[0]:.0f}, {self.norm_hex_center[1]:.0f})")
+            return
+        
+        # === EXTENT VERSCHIEBEN BEENDEN ===
+        if self.dragging_extent is not None:
+            print(f"📍 Extent E{self.dragging_extent+1} verschoben")
+            self.dragging_extent = None
+            self.drag_start = None
+            return
+        
+        # Hex-Zeichenmodus: Speichere als Norm-Hex
         if self.current_tool == "draw_hex" and self.draw_hex_start and self.template_hex_size > 10:
-            self._show_fill_grid_dialog()
+            # Setze als Norm-Hexagon
+            self.norm_hex_center = self.draw_hex_start
+            self.norm_hex_size = self.template_hex_size
+            self.hex_map.hex_size = self.norm_hex_size
+            print(f"📐 Norm-Hexagon erstellt: Zentrum=({self.norm_hex_center[0]:.0f}, {self.norm_hex_center[1]:.0f}), Größe={self.norm_hex_size:.1f}px")
+            
+            messagebox.showinfo("Norm-Hexagon erstellt",
+                f"Norm-Hexagon erstellt (Größe: {self.norm_hex_size:.0f}px)\n\n"
+                "Jetzt:\n"
+                "1. Ziehe am Rand um Größe anzupassen\n"
+                "2. Ziehe in der Mitte um zu verschieben\n"
+                "3. Wähle '📍 Extents' und setze Polygon-Punkte\n"
+                "4. '🔲 Interpolieren' füllt das Polygon")
         
         self.drag_start = None
         self.draw_hex_start = None
         self.preview_hex = None
+        self._redraw()
+    
+    def _set_tool(self, tool: str):
+        self.current_tool = tool
+        
+        # Spezielle Aktion für Interpolieren
+        if tool == "interpolate":
+            self._interpolate_grid()
+            self._set_tool("select")  # Zurück zu Auswahl
+            return
+        
+        for t, btn in self.tool_buttons.items():
+            if t == tool:
+                btn.configure(bg="#e94560", relief=tk.SUNKEN)
+            else:
+                btn.configure(bg="#16213e", relief=tk.FLAT)
+    
+    def _interpolate_grid(self):
+        """Interpoliere Grid von Extent-Hexagonen"""
+        if not self.norm_hex_center or self.norm_hex_size < 10:
+            messagebox.showwarning("Kein Norm-Hexagon", 
+                "Bitte zuerst ein Norm-Hexagon zeichnen!")
+            return
+        
+        if len(self.extent_hexagons) < 2:
+            # Ohne Extents: Nutze Norm-Hex als einzige Referenz und fülle Bild
+            if self.bg_image:
+                result = messagebox.askyesno("Ohne Extents interpolieren?",
+                    f"Keine Extent-Hexagone gesetzt.\n\n"
+                    f"Soll das Grid basierend auf dem Norm-Hexagon\n"
+                    f"über das gesamte Bild erstellt werden?")
+                if result:
+                    self._fill_grid_from_norm_hex()
+                return
+            else:
+                messagebox.showwarning("Keine Extents", 
+                    "Bitte mindestens 2 Extent-Hexagone setzen!\n\n"
+                    "1. Wähle '📍 Extents'\n"
+                    "2. Klicke auf Hexagone an den Ecken der Karte")
+                return
+        
+        # Mit Extents: Interpoliere zwischen ihnen
+        self._fill_grid_between_extents()
+    
+    def _fill_grid_from_norm_hex(self):
+        """Fülle Grid basierend auf Norm-Hex über das gesamte Bild"""
+        if not self.bg_image or not self.norm_hex_center:
+            return
+        
+        hex_size = self.norm_hex_size
+        cx, cy = self.norm_hex_center
+        
+        # Hex-Geometrie (pointy-top)
+        hex_width = hex_size * math.sqrt(3)
+        vert_spacing = hex_size * 1.5
+        
+        # Berechne Grid-Offset basierend auf Norm-Hex Position
+        # Das Grid muss so ausgerichtet sein, dass norm_hex_center genau getroffen wird
+        
+        img_width = self.bg_image.width
+        img_height = self.bg_image.height
+        
+        # Finde heraus welche Reihe/Spalte das Norm-Hex ist
+        # und berechne den Start-Offset
+        start_x = cx % hex_width
+        start_y = cy % vert_spacing
+        
+        cols = int(img_width / hex_width) + 2
+        rows = int(img_height / vert_spacing) + 2
+        
+        self.hex_map.tiles.clear()
+        self.hex_map.hex_size = hex_size
+        
+        for r in range(rows):
+            for q in range(cols):
+                x_offset = (hex_width / 2) if (r % 2 == 1) else 0
+                tile_cx = start_x + q * hex_width + x_offset
+                tile_cy = start_y + r * vert_spacing
+                
+                # Korrigiere falls außerhalb
+                while tile_cx < 0:
+                    tile_cx += hex_width
+                while tile_cy < 0:
+                    tile_cy += vert_spacing
+                
+                if 0 <= tile_cx <= img_width and 0 <= tile_cy <= img_height:
+                    tile = HexTile(q=q, r=r, center_x=tile_cx, center_y=tile_cy)
+                    self.hex_map.tiles[(q, r)] = tile
+        
+        # Extrahiere Farben aus Hintergrundbild
+        self._apply_colors_to_tiles()
+        
+        print(f"✅ Grid erstellt: {len(self.hex_map.tiles)} Tiles")
+        self._update_stats()
+        self._redraw()
+    
+    def _fill_grid_between_extents(self):
+        """Fülle Grid innerhalb des Extent-Polygons"""
+        if len(self.extent_hexagons) < 3:
+            # Bei weniger als 3 Punkten: Rechteck zwischen den Punkten
+            if len(self.extent_hexagons) == 2:
+                self._fill_grid_rectangle()
+            return
+        
+        hex_size = self.norm_hex_size
+        
+        # Berechne Bounding Box des Polygons
+        min_x = min(e[0] for e in self.extent_hexagons)
+        max_x = max(e[0] for e in self.extent_hexagons)
+        min_y = min(e[1] for e in self.extent_hexagons)
+        max_y = max(e[1] for e in self.extent_hexagons)
+        
+        # Hex-Geometrie (pointy-top)
+        hex_width = hex_size * math.sqrt(3)
+        vert_spacing = hex_size * 1.5
+        
+        # Nutze Norm-Hex als Referenz für Ausrichtung
+        ref_x, ref_y = self.norm_hex_center
+        
+        # Berechne Grid-Start basierend auf Norm-Hex
+        # Grid muss so ausgerichtet sein dass Norm-Hex-Position genau getroffen wird
+        offset_cols = int((ref_x - min_x) / hex_width)
+        offset_rows = int((ref_y - min_y) / vert_spacing)
+        
+        start_x = ref_x - offset_cols * hex_width
+        start_y = ref_y - offset_rows * vert_spacing
+        
+        # Berechne ob Referenz in gerader oder ungerader Reihe liegt
+        ref_row_parity = offset_rows % 2
+        
+        cols = int((max_x - start_x) / hex_width) + 2
+        rows = int((max_y - start_y) / vert_spacing) + 2
+        
+        self.hex_map.tiles.clear()
+        self.hex_map.hex_size = hex_size
+        
+        created = 0
+        for r in range(rows):
+            for q in range(cols):
+                # Offset für Reihen, relativ zur Referenz-Parität
+                row_is_odd = (r % 2) != ref_row_parity
+                x_offset = (hex_width / 2) if row_is_odd else 0
+                
+                tile_cx = start_x + q * hex_width + x_offset
+                tile_cy = start_y + r * vert_spacing
+                
+                # Prüfe ob Punkt im Polygon liegt
+                if self._point_in_polygon(tile_cx, tile_cy, self.extent_hexagons):
+                    tile = HexTile(q=q, r=r, center_x=tile_cx, center_y=tile_cy)
+                    self.hex_map.tiles[(q, r)] = tile
+                    created += 1
+        
+        # Extrahiere Farben aus Hintergrundbild
+        self._apply_colors_to_tiles()
+        
+        print(f"✅ Grid interpoliert: {created} Tiles im Polygon mit {len(self.extent_hexagons)} Ecken")
+        
+        # Extent-Marker NICHT löschen - für weitere Bearbeitung behalten
+        # self.extent_hexagons.clear()
+        
+        self._update_stats()
+        self._redraw()
+    
+    def _fill_grid_rectangle(self):
+        """Fülle Grid in einem Rechteck zwischen 2 Extent-Punkten"""
+        if len(self.extent_hexagons) < 2:
+            return
+        
+        hex_size = self.norm_hex_size
+        
+        min_x = min(e[0] for e in self.extent_hexagons)
+        max_x = max(e[0] for e in self.extent_hexagons)
+        min_y = min(e[1] for e in self.extent_hexagons)
+        max_y = max(e[1] for e in self.extent_hexagons)
+        
+        hex_width = hex_size * math.sqrt(3)
+        vert_spacing = hex_size * 1.5
+        
+        ref_x, ref_y = self.norm_hex_center
+        offset_cols = int((ref_x - min_x) / hex_width)
+        offset_rows = int((ref_y - min_y) / vert_spacing)
+        
+        start_x = ref_x - offset_cols * hex_width
+        start_y = ref_y - offset_rows * vert_spacing
+        ref_row_parity = offset_rows % 2
+        
+        cols = int((max_x - start_x) / hex_width) + 2
+        rows = int((max_y - start_y) / vert_spacing) + 2
+        
+        self.hex_map.tiles.clear()
+        self.hex_map.hex_size = hex_size
+        
+        puffer = hex_size * 0.5
+        created = 0
+        for r in range(rows):
+            for q in range(cols):
+                row_is_odd = (r % 2) != ref_row_parity
+                x_offset = (hex_width / 2) if row_is_odd else 0
+                
+                tile_cx = start_x + q * hex_width + x_offset
+                tile_cy = start_y + r * vert_spacing
+                
+                if (min_x - puffer) <= tile_cx <= (max_x + puffer) and \
+                   (min_y - puffer) <= tile_cy <= (max_y + puffer):
+                    tile = HexTile(q=q, r=r, center_x=tile_cx, center_y=tile_cy)
+                    self.hex_map.tiles[(q, r)] = tile
+                    created += 1
+        
+        # Extrahiere Farben aus Hintergrundbild
+        self._apply_colors_to_tiles()
+        
+        print(f"✅ Grid erstellt: {created} Tiles im Rechteck")
+        self._update_stats()
+        self._redraw()
+    
+    def _point_in_polygon(self, x: float, y: float, polygon: List[Tuple[float, float]]) -> bool:
+        """Ray-Casting Algorithmus: Prüfe ob Punkt (x,y) im Polygon liegt"""
+        n = len(polygon)
+        inside = False
+        
+        j = n - 1
+        for i in range(n):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+            
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+                inside = not inside
+            
+            j = i
+        
+        return inside
+    
+    def _get_color_at_position(self, x: float, y: float) -> Optional[str]:
+        """Extrahiere die durchschnittliche Farbe aus dem Hintergrundbild an einer Position"""
+        if not self.bg_image:
+            return None
+        
+        try:
+            # Konvertiere zu RGB wenn nötig
+            img = self.bg_image.convert('RGB')
+            
+            # Samplingbereich (kleiner Kreis um das Zentrum)
+            sample_radius = int(self.norm_hex_size * 0.3)  # 30% des Hex-Radius
+            
+            # Begrenze Koordinaten auf Bildgrenzen
+            cx = int(max(0, min(x, img.width - 1)))
+            cy = int(max(0, min(y, img.height - 1)))
+            
+            # Sammle Pixel im Samplingbereich
+            r_sum, g_sum, b_sum = 0, 0, 0
+            count = 0
+            
+            for dy in range(-sample_radius, sample_radius + 1):
+                for dx in range(-sample_radius, sample_radius + 1):
+                    # Nur Pixel innerhalb des Kreises
+                    if dx*dx + dy*dy <= sample_radius*sample_radius:
+                        px = cx + dx
+                        py = cy + dy
+                        if 0 <= px < img.width and 0 <= py < img.height:
+                            pixel = img.getpixel((px, py))
+                            r_sum += pixel[0]
+                            g_sum += pixel[1]
+                            b_sum += pixel[2]
+                            count += 1
+            
+            if count > 0:
+                r = int(r_sum / count)
+                g = int(g_sum / count)
+                b = int(b_sum / count)
+                return f"#{r:02x}{g:02x}{b:02x}"
+            
+        except Exception as e:
+            print(f"⚠️ Farbextraktion fehlgeschlagen: {e}")
+        
+        return None
+    
+    def _apply_colors_to_tiles(self):
+        """Wende Hintergrundfarben auf alle Tiles an"""
+        if not self.bg_image:
+            return
+        
+        print("🎨 Extrahiere Farben aus Hintergrundbild...")
+        
+        for tile in self.hex_map.tiles.values():
+            color = self._get_color_at_position(tile.center_x, tile.center_y)
+            if color:
+                tile.fill_color = color
+        
+        print(f"✅ Farben für {len(self.hex_map.tiles)} Tiles extrahiert")
     
     def _generate_hex_preview(self, cx: float, cy: float, size: float) -> List[Tuple[int, int]]:
         """Generiere Hexagon-Vertices für Vorschau (pointy-top)"""
@@ -1132,8 +1589,31 @@ class HexagonMapEditor(tk.Toplevel):
         print(f"✅ Grid erstellt: {cols}×{rows} = {len(self.hex_map.tiles)} Tiles, Größe: {hex_size:.1f}px")
     
     def _on_right_click(self, event):
-        """Rechtsklick: Properties Dialog"""
+        """Rechtsklick: Properties Dialog oder Extent löschen"""
         x, y = self._canvas_to_map(event.x, event.y)
+        
+        # === EXTENT LÖSCHEN ===
+        if self.current_tool == "place_extent":
+            for i, (ex, ey) in enumerate(self.extent_hexagons):
+                dist = math.sqrt((x - ex)**2 + (y - ey)**2)
+                if dist < self.norm_hex_size * 0.6:
+                    del self.extent_hexagons[i]
+                    print(f"🗑️ Extent-Punkt {i+1} gelöscht")
+                    self._redraw()
+                    return
+        
+        # === NORM-HEX LÖSCHEN ===
+        if self.current_tool == "draw_hex" and self.norm_hex_center:
+            dist = math.sqrt((x - self.norm_hex_center[0])**2 + (y - self.norm_hex_center[1])**2)
+            if dist < self.norm_hex_size * 1.2:
+                if messagebox.askyesno("Norm-Hex löschen?", "Norm-Hexagon löschen?"):
+                    self.norm_hex_center = None
+                    self.norm_hex_size = 50.0
+                    print("🗑️ Norm-Hexagon gelöscht")
+                    self._redraw()
+                return
+        
+        # === TILE PROPERTIES ===
         tile = self.hex_map.get_tile_at_pixel(x, y)
         if tile:
             self._show_tile_properties(tile)
@@ -1257,6 +1737,76 @@ class HexagonMapEditor(tk.Toplevel):
                                        text=f"📐 {self.template_hex_size:.0f}px",
                                        font=("Arial", 11, "bold"), fill="#00ff00",
                                        tags="preview_hex")
+        
+        # === NORM-HEXAGON ANZEIGEN ===
+        if self.norm_hex_center and self.norm_hex_size > 0:
+            # Zeichne das Norm-Hexagon (gelb, dick)
+            vertices = []
+            cx, cy = self.norm_hex_center
+            for i in range(6):
+                angle = math.pi / 6 + i * math.pi / 3
+                vx = cx + self.norm_hex_size * math.cos(angle)
+                vy = cy + self.norm_hex_size * math.sin(angle)
+                vertices.append(self._map_to_canvas(vx, vy))
+            
+            self.canvas.create_polygon(vertices, outline="#ffff00", width=3, fill="",
+                                       tags="norm_hex")
+            
+            # Zeige Info
+            cx_canvas, cy_canvas = self._map_to_canvas(cx, cy)
+            self.canvas.create_text(cx_canvas, cy_canvas, 
+                                   text=f"NORM\n{self.norm_hex_size:.0f}px",
+                                   font=("Arial", 9, "bold"), fill="#ffff00",
+                                   tags="norm_hex")
+        
+        # === EXTENT-POLYGON ANZEIGEN ===
+        if len(self.extent_hexagons) >= 2:
+            # Zeichne Verbindungslinien zwischen Extent-Punkten (Polygon-Umriss)
+            polygon_points = []
+            for (ex, ey) in self.extent_hexagons:
+                polygon_points.append(self._map_to_canvas(ex, ey))
+            
+            # Schließe das Polygon wenn >= 3 Punkte
+            if len(polygon_points) >= 3:
+                # Gefülltes halbtransparentes Polygon
+                self.canvas.create_polygon(polygon_points, 
+                                          outline="#00ffff", width=2,
+                                          fill="", dash=(10, 5),
+                                          tags="extent_polygon")
+                # Schließende Linie
+                p0 = polygon_points[0]
+                pn = polygon_points[-1]
+                self.canvas.create_line(pn[0], pn[1], p0[0], p0[1],
+                                       fill="#00ffff", width=2, dash=(10, 5),
+                                       tags="extent_polygon")
+            else:
+                # Bei 2 Punkten: Rechteck andeuten
+                p1 = polygon_points[0]
+                p2 = polygon_points[1]
+                self.canvas.create_line(p1[0], p1[1], p2[0], p2[1],
+                                       fill="#00ffff", width=2, dash=(10, 5),
+                                       tags="extent_polygon")
+                # Zeige Rechteck-Vorschau
+                self.canvas.create_rectangle(p1[0], p1[1], p2[0], p2[1],
+                                            outline="#00ffff", width=1, dash=(5, 5),
+                                            tags="extent_polygon")
+        
+        # === EXTENT-PUNKTE ANZEIGEN ===
+        for i, (ex, ey) in enumerate(self.extent_hexagons):
+            cx_canvas, cy_canvas = self._map_to_canvas(ex, ey)
+            
+            # Kreis um den Punkt
+            r = int(12 * self.zoom)
+            self.canvas.create_oval(cx_canvas - r, cy_canvas - r, 
+                                   cx_canvas + r, cy_canvas + r,
+                                   outline="#00ffff", width=3, fill="",
+                                   tags="extent_point")
+            
+            # Nummer anzeigen
+            self.canvas.create_text(cx_canvas, cy_canvas, 
+                                   text=f"{i+1}",
+                                   font=("Arial", 10, "bold"), fill="#ffffff",
+                                   tags="extent_point")
     
     def _draw_hexagon(self, tile: HexTile):
         """Zeichne ein einzelnes Hexagon"""
@@ -1268,8 +1818,14 @@ class HexagonMapEditor(tk.Toplevel):
         
         # Zeichne gefülltes Hexagon (halbtransparent wenn Hintergrundbild)
         if self.bg_image:
-            # Nur Umriss wenn Hintergrund vorhanden
-            self.canvas.create_polygon(canvas_vertices, outline=color, width=2, fill="")
+            # Mit Hintergrundbild: Zeige fill_color als halbtransparenten Fill
+            if tile.fill_color:
+                # Zeichne gefülltes Hex mit extrahierter Farbe (leicht transparent wirkt durch stipple)
+                self.canvas.create_polygon(canvas_vertices, outline=color, width=2, 
+                                          fill=tile.fill_color, stipple="gray50")
+            else:
+                # Nur Umriss wenn keine Farbe extrahiert
+                self.canvas.create_polygon(canvas_vertices, outline=color, width=2, fill="")
         else:
             self.canvas.create_polygon(canvas_vertices, fill=color, outline="#333333", width=1)
         

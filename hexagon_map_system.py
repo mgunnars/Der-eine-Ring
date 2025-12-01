@@ -98,6 +98,9 @@ class HexTile:
     terrain_name: str = ""  # Custom name wie "Alter Wald von Mirkwood"
     difficulty_modifier: float = 0.0  # Zusätzlicher Modifikator
     
+    # Füllfarbe (aus Hintergrundbild extrahiert)
+    fill_color: Optional[str] = None  # Hex-Farbe wie "#A0C050"
+    
     # Events
     events: List[Dict] = field(default_factory=list)
     
@@ -127,7 +130,9 @@ class HexTile:
     
     @property
     def display_color(self) -> str:
-        """Farbe basierend auf Terrain"""
+        """Farbe basierend auf fill_color (aus Bild) oder Terrain"""
+        if self.fill_color:
+            return self.fill_color
         return self.terrain_type.color
     
     def add_event(self, event: TileEvent):
@@ -146,6 +151,7 @@ class HexTile:
             "terrain": self.terrain,
             "terrain_name": self.terrain_name,
             "difficulty_modifier": self.difficulty_modifier,
+            "fill_color": self.fill_color,
             "events": self.events,
             "local_weather": self.local_weather,
             "weather_intensity": self.weather_intensity,
