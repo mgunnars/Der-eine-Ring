@@ -762,6 +762,8 @@ class DerEineRingProApp(tk.Tk):
             return
         
         try:
+            from PIL import Image
+            
             # Lade die Hexagon-Map
             hex_map = HexagonMap.load(map_path)
             
@@ -778,6 +780,40 @@ class DerEineRingProApp(tk.Tk):
             # Editor mit geladener Map öffnen
             editor = HexagonMapEditor(self, hex_map)
             editor.current_file_path = map_path  # Merke Dateipfad für Speichern
+            
+            # ===== WICHTIG: Lade Hintergrundbild wenn vorhanden =====
+            bg_path = getattr(hex_map, 'background_image_path', None)
+            if bg_path and os.path.exists(bg_path):
+                try:
+                    # Prüfe ob SVG oder Bild
+                    if bg_path.lower().endswith('.svg'):
+                        try:
+                            import cairosvg
+                            from io import BytesIO
+                            print(f"🖼️ Lade SVG-Hintergrund: {bg_path}")
+                            png_data = cairosvg.svg2png(url=bg_path, scale=1)
+                            editor.bg_image = Image.open(BytesIO(png_data))
+                        except ImportError:
+                            print(f"⚠️ cairosvg nicht installiert, SVG-Hintergrund wird nicht angezeigt")
+                            editor.bg_image = None
+                    else:
+                        print(f"🖼️ Lade Hintergrundbild: {bg_path}")
+                        editor.bg_image = Image.open(bg_path)
+                    
+                    if editor.bg_image:
+                        editor.bg_image_path = bg_path
+                        editor.bg_visible = getattr(hex_map, 'background_visible', True)
+                        editor.bg_on_top = getattr(hex_map, 'background_on_top', False)
+                        editor.bg_visible_var.set(editor.bg_visible)
+                        editor.bg_on_top_var.set(editor.bg_on_top)
+                        print(f"✅ Hintergrundbild geladen: {editor.bg_image.size}")
+                        editor._redraw()
+                except Exception as e:
+                    print(f"⚠️ Hintergrundbild konnte nicht geladen werden: {e}")
+            else:
+                if bg_path:
+                    print(f"⚠️ Hintergrundbild nicht gefunden: {bg_path}")
+            # ==========================================================
             
             if UI_FRAMEWORK_AVAILABLE:
                 WindowManager.register("hexagon_editor", editor)

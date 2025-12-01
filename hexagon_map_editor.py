@@ -1135,12 +1135,30 @@ class HexagonMapEditor(tk.Toplevel):
             bg_path = getattr(self.hex_map, 'background_image_path', None)
             if bg_path and os.path.exists(bg_path):
                 try:
-                    self.bg_image = Image.open(bg_path)
-                    self.bg_image_path = bg_path
-                    print(f"🖼️ Hintergrundbild geladen: {bg_path}")
+                    # Prüfe ob SVG oder Bild
+                    if bg_path.lower().endswith('.svg'):
+                        try:
+                            import cairosvg
+                            from io import BytesIO
+                            print(f"🖼️ Lade SVG-Hintergrund: {bg_path}")
+                            png_data = cairosvg.svg2png(url=bg_path, scale=1)
+                            self.bg_image = Image.open(BytesIO(png_data))
+                        except ImportError:
+                            print(f"⚠️ cairosvg nicht installiert, SVG-Hintergrund wird nicht angezeigt")
+                            self.bg_image = None
+                    else:
+                        print(f"🖼️ Lade Hintergrundbild: {bg_path}")
+                        self.bg_image = Image.open(bg_path)
+                    
+                    if self.bg_image:
+                        self.bg_image_path = bg_path
+                        print(f"✅ Hintergrundbild geladen: {self.bg_image.size}")
                 except Exception as e:
                     print(f"⚠️ Hintergrundbild konnte nicht geladen werden: {e}")
                     self.bg_image = None
+            else:
+                if bg_path:
+                    print(f"⚠️ Hintergrundbild nicht gefunden: {bg_path}")
             
             self._update_stats()
             self._redraw()
