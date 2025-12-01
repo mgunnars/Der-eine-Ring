@@ -334,6 +334,7 @@ class HexagonMapEditor(tk.Toplevel):
         # Background image
         self.bg_image: Optional[Image.Image] = None
         self.bg_photo: Optional[ImageTk.PhotoImage] = None
+        self.bg_image_path: Optional[str] = None  # Pfad zum Hintergrundbild
         self.bg_visible: bool = True  # Hintergrund sichtbar?
         self.bg_opacity: float = 1.0  # Hintergrund-Transparenz (0-1)
         self.bg_on_top: bool = False  # Hintergrund über Tiles?
@@ -417,22 +418,6 @@ class HexagonMapEditor(tk.Toplevel):
                  bg="#17a2b8", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
         
-        # Separator
-        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=8)
-        
-        # Hintergrund-Steuerung
-        tk.Button(toolbar, text="🖼️ BG ein/aus", command=self._toggle_background,
-                 bg="#6c757d", fg="white", font=("Arial", 10),
-                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
-        
-        tk.Button(toolbar, text="⬆️ BG oben", command=self._toggle_bg_on_top,
-                 bg="#6c757d", fg="white", font=("Arial", 10),
-                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
-        
-        tk.Button(toolbar, text="🗑️ BG entfernen", command=self._remove_background,
-                 bg="#dc3545", fg="white", font=("Arial", 10),
-                 relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=2, pady=8)
-        
         # Random Events
         tk.Button(toolbar, text="🎲 Zufalls-Events", command=self._random_events_dialog,
                  bg="#16213e", fg="white", font=("Arial", 10),
@@ -450,14 +435,66 @@ class HexagonMapEditor(tk.Toplevel):
         self.canvas = tk.Canvas(canvas_frame, bg="#2a2a2a", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         
-        # === SIDEBAR ===
-        sidebar = tk.Frame(main_paned, bg="#16213e", width=280)
-        main_paned.add(sidebar)
+        # === SIDEBAR mit Scrollbar ===
+        sidebar_container = tk.Frame(main_paned, bg="#16213e", width=280)
+        main_paned.add(sidebar_container)
         
-        self._create_sidebar(sidebar)
+        # Canvas für Scrollbar
+        sidebar_canvas = tk.Canvas(sidebar_container, bg="#16213e", highlightthickness=0)
+        scrollbar = tk.Scrollbar(sidebar_container, orient=tk.VERTICAL, command=sidebar_canvas.yview)
+        
+        self.sidebar_frame = tk.Frame(sidebar_canvas, bg="#16213e")
+        
+        sidebar_canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        sidebar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        sidebar_window = sidebar_canvas.create_window((0, 0), window=self.sidebar_frame, anchor=tk.NW)
+        
+        def configure_scroll(event):
+            sidebar_canvas.configure(scrollregion=sidebar_canvas.bbox("all"))
+            sidebar_canvas.itemconfig(sidebar_window, width=event.width)
+        
+        self.sidebar_frame.bind("<Configure>", configure_scroll)
+        
+        # Mausrad-Scrolling
+        def on_mousewheel(event):
+            sidebar_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        sidebar_canvas.bind_all("<MouseWheel>", on_mousewheel)
+        
+        self._create_sidebar(self.sidebar_frame)
     
     def _create_sidebar(self, parent):
         """Erstelle Sidebar mit Tool-Optionen"""
+        
+        # === HINTERGRUND-STEUERUNG (oben für bessere Sichtbarkeit) ===
+        tk.Label(parent, text="🖼️ HINTERGRUND", font=("Arial", 12, "bold"),
+                bg="#16213e", fg="#e94560").pack(anchor=tk.W, padx=10, pady=(10, 5))
+        
+        bg_frame = tk.Frame(parent, bg="#16213e")
+        bg_frame.pack(fill=tk.X, padx=10)
+        
+        # Sichtbarkeit Toggle
+        self.bg_visible_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(bg_frame, text="Hintergrund sichtbar", 
+                      variable=self.bg_visible_var,
+                      bg="#16213e", fg="white", selectcolor="#0f3460",
+                      activebackground="#16213e",
+                      command=self._toggle_background_var).pack(anchor=tk.W)
+        
+        # Layer Toggle
+        self.bg_on_top_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(bg_frame, text="Hintergrund über Tiles", 
+                      variable=self.bg_on_top_var,
+                      bg="#16213e", fg="white", selectcolor="#0f3460",
+                      activebackground="#16213e",
+                      command=self._toggle_bg_on_top_var).pack(anchor=tk.W)
+        
+        # Entfernen Button
+        tk.Button(bg_frame, text="🗑️ Hintergrund entfernen", 
+                 command=self._remove_background,
+                 bg="#dc3545", fg="white", font=("Arial", 9),
+                 relief=tk.FLAT).pack(fill=tk.X, pady=(5, 0))
         
         # === TERRAIN PALETTE ===
         tk.Label(parent, text="🗺️ TERRAIN", font=("Arial", 12, "bold"),
@@ -665,6 +702,7 @@ class HexagonMapEditor(tk.Toplevel):
         
         # Lade Hintergrundbild ZUERST
         self.bg_image = None
+        self.bg_image_path = filepath  # Speichere Pfad für späteres Speichern
         
         if filepath.lower().endswith('.svg'):
             # SVG -> PNG konvertieren
@@ -677,6 +715,7 @@ class HexagonMapEditor(tk.Toplevel):
                 self.bg_image = Image.open(BytesIO(png_data))
                 self.hex_map.image_width = self.bg_image.width
                 self.hex_map.image_height = self.bg_image.height
+                self.hex_map.background_image_path = filepath
                 print(f"✅ SVG als Hintergrund geladen: {self.bg_image.size}", flush=True)
                 
             except ImportError as ie:
@@ -691,6 +730,7 @@ class HexagonMapEditor(tk.Toplevel):
                 self.bg_image = Image.open(filepath)
                 self.hex_map.image_width = self.bg_image.width
                 self.hex_map.image_height = self.bg_image.height
+                self.hex_map.background_image_path = filepath
                 print(f"✅ Bild geladen: {self.bg_image.size}", flush=True)
             except Exception as e:
                 print(f"⚠️ Konnte Bild nicht laden: {e}", flush=True)
@@ -908,8 +948,10 @@ class HexagonMapEditor(tk.Toplevel):
         
         try:
             self.bg_image = Image.open(filepath)
+            self.bg_image_path = filepath  # Speichere Pfad für späteres Speichern
             self.hex_map.image_width = self.bg_image.width
             self.hex_map.image_height = self.bg_image.height
+            self.hex_map.background_image_path = filepath
             print(f"✅ Bild geladen: {self.bg_image.size}")
             
             # Zeige Info und frage nach Grid-Erstellung
@@ -1030,6 +1072,12 @@ class HexagonMapEditor(tk.Toplevel):
             filetypes=[("JSON Dateien", "*.json"), ("Alle Dateien", "*.*")]
         )
         if filepath:
+            # Speichere Hintergrund-Einstellungen in hex_map
+            if hasattr(self, 'bg_image_path') and self.bg_image_path:
+                self.hex_map.background_image_path = self.bg_image_path
+            self.hex_map.background_visible = self.bg_visible
+            self.hex_map.background_on_top = self.bg_on_top
+            
             self.hex_map.save(filepath)
             self.current_file_path = filepath
             messagebox.showinfo("Gespeichert", f"Karte gespeichert:\n{filepath}")
@@ -1044,6 +1092,24 @@ class HexagonMapEditor(tk.Toplevel):
             self.hex_map = HexagonMap.load(filepath)
             self.current_file_path = filepath
             self.title(f"🔷 Hexagon-Editor: {self.hex_map.name}")
+            
+            # Lade Hintergrund-Einstellungen
+            self.bg_visible = getattr(self.hex_map, 'background_visible', True)
+            self.bg_on_top = getattr(self.hex_map, 'background_on_top', False)
+            self.bg_visible_var.set(self.bg_visible)
+            self.bg_on_top_var.set(self.bg_on_top)
+            
+            # Lade Hintergrundbild wenn vorhanden
+            bg_path = getattr(self.hex_map, 'background_image_path', None)
+            if bg_path and os.path.exists(bg_path):
+                try:
+                    self.bg_image = Image.open(bg_path)
+                    self.bg_image_path = bg_path
+                    print(f"🖼️ Hintergrundbild geladen: {bg_path}")
+                except Exception as e:
+                    print(f"⚠️ Hintergrundbild konnte nicht geladen werden: {e}")
+                    self.bg_image = None
+            
             self._update_stats()
             self._redraw()
     
@@ -1709,9 +1775,24 @@ class HexagonMapEditor(tk.Toplevel):
         # Zeichne neu mit Terrain-Farben
         self._redraw()
     
+    def _toggle_background_var(self):
+        """Toggle Hintergrund über Checkbox-Variable"""
+        self.bg_visible = self.bg_visible_var.get()
+        status = "sichtbar" if self.bg_visible else "ausgeblendet"
+        print(f"🖼️ Hintergrund: {status}")
+        self._redraw()
+    
+    def _toggle_bg_on_top_var(self):
+        """Toggle Hintergrund-Layer über Checkbox-Variable"""
+        self.bg_on_top = self.bg_on_top_var.get()
+        status = "über Tiles" if self.bg_on_top else "unter Tiles"
+        print(f"🖼️ Hintergrund: {status}")
+        self._redraw()
+    
     def _toggle_background(self):
         """Schalte Hintergrund-Sichtbarkeit um"""
         self.bg_visible = not self.bg_visible
+        self.bg_visible_var.set(self.bg_visible)
         status = "sichtbar" if self.bg_visible else "ausgeblendet"
         print(f"🖼️ Hintergrund: {status}")
         self._redraw()
@@ -1719,6 +1800,7 @@ class HexagonMapEditor(tk.Toplevel):
     def _toggle_bg_on_top(self):
         """Schalte Hintergrund zwischen oben/unten"""
         self.bg_on_top = not self.bg_on_top
+        self.bg_on_top_var.set(self.bg_on_top)
         status = "über Tiles" if self.bg_on_top else "unter Tiles"
         print(f"🖼️ Hintergrund: {status}")
         self._redraw()
