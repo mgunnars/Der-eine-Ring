@@ -949,18 +949,32 @@ class JournalEditor(tk.Frame):
 class JournalWindow(tk.Toplevel):
     """Hauptfenster für das Journal-System"""
     
-    def __init__(self, parent: tk.Tk):
+    def __init__(self, parent: tk.Tk, journal_manager: JournalManager = None):
         super().__init__(parent)
         
         self.title("📚 Journal & Notizen")
-        self.geometry("1000x700")
-        self.minsize(800, 500)
         self.configure(bg=UIColors.BG_DARK)
         
-        self.journal_manager = JournalManager()
+        # Fenster zentriert auf Bildschirm platzieren
+        self._center_on_screen(1000, 700)
+        self.minsize(800, 500)
+        
+        self.journal_manager = journal_manager or JournalManager()
         
         self._create_widgets()
         self._create_menu()
+    
+    def _center_on_screen(self, width: int, height: int):
+        """Zentriert Fenster und passt an Bildschirmgröße an"""
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        # Maximalgröße begrenzen
+        width = min(width, screen_w - 100)
+        height = min(height, screen_h - 100)
+        x = max(50, (screen_w - width) // 2)
+        y = max(30, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
     
     def _create_widgets(self):
         """UI aufbauen"""

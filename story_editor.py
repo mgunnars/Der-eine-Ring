@@ -48,15 +48,24 @@ class StoryEditor(tk.Toplevel):
         self.title("🎬 Story Editor - Der Eine Ring VTT")
         self.configure(bg="#1a1a2e")
         
-        # Fenstergröße
+        # Fenstergröße berechnen (passt auf Bildschirm)
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
-        w = min(1400, screen_w - 100)
-        h = min(900, screen_h - 100)
-        x = (screen_w - w) // 2
-        y = (screen_h - h) // 2
+        
+        # Maximalgröße: 90% des Bildschirms, aber nicht mehr als gewünscht
+        w = min(1400, int(screen_w * 0.9))
+        h = min(900, int(screen_h * 0.85))  # 85% für Taskleiste
+        
+        # Zentrieren mit Sicherheitsabstand
+        x = max(50, (screen_w - w) // 2)
+        y = max(30, (screen_h - h) // 2)
+        
+        # Sicherstellen, dass Fenster nicht abgeschnitten wird
+        if y + h > screen_h - 60:  # Taskleiste berücksichtigen
+            y = max(30, screen_h - h - 60)
+        
         self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(1000, 700)
+        self.minsize(900, 600)  # Reduzierte Mindestgröße
         
         # Storyboard
         self.storyboard = storyboard or Storyboard(name="Neues Abenteuer")

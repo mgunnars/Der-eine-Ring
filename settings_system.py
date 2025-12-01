@@ -885,9 +885,22 @@ class SettingsWindow(tk.Toplevel):
         self.settings_manager = settings_manager
         
         self.title("⚙️ Einstellungen")
-        self.geometry("800x600")
-        self.minsize(700, 500)
         self.configure(bg=UIColors.BG_DARK)
+        
+        # Fenster zentriert auf Bildschirm platzieren
+        self._center_on_screen(800, 600)
+        self.minsize(700, 500)
+    
+    def _center_on_screen(self, width: int, height: int):
+        """Zentriert Fenster und passt an Bildschirmgröße an"""
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(width, screen_w - 100)
+        height = min(height, screen_h - 100)
+        x = max(50, (screen_w - width) // 2)
+        y = max(30, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
         
         self.show_advanced = False
         self.pending_restart = False

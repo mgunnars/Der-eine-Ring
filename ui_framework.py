@@ -139,6 +139,89 @@ class UIIcons:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# GLOBALE HELPER-FUNKTIONEN
+# ═══════════════════════════════════════════════════════════════════════════
+
+def center_window(window: tk.Toplevel, width: int = None, height: int = None):
+    """
+    Zentriert ein Fenster auf dem Bildschirm und stellt sicher,
+    dass es vollständig sichtbar ist (nicht abgeschnitten).
+    
+    Args:
+        window: Das zu zentrierende Toplevel-Fenster
+        width: Gewünschte Breite (optional, sonst wird aktuelle genommen)
+        height: Gewünschte Höhe (optional, sonst wird aktuelle genommen)
+    """
+    window.update_idletasks()
+    
+    # Bildschirmgröße
+    screen_w = window.winfo_screenwidth()
+    screen_h = window.winfo_screenheight()
+    
+    # Fenstergröße (wenn nicht angegeben, aktuelle nehmen)
+    if width is None:
+        width = window.winfo_width()
+        if width < 50:  # Fenster noch nicht gerendert
+            width = window.winfo_reqwidth()
+    if height is None:
+        height = window.winfo_height()
+        if height < 50:
+            height = window.winfo_reqheight()
+    
+    # Maximalgröße auf Bildschirm begrenzen (mit Rand)
+    max_w = screen_w - 100
+    max_h = screen_h - 100
+    width = min(width, max_w)
+    height = min(height, max_h)
+    
+    # Position berechnen (zentriert)
+    x = max(50, (screen_w - width) // 2)
+    y = max(30, (screen_h - height) // 2)
+    
+    # Sicherstellen, dass Fenster vollständig auf Bildschirm ist
+    if x + width > screen_w - 20:
+        x = screen_w - width - 20
+    if y + height > screen_h - 60:  # Taskleiste berücksichtigen
+        y = screen_h - height - 60
+    
+    window.geometry(f"{width}x{height}+{x}+{y}")
+
+
+def ensure_minimum_size(window: tk.Toplevel, min_width: int = 400, min_height: int = 300):
+    """Stellt Mindestgröße für ein Fenster sicher"""
+    window.minsize(min_width, min_height)
+
+
+def fit_window_to_screen(window: tk.Toplevel, 
+                         preferred_width: int, 
+                         preferred_height: int,
+                         min_width: int = 400,
+                         min_height: int = 300):
+    """
+    Passt Fenstergröße an Bildschirm an und zentriert.
+    Verhindert zu große oder abgeschnittene Fenster.
+    """
+    window.update_idletasks()
+    
+    screen_w = window.winfo_screenwidth()
+    screen_h = window.winfo_screenheight()
+    
+    # Größe anpassen (max 90% des Bildschirms)
+    width = min(preferred_width, int(screen_w * 0.9))
+    height = min(preferred_height, int(screen_h * 0.85))
+    
+    # Mindestgröße einhalten
+    width = max(width, min_width)
+    height = max(height, min_height)
+    
+    # Mindestgröße setzen
+    window.minsize(min_width, min_height)
+    
+    # Zentrieren
+    center_window(window, width, height)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # WINDOW MANAGER - Zentrale Fenster-Verwaltung
 # ═══════════════════════════════════════════════════════════════════════════
 

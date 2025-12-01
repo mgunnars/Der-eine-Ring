@@ -587,13 +587,26 @@ class MacroEditDialog(tk.Toplevel):
         self.on_save = on_save
         
         self.title(f"Makro bearbeiten: {macro.name}")
-        self.geometry("500x600")
-        self.minsize(400, 500)
         self.configure(bg=UIColors.BG_DARK)
         self.transient(parent)
         self.grab_set()
         
+        # Fenster zentriert platzieren
+        self._center_on_screen(500, 600)
+        self.minsize(400, 500)
+        
         self._create_widgets()
+    
+    def _center_on_screen(self, width: int, height: int):
+        """Zentriert Fenster"""
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(width, screen_w - 100)
+        height = min(height, screen_h - 100)
+        x = max(50, (screen_w - width) // 2)
+        y = max(30, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
     
     def _create_widgets(self):
         """UI aufbauen"""
@@ -968,11 +981,24 @@ class MacroManagerWindow(tk.Toplevel):
         self.on_change = on_change
         
         self.title("Makro-Manager")
-        self.geometry("600x500")
-        self.minsize(500, 400)
         self.configure(bg=UIColors.BG_DARK)
         
+        # Fenster zentriert platzieren
+        self._center_on_screen(600, 500)
+        self.minsize(500, 400)
+        
         self._create_widgets()
+    
+    def _center_on_screen(self, width: int, height: int):
+        """Zentriert Fenster"""
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(width, screen_w - 100)
+        height = min(height, screen_h - 100)
+        x = max(50, (screen_w - width) // 2)
+        y = max(30, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
     
     def _create_widgets(self):
         """UI aufbauen"""

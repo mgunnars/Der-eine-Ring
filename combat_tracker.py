@@ -686,16 +686,27 @@ class CombatTrackerWindow(tk.Toplevel):
         
         self.title("⚔️ Combat Tracker")
         
-        # Größe
-        self.geometry("500x600")
-        self.minsize(400, 500)
-        
         bg = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1e1e1e"
         self.configure(bg=bg)
+        
+        # Fenster zentriert auf Bildschirm platzieren
+        self._center_on_screen(500, 650)
+        self.minsize(400, 500)
         
         # Combat Tracker Panel
         self.tracker = CombatTrackerPanel(self, encounter, token_layer)
         self.tracker.pack(fill=tk.BOTH, expand=True)
+    
+    def _center_on_screen(self, width: int, height: int):
+        """Zentriert Fenster und passt an Bildschirmgröße an"""
+        self.update_idletasks()
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(width, screen_w - 100)
+        height = min(height, screen_h - 100)
+        x = max(50, (screen_w - width) // 2)
+        y = max(30, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
