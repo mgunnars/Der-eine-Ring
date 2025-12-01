@@ -568,6 +568,9 @@ class GamemasterControlPanel(tk.Toplevel):
         # Canvas leeren
         self.fog_map_canvas.delete("all")
         
+        # Reset Hexagon-Mode Flag
+        self.fog_map_canvas.is_hexagon_mode = False
+        
         # SVG-Modus: Parse SVG und rendere Tiles
         if self.projector_window.is_svg_mode:
             self.update_fog_map_svg()
@@ -575,6 +578,12 @@ class GamemasterControlPanel(tk.Toplevel):
         
         # JSON-Modus: Map-Daten holen
         map_data = self.projector_window.map_data
+        
+        # Hexagon-Map-Erkennung: Prüfe auf hex_size
+        if map_data.get("hex_size"):
+            self.update_fog_map_hexagon()
+            return
+        
         width = map_data.get("width", 50)
         height = map_data.get("height", 50)
         tiles = map_data.get("tiles", [])
@@ -725,6 +734,166 @@ class GamemasterControlPanel(tk.Toplevel):
             # Fallback: Einfache farbige Rechtecke (8px Tiles)
             self.fog_map_canvas.tile_size = 8
     
+    def update_fog_map_hexagon(self):
+        """Zeichnet die interaktive Fog-Karte für Hexagon-Maps"""
+        import math
+        
+        map_data = self.projector_window.map_data
+        hex_size = map_data.get("hex_size", 40)
+        tiles = map_data.get("tiles", {})
+        orientation = map_data.get("orientation", "pointy")
+        
+        # Terrain-Farben (passend zu Hexagon-Map-Terrain-Typen)
+        terrain_colors = {
+            "PLAINS": "#6ba868",
+            "DARK_FOREST": "#2d4a2d",
+            "FOREST": "#3d6b3d",
+            "MOUNTAINS": "#8a8a8a",
+            "WATER": "#4db8c4",
+            "SWAMP": "#5a7a5a",
+            "HILLS": "#9a9a6a",
+            "ROAD": "#8a7f6f",
+            "VILLAGE": "#b8956f",
+            "default": "#4a4a4a"
+        }
+        
+        if not tiles:
+            return
+        
+        # Berechne Bounding-Box der Hexagone
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+        
+        for key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                cx = tile_data.get("center_x", 0)
+                cy = tile_data.get("center_y", 0)
+            else:
+                # Fallback: Koordinaten aus Key berechnen
+                parts = key.split(",")
+                if len(parts) == 2:
+                    q, r = int(parts[0]), int(parts[1])
+                    if orientation == "pointy":
+                        cx = hex_size * 1.5 * q
+                        cy = hex_size * math.sqrt(3) * (r + q / 2)
+                    else:
+                        cx = hex_size * math.sqrt(3) * (q + r / 2)
+                        cy = hex_size * 1.5 * r
+                else:
+                    continue
+            
+            min_x = min(min_x, cx)
+            min_y = min(min_y, cy)
+            max_x = max(max_x, cx)
+            max_y = max(max_y, cy)
+        
+        # Skalierung für GM-Panel (passe Hexagon-Größe an Canvas-Größe an)
+        map_width = max_x - min_x + hex_size * 2
+        map_height = max_y - min_y + hex_size * 2
+        
+        # Canvas-Breite (max 400px, Höhe proportional)
+        max_canvas_width = 400
+        scale = min(1.0, max_canvas_width / map_width) if map_width > 0 else 0.5
+        
+        mini_hex_size = hex_size * scale
+        canvas_width = int(map_width * scale)
+        canvas_height = int(map_height * scale)
+        
+        # Offset zum Zentrieren
+        offset_x = (hex_size - min_x) * scale
+        offset_y = (hex_size - min_y) * scale
+        
+        # Speichere Hexagon-Daten für Klick-Handler
+        self.fog_map_canvas.hex_tiles = {}
+        self.fog_map_canvas.hex_size = mini_hex_size
+        self.fog_map_canvas.hex_scale = scale
+        self.fog_map_canvas.hex_offset_x = offset_x
+        self.fog_map_canvas.hex_offset_y = offset_y
+        self.fog_map_canvas.is_hexagon_mode = True
+        
+        # Zeichne jedes Hexagon
+        for key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                terrain = tile_data.get("terrain", "PLAINS")
+                cx = tile_data.get("center_x", 0)
+                cy = tile_data.get("center_y", 0)
+            else:
+                terrain = tile_data if isinstance(tile_data, str) else "PLAINS"
+                parts = key.split(",")
+                if len(parts) == 2:
+                    q, r = int(parts[0]), int(parts[1])
+                    if orientation == "pointy":
+                        cx = hex_size * 1.5 * q
+                        cy = hex_size * math.sqrt(3) * (r + q / 2)
+                    else:
+                        cx = hex_size * math.sqrt(3) * (q + r / 2)
+                        cy = hex_size * 1.5 * r
+                else:
+                    continue
+            
+            # Skalierte Koordinaten
+            scaled_cx = cx * scale + offset_x
+            scaled_cy = cy * scale + offset_y
+            
+            # Terrain-Farbe
+            color = terrain_colors.get(terrain, terrain_colors["default"])
+            
+            # Hexagon-Punkte berechnen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = scaled_cx + mini_hex_size * 0.9 * math.cos(angle)
+                py = scaled_cy + mini_hex_size * 0.9 * math.sin(angle)
+                points.append((px, py))
+            
+            # Zeichne Hexagon
+            hex_id = self.fog_map_canvas.create_polygon(
+                points, fill=color, outline="#303030", width=1, tags=f"hex_{key}"
+            )
+            
+            # Speichere für Klick-Erkennung
+            self.fog_map_canvas.hex_tiles[key] = {
+                "id": hex_id,
+                "center": (scaled_cx, scaled_cy),
+                "terrain": terrain
+            }
+        
+        # Fog-Overlay für verdeckte Bereiche
+        # (Hexagon-Maps nutzen das Fog-System des Projektors)
+        if hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+            fog_grid = self.projector_window.fog.grid
+            fog_width = self.projector_window.fog.width
+            fog_height = self.projector_window.fog.height
+            
+            for key, tile_info in self.fog_map_canvas.hex_tiles.items():
+                cx, cy = tile_info["center"]
+                
+                # Berechne Fog-Grid-Position (approximativ)
+                fog_x = int((cx / canvas_width) * fog_width) if canvas_width > 0 else 0
+                fog_y = int((cy / canvas_height) * fog_height) if canvas_height > 0 else 0
+                fog_x = max(0, min(fog_x, fog_width - 1))
+                fog_y = max(0, min(fog_y, fog_height - 1))
+                
+                if fog_y < len(fog_grid) and fog_x < len(fog_grid[fog_y]):
+                    if fog_grid[fog_y][fog_x] == 1:  # Verdeckt
+                        # Zeichne dunkles Overlay
+                        self.fog_map_canvas.itemconfig(
+                            tile_info["id"], 
+                            fill="#1a1a1a",
+                            stipple="gray50"
+                        )
+        
+        # Scroll-Region setzen
+        self.fog_map_canvas.config(scrollregion=(0, 0, canvas_width, canvas_height))
+        
+        # Event-Bindings
+        self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
+        self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
+        self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
+    
     def on_fog_map_left_click(self, event):
         """Linksklick auf Karte = Bereich enthüllen"""
         self._fog_map_click(event, reveal=True)
@@ -746,6 +915,11 @@ class GamemasterControlPanel(tk.Toplevel):
         # canvasx/canvasy konvertieren zur absoluten Position im Canvas
         canvas_x = self.fog_map_canvas.canvasx(event.x)
         canvas_y = self.fog_map_canvas.canvasy(event.y)
+        
+        # Hexagon-Modus: Finde geklicktes Hexagon
+        if getattr(self.fog_map_canvas, 'is_hexagon_mode', False):
+            self._fog_map_click_hexagon(canvas_x, canvas_y, reveal)
+            return
         
         # Map-Dimensionen
         map_width = self.projector_window.fog.width
@@ -797,9 +971,83 @@ class GamemasterControlPanel(tk.Toplevel):
         # Eigene Karte lokal updaten (schneller)
         self._update_fog_tiles_local(x1, y1, x2, y2, reveal)
     
+    def _fog_map_click_hexagon(self, canvas_x, canvas_y, reveal):
+        """Verarbeitet Klick auf Hexagon-Fog-Karte"""
+        import math
+        
+        hex_tiles = getattr(self.fog_map_canvas, 'hex_tiles', {})
+        hex_size = getattr(self.fog_map_canvas, 'hex_size', 20)
+        
+        if not hex_tiles:
+            return
+        
+        # Finde das nächste Hexagon zum Klickpunkt
+        closest_hex = None
+        closest_dist = float('inf')
+        
+        for key, tile_info in hex_tiles.items():
+            cx, cy = tile_info["center"]
+            dist = math.sqrt((canvas_x - cx)**2 + (canvas_y - cy)**2)
+            if dist < closest_dist and dist < hex_size * 1.2:
+                closest_dist = dist
+                closest_hex = key
+        
+        if not closest_hex:
+            return
+        
+        # Berechne Fog-Grid-Position für dieses Hexagon
+        tile_info = hex_tiles[closest_hex]
+        cx, cy = tile_info["center"]
+        
+        # Hole Canvas-Scrollregion (die tatsächliche Bildgröße)
+        scrollregion = self.fog_map_canvas.cget('scrollregion')
+        if scrollregion:
+            coords = [float(x) for x in scrollregion.split()]
+            canvas_width = coords[2] - coords[0]
+            canvas_height = coords[3] - coords[1]
+        else:
+            canvas_width = self.fog_map_canvas.winfo_width()
+            canvas_height = self.fog_map_canvas.winfo_height()
+        
+        # Map-Dimensionen (Fog-Grid)
+        map_width = self.projector_window.fog.width
+        map_height = self.projector_window.fog.height
+        
+        # Berechne Fog-Grid-Position
+        tile_x = int((cx / canvas_width) * map_width) if canvas_width > 0 else 0
+        tile_y = int((cy / canvas_height) * map_height) if canvas_height > 0 else 0
+        tile_x = max(0, min(tile_x, map_width - 1))
+        tile_y = max(0, min(tile_y, map_height - 1))
+        
+        # Brush-Größe (für Hexagone etwas größeren Bereich)
+        brush_size = self.fog_brush_size.get()
+        
+        # Bereich berechnen (Hexagon-angepasst)
+        x1 = max(0, tile_x - brush_size)
+        y1 = max(0, tile_y - brush_size)
+        x2 = min(map_width - 1, tile_x + brush_size)
+        y2 = min(map_height - 1, tile_y + brush_size)
+        
+        # Fog updaten
+        if reveal:
+            self.projector_window.fog.reveal_area(x1, y1, x2, y2)
+        else:
+            self.projector_window.fog.hide_area(x1, y1, x2, y2)
+        
+        # Projektor-Karte neu rendern
+        self.projector_window.render_map()
+        
+        # Hexagon-Karte aktualisieren
+        self.update_fog_map_hexagon()
+
     def _update_fog_tiles_local(self, x1, y1, x2, y2, reveal):
         """Updatet nur die geänderten Tiles lokal (Performance)"""
         if not hasattr(self, 'fog_map_canvas'):
+            return
+        
+        # Bei Hexagon-Mode: Komplettes Neu-Rendering
+        if getattr(self.fog_map_canvas, 'is_hexagon_mode', False):
+            self.update_fog_map_hexagon()
             return
         
         # Bei SVG-Mode: Komplettes Neu-Rendering nötig (kein Tile-basiertes Canvas)

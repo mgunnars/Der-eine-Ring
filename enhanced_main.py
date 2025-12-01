@@ -1040,8 +1040,46 @@ class DerEineRingProApp(tk.Tk):
                 tiles = map_data.get('tiles', [])
                 print(f"      Tiles: {len(tiles) if isinstance(tiles, list) else 'dict' if isinstance(tiles, dict) else 'keine'}")
                 
-                # Prüfe ob die JSON-Map einen SVG-Hintergrund hat
-                if map_data.get('is_svg_mode') and map_data.get('svg_path'):
+                # ===== HEXAGON-MAP ERKENNUNG =====
+                # Hexagon-Maps haben 'hex_size' und ein 'background_image_path'
+                if 'hex_size' in map_data:
+                    print(f"      📐 Hexagon-Map erkannt!")
+                    bg_path = map_data.get('background_image_path') or map_data.get('svg_source')
+                    if bg_path and os.path.exists(bg_path):
+                        svg_path = bg_path
+                        print(f"      🎨 Verwende Hintergrundbild: {os.path.basename(bg_path)}")
+                        
+                        # Konvertiere zu Bild-basierter Map für den Projektor
+                        from PIL import Image
+                        if bg_path.lower().endswith('.svg'):
+                            try:
+                                import cairosvg
+                                from io import BytesIO
+                                png_data = cairosvg.svg2png(url=bg_path, scale=1)
+                                img = Image.open(BytesIO(png_data))
+                            except:
+                                img = None
+                        else:
+                            img = Image.open(bg_path)
+                        
+                        if img:
+                            # Erstelle Map-Daten für den Projektor mit dem Bild als Hintergrund
+                            map_data = {
+                                "width": img.width // 32 + 1,
+                                "height": img.height // 32 + 1,
+                                "tile_size": 32,
+                                "background_image": bg_path,
+                                "tiles": {},  # Leere Tiles, Hintergrund wird angezeigt
+                                "name": map_data.get('name', 'Hexagon-Karte'),
+                                "is_hexagon_map": True
+                            }
+                            print(f"      ✅ Hexagon-Map konvertiert: {img.width}x{img.height}px")
+                    else:
+                        print(f"      ⚠️ Kein Hintergrundbild gefunden für Hexagon-Map")
+                # ===================================
+                
+                # Prüfe ob die JSON-Map einen SVG-Hintergrund hat (normale Maps)
+                elif map_data.get('is_svg_mode') and map_data.get('svg_path'):
                     svg_path = map_data.get('svg_path')
                     print(f"      🎨 SVG-Modus aktiv: {os.path.basename(svg_path)}")
                     
