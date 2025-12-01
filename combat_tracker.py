@@ -258,6 +258,13 @@ class CombatEncounter:
     
     def _next_round(self):
         """Startet neue Runde"""
+        # Sicherheitsprüfung: Keine aktiven Kämpfer mehr?
+        active_combatants = [c for c in self.combatants.values() if not c.is_defeated]
+        if not active_combatants or not self.turn_order:
+            # Kampf beenden wenn keine Kämpfer mehr
+            self.phase = CombatPhase.ENDED
+            return
+        
         self.current_round += 1
         self.current_turn_index = 0
         self.round_start_time = time.time()
@@ -273,13 +280,34 @@ class CombatEncounter:
     
     def _set_active_combatant(self):
         """Setzt aktuellen Kämpfer aktiv"""
-        # Überspringe besiegte Kämpfer
-        while (self.current_turn_index < len(self.turn_order) and
-               self.combatants.get(self.turn_order[self.current_turn_index], Combatant("", "")).is_defeated):
-            self.current_turn_index += 1
+        # Sicherheitsprüfung: Leere Zugliste
+        if not self.turn_order or not self.combatants:
+            return
         
+        # Überspringe besiegte Kämpfer (mit Limit um Endlosschleife zu vermeiden)
+        max_iterations = len(self.turn_order) + 1
+        iterations = 0
+        
+        while (self.current_turn_index < len(self.turn_order) and
+               iterations < max_iterations):
+            combatant = self.combatants.get(self.turn_order[self.current_turn_index])
+            if combatant and not combatant.is_defeated:
+                break
+            self.current_turn_index += 1
+            iterations += 1
+        
+        # Alle Kämpfer durchlaufen? -> Neue Runde (aber nicht rekursiv!)
         if self.current_turn_index >= len(self.turn_order):
-            self._next_round()
+            # Prüfe ob es noch aktive Kämpfer gibt
+            active = [c for c in self.combatants.values() if not c.is_defeated]
+            if active:
+                self.current_round += 1
+                self.current_turn_index = 0
+                for combatant in self.combatants.values():
+                    combatant.reset_turn()
+                # Rekursiv, aber nur einmal pro Runde
+                if self.current_turn_index < len(self.turn_order):
+                    self._set_active_combatant()
             return
         
         self.turn_start_time = time.time()

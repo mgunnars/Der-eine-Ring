@@ -26,6 +26,8 @@ class UIColors:
     # Hintergründe
     BG_DARK = "#0a0a0a"
     BG_DARKER = "#060606"
+    BG_MEDIUM = "#16213e"  # Mittlerer Hintergrund
+    BG_LIGHT = "#0f3460"   # Heller Hintergrund
     BG_PANEL = "#1a1a1a"
     BG_PANEL_LIGHT = "#2a2a2a"
     BG_INPUT = "#3a3a3a"

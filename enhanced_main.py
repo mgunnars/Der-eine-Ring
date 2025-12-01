@@ -157,107 +157,417 @@ class DerEineRingProApp(tk.Tk):
         return messagebox.askyesno(title, message)
     
     def setup_ui(self):
-        """Hauptmenü erstellen - verbessertes Layout"""
+        """Hauptmenü erstellen - FoundryVTT-inspiriertes Layout"""
         # Farben aus UI-Framework
         bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
         bg_panel = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        bg_medium = UIColors.BG_MEDIUM if UI_FRAMEWORK_AVAILABLE else "#16213e"
         accent_gold = UIColors.ACCENT_GOLD if UI_FRAMEWORK_AVAILABLE else "#d4af37"
         text_secondary = UIColors.TEXT_SECONDARY if UI_FRAMEWORK_AVAILABLE else "#888888"
         
-        # Header
-        header = tk.Frame(self, bg=bg_dark)
-        header.pack(fill=tk.X, pady=30)
+        # ═══════════════════════════════════════════════════════════════
+        # HAUPT-CONTAINER: 3-Spalten-Layout wie FoundryVTT
+        # ═══════════════════════════════════════════════════════════════
         
-        title_label = tk.Label(header, text="🗺️ Der Eine Ring", 
-                              font=("Arial", 36, "bold"),
-                              bg=bg_dark, fg=accent_gold)
-        title_label.pack()
+        # Header (ganz oben)
+        header = tk.Frame(self, bg=bg_dark, height=80)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
         
-        subtitle_label = tk.Label(header, text="Interaktiver Tabletop Kartenprojektor",
-                                 font=("Arial", 14),
-                                 bg=bg_dark, fg=text_secondary)
-        subtitle_label.pack(pady=5)
+        title_frame = tk.Frame(header, bg=bg_dark)
+        title_frame.pack(expand=True)
         
-        # Version mit Tastenkürzel-Hinweis
-        version_label = tk.Label(header, 
-                                text="V2.1 | F1=Hilfe, F2=Combat, F3=Journal, F4=Settings | Ctrl+E=Editor, Ctrl+P=Projektor",
-                                font=("Arial", 9),
-                                bg=bg_dark, fg="#555555")
-        version_label.pack(pady=2)
+        tk.Label(title_frame, text="🗺️ Der Eine Ring", 
+                font=("Arial", 28, "bold"),
+                bg=bg_dark, fg=accent_gold).pack(side=tk.LEFT, padx=10)
         
-        # Hauptbuttons - VERBESSERT mit Icon-Klasse und besseren Größen
-        button_frame = tk.Frame(self, bg=bg_dark)
-        button_frame.pack(expand=True)
+        tk.Label(title_frame, text="Virtual Tabletop",
+                font=("Arial", 12),
+                bg=bg_dark, fg=text_secondary).pack(side=tk.LEFT, padx=5, pady=8)
         
-        # Button-Definitionen: (text, icon, command, color)
-        buttons = [
-            ("Karten-Editor", "🎨", self.start_editor, "#2a7d2a"),
-            ("Projektor-Modus", "📺", self.start_projector, "#2a5d8d"),
-            ("Gamemaster Panel", "🎮", self.start_gm_panel, "#8b4513"),
-            ("Story Editor", "🎬", self.start_story_editor, "#9b2d6e"),
-            ("Combat Tracker", "⚔️", self.open_combat_tracker, "#c23616"),
-            ("Journal & Notizen", "📚", self.open_journal, "#6c5ce7"),
-            ("Karte laden", "📁", self.load_map, "#7d5d2a"),
-            ("PNG-Karte importieren", "🖼️", self.import_png_map, "#2a7d7d"),
-            ("Einstellungen", "⚙️", self.open_settings, "#636e72"),
-            ("Hilfe", "❓", self.show_help, "#555555"),
+        # Haupt-Content-Bereich
+        main_container = tk.Frame(self, bg=bg_dark)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # LINKE SEITE: Scene Controls (wie FoundryVTT)
+        # ═══════════════════════════════════════════════════════════════
+        left_toolbar = tk.Frame(main_container, bg=bg_panel, width=60)
+        left_toolbar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+        left_toolbar.pack_propagate(False)
+        
+        tk.Label(left_toolbar, text="TOOLS", font=("Arial", 8, "bold"),
+                bg=bg_panel, fg="#666").pack(pady=(10, 5))
+        
+        # Tool-Buttons (links)
+        tool_buttons = [
+            ("🎨", "Editor", self.start_editor, "Karten bearbeiten (Ctrl+E)"),
+            ("📺", "Projektor", self.start_projector, "Kartenprojektion (Ctrl+P)"),
+            ("🎮", "GM Panel", self.start_gm_panel, "Spielleiter-Kontrolle (Ctrl+G)"),
+            ("🎬", "Story", self.start_story_editor, "Story/Szenen Editor"),
         ]
         
-        for text, icon, command, color in buttons:
-            btn = tk.Button(button_frame, 
-                          text=f"{icon}  {text}", 
-                          font=("Arial", 14, "bold"),
-                          bg=color, fg="white",
-                          width=28, height=2,
-                          cursor="hand2",
-                          relief=tk.FLAT,
-                          activebackground=self._lighten_color(color),
-                          command=command)
-            btn.pack(pady=8, padx=20)
+        for icon, label, cmd, tooltip in tool_buttons:
+            btn_frame = tk.Frame(left_toolbar, bg=bg_panel)
+            btn_frame.pack(pady=5, padx=5, fill=tk.X)
             
-            # Hover-Effekt
+            btn = tk.Button(btn_frame, text=icon, font=("Arial", 18),
+                          bg="#2a2a2a", fg="white", width=2, height=1,
+                          relief=tk.FLAT, cursor="hand2", command=cmd)
+            btn.pack()
+            
+            lbl = tk.Label(btn_frame, text=label, font=("Arial", 7),
+                          bg=bg_panel, fg="#888")
+            lbl.pack()
+            
+            # Tooltip
+            self._create_tooltip(btn, tooltip)
+        
+        tk.Frame(left_toolbar, bg="#333", height=1).pack(fill=tk.X, pady=10)
+        
+        # Datei-Buttons
+        file_buttons = [
+            ("📁", "Laden", self.load_map, "Karte laden (Ctrl+O)"),
+            ("🖼️", "Import", self.import_png_map, "PNG importieren"),
+            ("📋", "Liste", self.show_map_list, "Gespeicherte Karten"),
+        ]
+        
+        for icon, label, cmd, tooltip in file_buttons:
+            btn_frame = tk.Frame(left_toolbar, bg=bg_panel)
+            btn_frame.pack(pady=5, padx=5, fill=tk.X)
+            
+            btn = tk.Button(btn_frame, text=icon, font=("Arial", 16),
+                          bg="#333", fg="white", width=2, height=1,
+                          relief=tk.FLAT, cursor="hand2", command=cmd)
+            btn.pack()
+            
+            lbl = tk.Label(btn_frame, text=label, font=("Arial", 7),
+                          bg=bg_panel, fg="#666")
+            lbl.pack()
+            
+            self._create_tooltip(btn, tooltip)
+        
+        # ═══════════════════════════════════════════════════════════════
+        # MITTE: Hauptbereich mit Willkommens-Info
+        # ═══════════════════════════════════════════════════════════════
+        center_frame = tk.Frame(main_container, bg=bg_dark)
+        center_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+        
+        # Willkommens-Bereich
+        welcome_frame = tk.Frame(center_frame, bg=bg_panel, relief=tk.FLAT)
+        welcome_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # Karten-Status
+        self.map_status_frame = tk.Frame(welcome_frame, bg=bg_panel)
+        self.map_status_frame.pack(fill=tk.X, padx=20, pady=20)
+        
+        self.map_status_icon = tk.Label(self.map_status_frame, text="🗺️",
+                                        font=("Arial", 48), bg=bg_panel, fg="#444")
+        self.map_status_icon.pack()
+        
+        self.map_status_label = tk.Label(self.map_status_frame,
+                                         text="Keine Karte geladen",
+                                         font=("Arial", 14), bg=bg_panel, fg="#666")
+        self.map_status_label.pack(pady=10)
+        
+        self.map_status_hint = tk.Label(self.map_status_frame,
+                                        text="Lade eine Karte oder erstelle eine neue im Editor",
+                                        font=("Arial", 10), bg=bg_panel, fg="#555")
+        self.map_status_hint.pack()
+        
+        # Quick Actions
+        quick_frame = tk.Frame(welcome_frame, bg=bg_panel)
+        quick_frame.pack(pady=30)
+        
+        tk.Label(quick_frame, text="Schnellstart", font=("Arial", 12, "bold"),
+                bg=bg_panel, fg="#888").pack(pady=(0, 15))
+        
+        quick_btns_frame = tk.Frame(quick_frame, bg=bg_panel)
+        quick_btns_frame.pack()
+        
+        quick_actions = [
+            ("Neue Karte erstellen", "#2a7d2a", self.start_editor),
+            ("Karte laden", "#2a5d8d", self.load_map),
+            ("Letzte Sitzung fortsetzen", "#7d5d2a", self._continue_session),
+        ]
+        
+        for text, color, cmd in quick_actions:
+            btn = tk.Button(quick_btns_frame, text=text,
+                          font=("Arial", 11), bg=color, fg="white",
+                          padx=20, pady=8, relief=tk.FLAT, cursor="hand2",
+                          command=cmd)
+            btn.pack(side=tk.LEFT, padx=5)
             btn.bind("<Enter>", lambda e, b=btn, c=color: b.config(bg=self._lighten_color(c)))
             btn.bind("<Leave>", lambda e, b=btn, c=color: b.config(bg=c))
         
-        # Status-Leiste unten
-        self._create_status_bar()
+        # Tastenkürzel-Hinweis
+        shortcut_frame = tk.Frame(welcome_frame, bg=bg_panel)
+        shortcut_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=20, padx=20)
+        
+        tk.Label(shortcut_frame, text="Tastenkürzel: F1=Hilfe | F2=Combat | F3=Journal | F4=Settings | Ctrl+E/P/G=Editor/Projektor/GM",
+                font=("Arial", 9), bg=bg_panel, fg="#555").pack()
+        
+        # ═══════════════════════════════════════════════════════════════
+        # RECHTE SEITE: Sidebar mit Tabs (wie FoundryVTT)
+        # ═══════════════════════════════════════════════════════════════
+        right_sidebar = tk.Frame(main_container, bg=bg_panel, width=280)
+        right_sidebar.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        right_sidebar.pack_propagate(False)
+        
+        # Tab-Buttons oben
+        tab_header = tk.Frame(right_sidebar, bg="#222")
+        tab_header.pack(fill=tk.X)
+        
+        self.sidebar_tabs = {}
+        self.active_tab = tk.StringVar(value="combat")
+        
+        tab_defs = [
+            ("combat", "⚔️", "Combat"),
+            ("journal", "📚", "Journal"),
+            ("actors", "👤", "Akteure"),
+            ("settings", "⚙️", "Settings"),
+        ]
+        
+        for tab_id, icon, label in tab_defs:
+            btn = tk.Button(tab_header, text=icon, font=("Arial", 14),
+                          bg="#222" if tab_id != "combat" else "#3a3a3a",
+                          fg="white", width=3, height=1, relief=tk.FLAT,
+                          cursor="hand2",
+                          command=lambda t=tab_id: self._switch_sidebar_tab(t))
+            btn.pack(side=tk.LEFT, padx=2, pady=5)
+            self.sidebar_tabs[tab_id] = btn
+            self._create_tooltip(btn, label)
+        
+        # Tab-Content-Bereich
+        self.sidebar_content = tk.Frame(right_sidebar, bg=bg_panel)
+        self.sidebar_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Initial: Combat-Tab anzeigen
+        self._show_sidebar_combat()
+        
+        # ═══════════════════════════════════════════════════════════════
+        # FOOTER: Hotbar-Style Status
+        # ═══════════════════════════════════════════════════════════════
+        footer = tk.Frame(self, bg="#111", height=40)
+        footer.pack(fill=tk.X, side=tk.BOTTOM)
+        footer.pack_propagate(False)
+        
+        # Status links
+        self.status_label = tk.Label(footer, text="● Bereit",
+                                    font=("Arial", 10), bg="#111", fg="#4ecca3")
+        self.status_label.pack(side=tk.LEFT, padx=15, pady=10)
+        
+        # Version rechts
+        tk.Label(footer, text="Der Eine Ring VTT v2.1",
+                font=("Arial", 9), bg="#111", fg="#444").pack(side=tk.RIGHT, padx=15, pady=10)
+        
+        # Hilfe-Button
+        tk.Button(footer, text="❓ Hilfe (F1)", font=("Arial", 9),
+                 bg="#333", fg="#888", relief=tk.FLAT, cursor="hand2",
+                 command=self.show_help).pack(side=tk.RIGHT, padx=5, pady=8)
+    
+    def _create_tooltip(self, widget, text):
+        """Erstellt Tooltip für ein Widget"""
+        def show_tooltip(event):
+            tooltip = tk.Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
+            
+            label = tk.Label(tooltip, text=text, font=("Arial", 9),
+                           bg="#ffffe0", fg="#333", relief=tk.SOLID,
+                           borderwidth=1, padx=5, pady=2)
+            label.pack()
+            
+            widget._tooltip = tooltip
+            
+        def hide_tooltip(event):
+            if hasattr(widget, '_tooltip'):
+                widget._tooltip.destroy()
+                del widget._tooltip
+        
+        widget.bind("<Enter>", show_tooltip)
+        widget.bind("<Leave>", hide_tooltip)
+    
+    def _switch_sidebar_tab(self, tab_id: str):
+        """Wechselt den aktiven Sidebar-Tab"""
+        self.active_tab.set(tab_id)
+        
+        # Tab-Buttons updaten
+        for tid, btn in self.sidebar_tabs.items():
+            btn.config(bg="#3a3a3a" if tid == tab_id else "#222")
+        
+        # Content leeren und neu füllen
+        for widget in self.sidebar_content.winfo_children():
+            widget.destroy()
+        
+        if tab_id == "combat":
+            self._show_sidebar_combat()
+        elif tab_id == "journal":
+            self._show_sidebar_journal()
+        elif tab_id == "actors":
+            self._show_sidebar_actors()
+        elif tab_id == "settings":
+            self._show_sidebar_settings()
+    
+    def _show_sidebar_combat(self):
+        """Zeigt Combat-Tab Inhalt"""
+        bg = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        
+        tk.Label(self.sidebar_content, text="⚔️ Combat Tracker",
+                font=("Arial", 12, "bold"), bg=bg, fg="#c23616").pack(pady=10, anchor=tk.W)
+        
+        # Aktueller Kampf-Status
+        status_frame = tk.Frame(self.sidebar_content, bg="#252525", relief=tk.FLAT)
+        status_frame.pack(fill=tk.X, pady=5)
+        
+        if self.combat_tracker and hasattr(self.combat_tracker, 'is_active') and self.combat_tracker.is_active:
+            tk.Label(status_frame, text="🔴 Kampf aktiv",
+                    font=("Arial", 10), bg="#252525", fg="#ff6b6b").pack(pady=8)
+            tk.Label(status_frame, text=f"Runde: {getattr(self.combat_tracker, 'round', 1)}",
+                    font=("Arial", 9), bg="#252525", fg="#888").pack()
+        else:
+            tk.Label(status_frame, text="⚪ Kein aktiver Kampf",
+                    font=("Arial", 10), bg="#252525", fg="#666").pack(pady=8)
+        
+        # Buttons
+        tk.Button(self.sidebar_content, text="🎯 Combat Tracker öffnen",
+                 font=("Arial", 10), bg="#c23616", fg="white",
+                 relief=tk.FLAT, cursor="hand2", padx=10, pady=5,
+                 command=self.open_combat_tracker).pack(pady=10, fill=tk.X)
+        
+        tk.Button(self.sidebar_content, text="➕ Neuen Kampf starten",
+                 font=("Arial", 9), bg="#333", fg="#aaa",
+                 relief=tk.FLAT, cursor="hand2", padx=8, pady=4,
+                 command=self._start_new_combat).pack(pady=2, fill=tk.X)
+        
+        # Teilnehmer-Vorschau
+        tk.Label(self.sidebar_content, text="Teilnehmer:",
+                font=("Arial", 9, "bold"), bg=bg, fg="#888").pack(pady=(15, 5), anchor=tk.W)
+        
+        participants_frame = tk.Frame(self.sidebar_content, bg=bg)
+        participants_frame.pack(fill=tk.X)
+        
+        if self.combat_tracker and hasattr(self.combat_tracker, 'combatants') and self.combat_tracker.combatants:
+            # combatants ist ein Dict
+            combatant_list = list(self.combat_tracker.combatants.values())[:5]
+            for combatant in combatant_list:
+                tk.Label(participants_frame, text=f"• {combatant.name}",
+                        font=("Arial", 9), bg=bg, fg="#aaa").pack(anchor=tk.W)
+        else:
+            tk.Label(participants_frame, text="Keine Teilnehmer",
+                    font=("Arial", 9, "italic"), bg=bg, fg="#555").pack(anchor=tk.W)
+    
+    def _show_sidebar_journal(self):
+        """Zeigt Journal-Tab Inhalt"""
+        bg = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        
+        tk.Label(self.sidebar_content, text="📚 Journal & Notizen",
+                font=("Arial", 12, "bold"), bg=bg, fg="#6c5ce7").pack(pady=10, anchor=tk.W)
+        
+        tk.Button(self.sidebar_content, text="📖 Journal öffnen",
+                 font=("Arial", 10), bg="#6c5ce7", fg="white",
+                 relief=tk.FLAT, cursor="hand2", padx=10, pady=5,
+                 command=self.open_journal).pack(pady=10, fill=tk.X)
+        
+        tk.Button(self.sidebar_content, text="➕ Neuer Eintrag",
+                 font=("Arial", 9), bg="#333", fg="#aaa",
+                 relief=tk.FLAT, cursor="hand2", padx=8, pady=4,
+                 command=self._new_journal_entry).pack(pady=2, fill=tk.X)
+        
+        # Letzte Einträge
+        tk.Label(self.sidebar_content, text="Letzte Einträge:",
+                font=("Arial", 9, "bold"), bg=bg, fg="#888").pack(pady=(15, 5), anchor=tk.W)
+        
+        entries_frame = tk.Frame(self.sidebar_content, bg=bg)
+        entries_frame.pack(fill=tk.X)
+        
+        if self.journal_manager and hasattr(self.journal_manager, 'entries') and self.journal_manager.entries:
+            # entries ist eine Liste, nicht ein Dict
+            for entry in self.journal_manager.entries[:5]:
+                name = getattr(entry, 'name', getattr(entry, 'title', 'Eintrag'))
+                display_name = name[:25] + '...' if len(name) > 25 else name
+                tk.Label(entries_frame, text=f"• {display_name}",
+                        font=("Arial", 9), bg=bg, fg="#aaa").pack(anchor=tk.W)
+        else:
+            tk.Label(entries_frame, text="Noch keine Einträge",
+                    font=("Arial", 9, "italic"), bg=bg, fg="#555").pack(anchor=tk.W)
+    
+    def _show_sidebar_actors(self):
+        """Zeigt Actors/Token-Tab Inhalt"""
+        bg = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        
+        tk.Label(self.sidebar_content, text="👤 Akteure & Tokens",
+                font=("Arial", 12, "bold"), bg=bg, fg="#00cec9").pack(pady=10, anchor=tk.W)
+        
+        tk.Label(self.sidebar_content, 
+                text="Tokens werden im Editor\nund Projektor verwaltet.",
+                font=("Arial", 9), bg=bg, fg="#666").pack(pady=10)
+        
+        tk.Button(self.sidebar_content, text="🎨 Editor öffnen",
+                 font=("Arial", 10), bg="#00cec9", fg="white",
+                 relief=tk.FLAT, cursor="hand2", padx=10, pady=5,
+                 command=self.start_editor).pack(pady=5, fill=tk.X)
+    
+    def _show_sidebar_settings(self):
+        """Zeigt Settings-Tab Inhalt"""
+        bg = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        
+        tk.Label(self.sidebar_content, text="⚙️ Einstellungen",
+                font=("Arial", 12, "bold"), bg=bg, fg="#636e72").pack(pady=10, anchor=tk.W)
+        
+        tk.Button(self.sidebar_content, text="🔧 Einstellungen öffnen",
+                 font=("Arial", 10), bg="#636e72", fg="white",
+                 relief=tk.FLAT, cursor="hand2", padx=10, pady=5,
+                 command=self.open_settings).pack(pady=10, fill=tk.X)
+        
+        # Schnell-Einstellungen
+        tk.Label(self.sidebar_content, text="Schnelleinstellungen:",
+                font=("Arial", 9, "bold"), bg=bg, fg="#888").pack(pady=(15, 5), anchor=tk.W)
+        
+        settings_frame = tk.Frame(self.sidebar_content, bg=bg)
+        settings_frame.pack(fill=tk.X)
+        
+        # Beispiel-Schnelleinstellung
+        self.dark_mode_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(settings_frame, text="Dunkles Theme",
+                      variable=self.dark_mode_var, bg=bg, fg="#aaa",
+                      selectcolor="#333", activebackground=bg).pack(anchor=tk.W)
+        
+        self.show_grid_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(settings_frame, text="Raster anzeigen",
+                      variable=self.show_grid_var, bg=bg, fg="#aaa",
+                      selectcolor="#333", activebackground=bg).pack(anchor=tk.W)
+    
+    def _continue_session(self):
+        """Versucht die letzte Sitzung fortzusetzen"""
+        # Prüfe ob es gespeicherte Daten gibt
+        if self.current_map_data:
+            self.start_editor()
+        else:
+            messagebox.showinfo("Keine Sitzung", 
+                              "Keine vorherige Sitzung gefunden.\n\nLade eine Karte oder erstelle eine neue.")
+    
+    def _start_new_combat(self):
+        """Startet einen neuen Kampf"""
+        self.open_combat_tracker()
+    
+    def _new_journal_entry(self):
+        """Erstellt einen neuen Journal-Eintrag"""
+        self.open_journal()
     
     def _lighten_color(self, hex_color: str) -> str:
         """Hellt eine Hex-Farbe auf für Hover-Effekt"""
         try:
-            # Parse hex color
             hex_color = hex_color.lstrip('#')
             r = int(hex_color[0:2], 16)
             g = int(hex_color[2:4], 16)
             b = int(hex_color[4:6], 16)
-            
-            # Lighten by 20%
             r = min(255, int(r * 1.2))
             g = min(255, int(g * 1.2))
             b = min(255, int(b * 1.2))
-            
             return f"#{r:02x}{g:02x}{b:02x}"
         except:
             return hex_color
-    
-    def _create_status_bar(self):
-        """Erstellt Status-Leiste am unteren Rand"""
-        bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
-        
-        footer = tk.Frame(self, bg=bg_dark)
-        footer.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-        
-        # Status-Label
-        self.status_label = tk.Label(footer, 
-                                    text="Bereit | Keine Karte geladen",
-                                    font=("Arial", 10),
-                                    bg=bg_dark, fg="#666666")
-        self.status_label.pack(side=tk.LEFT, padx=20)
-        
-        # Info rechts
-        tk.Label(footer, text="V2.0 | Für Mittelerde-Tabletop-Spiele",
-                font=("Arial", 9),
-                bg=bg_dark, fg="#444444").pack(side=tk.RIGHT, padx=20)
     
     def _update_status(self, message: str):
         """Aktualisiert die Status-Leiste"""
