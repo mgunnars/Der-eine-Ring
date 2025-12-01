@@ -7,6 +7,9 @@
   "svg_source": "C:/Users/PC/Desktop/Programmieren/Der-eine-Ring-main/Der-eine-Ring-main/maps/test_karte.svg",
   "image_width": 2028,
   "image_height": 1300,
+  "background_image_path": "C:/Users/PC/Desktop/Programmieren/Der-eine-Ring-main/Der-eine-Ring-main/maps/test_karte.svg",
+  "background_visible": true,
+  "background_on_top": true,
   "tiles": {
     "0,0": {
       "q": 0,

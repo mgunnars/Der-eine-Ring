@@ -683,9 +683,41 @@ class HexagonMapEditor(tk.Toplevel):
                 btn.configure(relief=tk.SUNKEN)
             else:
                 btn.configure(relief=tk.RAISED)
+        
+        # Wende Terrain auf alle ausgewählten Tiles an
+        count = 0
+        if self.selected_tiles:
+            for coord in self.selected_tiles:
+                if coord in self.hex_map.tiles:
+                    self.hex_map.tiles[coord].terrain = terrain
+                    count += 1
+        if self.selected_tile and self.selected_tile in self.hex_map.tiles:
+            self.hex_map.tiles[self.selected_tile].terrain = terrain
+            count += 1
+        
+        if count > 0:
+            print(f"🗺️ Terrain '{terrain}' auf {count} Tile(s) angewendet")
+            self._redraw()
     
     def _select_weather(self, weather: str):
         self.current_weather = weather
+        
+        # Wende Wetter auf alle ausgewählten Tiles an
+        count = 0
+        if self.selected_tiles:
+            for coord in self.selected_tiles:
+                if coord in self.hex_map.tiles:
+                    self.hex_map.tiles[coord].local_weather = weather
+                    self.hex_map.tiles[coord].weather_intensity = 1.0
+                    count += 1
+        if self.selected_tile and self.selected_tile in self.hex_map.tiles:
+            self.hex_map.tiles[self.selected_tile].local_weather = weather
+            self.hex_map.tiles[self.selected_tile].weather_intensity = 1.0
+            count += 1
+        
+        if count > 0:
+            print(f"🌦️ Wetter '{weather}' auf {count} Tile(s) angewendet")
+            self._redraw()
     
     def _load_svg(self):
         """Lade SVG und erkenne Hexagone"""
