@@ -2,17 +2,86 @@
 Der Eine Ring PRO - Erweiterte Hauptanwendung
 Mit Editor-Modus, Projektor-Modus und VTT-Features
 Unterstützt JSON-Maps und SVG-Maps
+
+V2.0 - Verbessertes UI-Framework mit FoundryVTT-inspirierten Features
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, filedialog, messagebox
 import os
 
+# UI-Framework importieren für konsistentes Design
+try:
+    from ui_framework import (
+        UIColors, UISizes, WindowManager, BaseDialog
+    )
+    UI_FRAMEWORK_AVAILABLE = True
+except ImportError:
+    UI_FRAMEWORK_AVAILABLE = False
+    print("⚠️ UI-Framework nicht gefunden - verwende Fallbacks")
+    # Fallback-Klassen
+    class UIColors:
+        BG_DARK = "#1a1a2e"
+        BG_MEDIUM = "#16213e"
+        BG_LIGHT = "#0f3460"
+        BG_PANEL = "#1a1a1a"
+        ACCENT = "#e94560"
+        ACCENT_GOLD = "#d4af37"
+        TEXT = "#eaeaea"
+        TEXT_SECONDARY = "#888888"
+        SUCCESS = "#4ecca3"
+        WARNING = "#ffc107"
+        DANGER = "#ff6b6b"
+
+# FoundryVTT-ähnliche Features importieren
+try:
+    from token_system import Token, TokenLayer, TokenToolbar
+    from combat_tracker import CombatEncounter, CombatTrackerWindow, Combatant
+    from walls_doors_system import WallManager, WallLayer, WallToolbar
+    from ambient_sound_system import SoundManager, SoundLayer
+    from journal_system import JournalManager, JournalWindow
+    from hotbar_macros import MacroManager, HotbarWidget
+    from settings_system import get_settings_manager, SettingsWindow
+    FOUNDRY_FEATURES_AVAILABLE = True
+    print("✅ FoundryVTT-Features geladen")
+except ImportError as e:
+    FOUNDRY_FEATURES_AVAILABLE = False
+    print(f"⚠️ FoundryVTT-Features nicht vollständig verfügbar: {e}")
+
+
 class DerEineRingProApp(tk.Tk):
+    """
+    Hauptanwendung für "Der Eine Ring" VTT.
+    
+    Verbesserungen V2.0:
+    - Konsistentes UI-Framework
+    - Bessere Fenster-Verwaltung (keine Duplikate)
+    - Korrigierte Dialog-Größen
+    - Keyboard-Shortcuts
+    """
+    
     def __init__(self):
         super().__init__()
         self.title("Der Eine Ring PRO VTT")
-        self.geometry("1920x1080")
-        self.configure(bg="#1a1a1a")
+        
+        # Bessere Startgröße (nicht mehr 1920x1080 fest!)
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        # 70% der Bildschirmgröße, mindestens 800x600
+        app_width = max(800, int(screen_width * 0.7))
+        app_height = max(600, int(screen_height * 0.7))
+        
+        # Zentriert starten
+        x = (screen_width - app_width) // 2
+        y = (screen_height - app_height) // 2
+        self.geometry(f"{app_width}x{app_height}+{x}+{y}")
+        
+        # Mindestgröße setzen
+        self.minsize(800, 600)
+        
+        # Farben aus UI-Framework oder Fallback
+        bg_color = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+        self.configure(bg=bg_color)
         
         # Aktuell geladene Karte
         self.current_map_data = None
@@ -20,65 +89,194 @@ class DerEineRingProApp(tk.Tk):
         self.projector_window = None
         self.gm_panel = None
         self.story_editor = None  # Story Editor Referenz
+        self.loaded_svg_path = None  # SVG-Pfad Tracking
+        
+        # FoundryVTT-Features
+        self.combat_tracker = None
+        self.combat_tracker_window = None
+        self.journal_window = None
+        self.settings_window = None
+        
+        # Manager für neue Features
+        if FOUNDRY_FEATURES_AVAILABLE:
+            self.token_layer = TokenLayer()  # Token-Verwaltung
+            self.wall_manager = WallManager()
+            self.sound_manager = SoundManager()
+            self.macro_manager = MacroManager()
+            self.journal_manager = JournalManager()
+            self.settings_manager = get_settings_manager()
+            self.combat_tracker = CombatEncounter()  # Combat Tracker initialisieren
+        else:
+            self.token_layer = None
+            self.wall_manager = None
+            self.sound_manager = None
+            self.macro_manager = None
+            self.journal_manager = None
+            self.settings_manager = None
         
         # Webcam-Tracker initialisieren
-        from webcam_tracker import WebcamTracker
-        self.webcam_tracker = WebcamTracker(camera_index=0)
+        try:
+            from webcam_tracker import WebcamTracker
+            self.webcam_tracker = WebcamTracker(camera_index=0)
+        except Exception as e:
+            print(f"⚠️ Webcam-Tracker nicht verfügbar: {e}")
+            self.webcam_tracker = None
         
         self.setup_ui()
+        self.setup_keyboard_shortcuts()
+    
+    def setup_keyboard_shortcuts(self):
+        """Globale Tastenkürzel registrieren"""
+        self.bind("<F1>", lambda e: self.show_help())
+        self.bind("<F2>", lambda e: self.open_combat_tracker())
+        self.bind("<F3>", lambda e: self.open_journal())
+        self.bind("<F4>", lambda e: self.open_settings())
+        self.bind("<Control-o>", lambda e: self.load_map())
+        self.bind("<Control-e>", lambda e: self.start_editor())
+        self.bind("<Control-p>", lambda e: self.start_projector())
+        self.bind("<Control-g>", lambda e: self.start_gm_panel())
+        self.bind("<Control-s>", lambda e: self.start_story_editor())
+        self.bind("<Escape>", lambda e: self._on_escape())
+    
+    def _on_escape(self):
+        """ESC-Taste Handler - zeigt Beenden-Dialog"""
+        if messagebox.askyesno("Beenden", "Möchtest du das Programm wirklich beenden?"):
+            self.quit()
+    
+    def _show_message(self, msg_type: str, title: str, message: str):
+        """Zentrale Message-Anzeige"""
+        if msg_type == "info":
+            messagebox.showinfo(title, message)
+        elif msg_type == "warning":
+            messagebox.showwarning(title, message)
+        elif msg_type == "error":
+            messagebox.showerror(title, message)
+    
+    def _ask_yes_no(self, title: str, message: str, dangerous: bool = False) -> bool:
+        """Zentrale Ja/Nein-Abfrage"""
+        return messagebox.askyesno(title, message)
     
     def setup_ui(self):
-        """Hauptmenü erstellen"""
+        """Hauptmenü erstellen - verbessertes Layout"""
+        # Farben aus UI-Framework
+        bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+        bg_panel = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+        accent_gold = UIColors.ACCENT_GOLD if UI_FRAMEWORK_AVAILABLE else "#d4af37"
+        text_secondary = UIColors.TEXT_SECONDARY if UI_FRAMEWORK_AVAILABLE else "#888888"
+        
         # Header
-        header = tk.Frame(self, bg="#1a1a1a")
-        header.pack(fill=tk.X, pady=20)
+        header = tk.Frame(self, bg=bg_dark)
+        header.pack(fill=tk.X, pady=30)
         
         title_label = tk.Label(header, text="🗺️ Der Eine Ring", 
-                              font=("Arial", 32, "bold"),
-                              bg="#1a1a1a", fg="#d4af37")
+                              font=("Arial", 36, "bold"),
+                              bg=bg_dark, fg=accent_gold)
         title_label.pack()
         
         subtitle_label = tk.Label(header, text="Interaktiver Tabletop Kartenprojektor",
-                                 font=("Arial", 12),
-                                 bg="#1a1a1a", fg="#888888")
+                                 font=("Arial", 14),
+                                 bg=bg_dark, fg=text_secondary)
         subtitle_label.pack(pady=5)
         
-        # Hauptbuttons
-        button_frame = tk.Frame(self, bg="#1a1a1a")
+        # Version mit Tastenkürzel-Hinweis
+        version_label = tk.Label(header, 
+                                text="V2.1 | F1=Hilfe, F2=Combat, F3=Journal, F4=Settings | Ctrl+E=Editor, Ctrl+P=Projektor",
+                                font=("Arial", 9),
+                                bg=bg_dark, fg="#555555")
+        version_label.pack(pady=2)
+        
+        # Hauptbuttons - VERBESSERT mit Icon-Klasse und besseren Größen
+        button_frame = tk.Frame(self, bg=bg_dark)
         button_frame.pack(expand=True)
         
+        # Button-Definitionen: (text, icon, command, color)
         buttons = [
-            ("🎨 Karten-Editor", self.start_editor, "#2a7d2a"),
-            ("📺 Projektor-Modus", self.start_projector, "#2a5d8d"),
-            ("🎮 Gamemaster Panel", self.start_gm_panel, "#8b4513"),
-            ("🎬 Story Editor", self.start_story_editor, "#9b2d6e"),
-            ("📁 Karte laden", self.load_map, "#7d5d2a"),
-            ("🖼️ PNG-Karte importieren", self.import_png_map, "#2a7d7d"),
-            ("📋 Karten-Liste", self.show_map_list, "#5d2a7d"),
-            ("❓ Hilfe", self.show_help, "#555555"),
+            ("Karten-Editor", "🎨", self.start_editor, "#2a7d2a"),
+            ("Projektor-Modus", "📺", self.start_projector, "#2a5d8d"),
+            ("Gamemaster Panel", "🎮", self.start_gm_panel, "#8b4513"),
+            ("Story Editor", "🎬", self.start_story_editor, "#9b2d6e"),
+            ("Combat Tracker", "⚔️", self.open_combat_tracker, "#c23616"),
+            ("Journal & Notizen", "📚", self.open_journal, "#6c5ce7"),
+            ("Karte laden", "📁", self.load_map, "#7d5d2a"),
+            ("PNG-Karte importieren", "🖼️", self.import_png_map, "#2a7d7d"),
+            ("Einstellungen", "⚙️", self.open_settings, "#636e72"),
+            ("Hilfe", "❓", self.show_help, "#555555"),
         ]
         
-        for text, command, color in buttons:
-            btn = tk.Button(button_frame, text=text, 
+        for text, icon, command, color in buttons:
+            btn = tk.Button(button_frame, 
+                          text=f"{icon}  {text}", 
                           font=("Arial", 14, "bold"),
                           bg=color, fg="white",
-                          width=25, height=2,
+                          width=28, height=2,
                           cursor="hand2",
+                          relief=tk.FLAT,
+                          activebackground=self._lighten_color(color),
                           command=command)
-            btn.pack(pady=10, padx=20)
+            btn.pack(pady=8, padx=20)
+            
+            # Hover-Effekt
+            btn.bind("<Enter>", lambda e, b=btn, c=color: b.config(bg=self._lighten_color(c)))
+            btn.bind("<Leave>", lambda e, b=btn, c=color: b.config(bg=c))
         
-        # Footer
-        footer = tk.Frame(self, bg="#1a1a1a")
+        # Status-Leiste unten
+        self._create_status_bar()
+    
+    def _lighten_color(self, hex_color: str) -> str:
+        """Hellt eine Hex-Farbe auf für Hover-Effekt"""
+        try:
+            # Parse hex color
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            
+            # Lighten by 20%
+            r = min(255, int(r * 1.2))
+            g = min(255, int(g * 1.2))
+            b = min(255, int(b * 1.2))
+            
+            return f"#{r:02x}{g:02x}{b:02x}"
+        except:
+            return hex_color
+    
+    def _create_status_bar(self):
+        """Erstellt Status-Leiste am unteren Rand"""
+        bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+        
+        footer = tk.Frame(self, bg=bg_dark)
         footer.pack(side=tk.BOTTOM, fill=tk.X, pady=10)
         
-        tk.Label(footer, text="Version 1.0 | Für Mittelerde-Tabletop-Spiele",
+        # Status-Label
+        self.status_label = tk.Label(footer, 
+                                    text="Bereit | Keine Karte geladen",
+                                    font=("Arial", 10),
+                                    bg=bg_dark, fg="#666666")
+        self.status_label.pack(side=tk.LEFT, padx=20)
+        
+        # Info rechts
+        tk.Label(footer, text="V2.0 | Für Mittelerde-Tabletop-Spiele",
                 font=("Arial", 9),
-                bg="#1a1a1a", fg="#666666").pack()
+                bg=bg_dark, fg="#444444").pack(side=tk.RIGHT, padx=20)
+    
+    def _update_status(self, message: str):
+        """Aktualisiert die Status-Leiste"""
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=message)
     
     def start_editor(self):
-        """Editor-Fenster öffnen"""
+        """Editor-Fenster öffnen - mit WindowManager für bessere Verwaltung"""
         try:
             from map_editor import MapEditor, ask_canvas_size
+            
+            # Prüfe ob Editor bereits offen (WindowManager)
+            if UI_FRAMEWORK_AVAILABLE:
+                existing = WindowManager.get("map_editor")
+                if existing:
+                    existing.lift()
+                    existing.focus_force()
+                    self._update_status("Editor bereits geöffnet")
+                    return
             
             print(f"\n🔍 DEBUG start_editor:")
             print(f"   self.current_map_data: {'vorhanden' if self.current_map_data else 'None'}")
@@ -104,26 +302,41 @@ class DerEineRingProApp(tk.Tk):
             
             print(f"📋 Erstelle Editor mit: width={width}, height={height}, map_data={'JA' if map_data_to_pass else 'NEIN'}")
             
+            # Editor-Fenster erstellen
+            bg_color = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+            
             editor_win = tk.Toplevel(self)
             editor_win.title("Map Editor - Der Eine Ring")
-            editor_win.state('zoomed')  # Fullscreen/Maximiert starten
-            editor_win.configure(bg="#1a1a1a")
+            editor_win.configure(bg=bg_color)
+            
+            # Mindestgröße setzen BEVOR maximiert
+            editor_win.minsize(1200, 800)
+            
+            # Maximiert starten
+            editor_win.state('zoomed')
+            
+            # Bei WindowManager registrieren
+            if UI_FRAMEWORK_AVAILABLE:
+                WindowManager.register("map_editor", editor_win)
             
             # MapEditor mit aktuellen Daten oder neu
             editor = MapEditor(editor_win, width=width, height=height, map_data=map_data_to_pass)
             editor.pack(fill=tk.BOTH, expand=True)
             
             self.current_editor = editor
+            self._update_status(f"Editor geöffnet | Map: {width}×{height}")
             
             # Beim Schließen Map-Daten speichern
             def on_close():
                 self.current_map_data = editor.get_map_data()
+                self.current_editor = None
+                self._update_status("Editor geschlossen | Map im Speicher")
                 editor_win.destroy()
             
             editor_win.protocol("WM_DELETE_WINDOW", on_close)
             
         except Exception as e:
-            messagebox.showerror("Fehler", f"Editor konnte nicht gestartet werden:\n{e}")
+            self._show_message("error", "Fehler", f"Editor konnte nicht gestartet werden:\n{e}")
     
     def start_projector(self):
         """Projektor-Fenster öffnen - unterstützt JSON und SVG"""
@@ -154,6 +367,7 @@ class DerEineRingProApp(tk.Tk):
                     svg_path=svg_path, 
                     webcam_tracker=self.webcam_tracker
                 )
+                self._update_status(f"Projektor geöffnet | SVG: {os.path.basename(svg_path)}")
                 return
             
             # JSON-Modus: Normale Tile-basierte Map
@@ -166,7 +380,7 @@ class DerEineRingProApp(tk.Tk):
                 from map_system import MapSystem
                 ms = MapSystem()
                 map_data = ms.create_default_map()
-                messagebox.showinfo("Info", "Keine Karte geladen - Zeige Beispielkarte")
+                self._show_message("info", "Info", "Keine Karte geladen - Zeige Beispielkarte")
             
             # Webcam-Tracker vorbereiten
             if self.webcam_tracker:
@@ -174,22 +388,34 @@ class DerEineRingProApp(tk.Tk):
                 map_height = map_data.get("height", 50)
                 self.webcam_tracker.map_size = (map_width, map_height)
             
-            # Projektor öffnen
+            # Projektor öffnen/aktualisieren
             if self.projector_window and self.projector_window.winfo_exists():
                 self.projector_window.update_map(map_data)
                 self.projector_window.lift()
+                self._update_status("Projektor aktualisiert")
             else:
                 self.projector_window = ProjectorWindow(self, map_data, self.webcam_tracker)
+                map_name = map_data.get("name", "Unbenannt")
+                self._update_status(f"Projektor geöffnet | Map: {map_name}")
             
         except Exception as e:
-            messagebox.showerror("Fehler", f"Projektor konnte nicht gestartet werden:\n{e}")
+            self._show_message("error", "Fehler", f"Projektor konnte nicht gestartet werden:\n{e}")
     
     def start_gm_panel(self):
-        """Gamemaster-Kontrollpanel öffnen"""
+        """Gamemaster-Kontrollpanel öffnen - mit WindowManager"""
         try:
             from gm_controls import GamemasterControlPanel
             
-            # Wenn GM-Panel schon offen, in Vordergrund holen
+            # Prüfe ob GM-Panel bereits offen (WindowManager)
+            if UI_FRAMEWORK_AVAILABLE:
+                existing = WindowManager.get("gm_panel")
+                if existing:
+                    existing.lift()
+                    existing.focus_force()
+                    self._update_status("GM-Panel bereits geöffnet")
+                    return
+            
+            # Fallback: Alte Methode
             if self.gm_panel and self.gm_panel.winfo_exists():
                 self.gm_panel.lift()
                 return
@@ -197,15 +423,30 @@ class DerEineRingProApp(tk.Tk):
             # Neues Panel erstellen
             self.gm_panel = GamemasterControlPanel(self, self.projector_window, self.webcam_tracker)
             
+            # Bei WindowManager registrieren
+            if UI_FRAMEWORK_AVAILABLE:
+                WindowManager.register("gm_panel", self.gm_panel)
+            
+            self._update_status("GM-Panel geöffnet")
+            
         except Exception as e:
-            messagebox.showerror("Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
+            self._show_message("error", "Fehler", f"GM-Panel konnte nicht gestartet werden:\n{e}")
     
     def start_story_editor(self):
-        """Story Editor für interaktive Abenteuer öffnen"""
+        """Story Editor für interaktive Abenteuer öffnen - mit WindowManager"""
         try:
             from story_editor import StoryEditor
             
-            # Wenn Editor schon offen, in Vordergrund holen
+            # Prüfe ob Story Editor bereits offen (WindowManager)
+            if UI_FRAMEWORK_AVAILABLE:
+                existing = WindowManager.get("story_editor")
+                if existing:
+                    existing.lift()
+                    existing.focus_force()
+                    self._update_status("Story Editor bereits geöffnet")
+                    return
+            
+            # Fallback: Alte Methode
             if hasattr(self, 'story_editor') and self.story_editor and self.story_editor.winfo_exists():
                 self.story_editor.lift()
                 return
@@ -214,30 +455,28 @@ class DerEineRingProApp(tk.Tk):
             def preview_scene(scene):
                 """Zeigt die aktuelle Szene im Projektor an"""
                 from storyboard_system import SceneType
-                import os
                 import json
                 
                 # Prüfe ob eine Quelle gesetzt ist
                 source = scene.background_source or scene.content_path
                 if not source:
-                    messagebox.showwarning("Keine Quelle", 
+                    self._show_message("warning", "Keine Quelle", 
                         f"Die Szene '{scene.name}' hat keine Hintergrund-Datei.\n\n"
                         "Doppelklicke auf die Szene und wähle eine Datei unter '🎬 Medien'.")
                     return
                 
                 # Prüfe ob Datei existiert
                 if not os.path.exists(source):
-                    messagebox.showerror("Datei nicht gefunden", 
+                    self._show_message("error", "Datei nicht gefunden", 
                         f"Die Datei wurde nicht gefunden:\n{source}")
                     return
                 
                 # Projektor prüfen/öffnen
                 if not self.projector_window or not self.projector_window.winfo_exists():
                     # Projektor öffnen mit der Szene direkt
-                    result = messagebox.askyesno("Projektor öffnen?",
+                    if self._ask_yes_no("Projektor öffnen?",
                         "Der Projektor ist nicht geöffnet.\n\n"
-                        "Soll der Projektor-Modus gestartet werden?")
-                    if result:
+                        "Soll der Projektor-Modus gestartet werden?"):
                         # Öffne Projektor direkt mit Szenen-Daten (nicht start_projector!)
                         self._open_projector_for_scene(scene, source)
                     return
@@ -251,12 +490,18 @@ class DerEineRingProApp(tk.Tk):
                 on_scene_preview=preview_scene
             )
             
+            # Bei WindowManager registrieren
+            if UI_FRAMEWORK_AVAILABLE:
+                WindowManager.register("story_editor", self.story_editor)
+            
+            self._update_status("Story Editor geöffnet")
+            
         except ImportError as e:
-            messagebox.showerror("Fehler", 
+            self._show_message("error", "Fehler", 
                 f"Story Editor Module nicht gefunden:\n{e}\n\n"
                 "Bitte stelle sicher, dass alle story_editor_*.py Dateien vorhanden sind.")
         except Exception as e:
-            messagebox.showerror("Fehler", f"Story Editor konnte nicht gestartet werden:\n{e}")
+            self._show_message("error", "Fehler", f"Story Editor konnte nicht gestartet werden:\n{e}")
 
     def _open_projector_for_scene(self, scene, source):
         """Öffnet den Projektor direkt mit einer Szene (ohne Beispielmap)"""
@@ -1247,6 +1492,72 @@ class DerEineRingProApp(tk.Tk):
                  bg="#7d2a2a", fg="white",
                  padx=30, pady=10,
                  command=on_dialog_close).pack(side=tk.LEFT, padx=10)
+    
+    # =====================================
+    # NEUE FOUNDRYVTT-STYLE FEATURES
+    # =====================================
+    
+    def open_combat_tracker(self):
+        """Combat Tracker Fenster öffnen"""
+        try:
+            if self.combat_tracker_window and self.combat_tracker_window.winfo_exists():
+                self.combat_tracker_window.lift()
+                self.combat_tracker_window.focus_force()
+                return
+            
+            self.combat_tracker_window = CombatTrackerWindow(
+                self, 
+                self.combat_tracker,
+                self.token_layer if hasattr(self, 'token_layer') else None
+            )
+            self.combat_tracker_window.protocol("WM_DELETE_WINDOW", 
+                lambda: self._close_window('combat_tracker_window'))
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Combat Tracker konnte nicht geöffnet werden:\n{e}")
+    
+    def open_journal(self):
+        """Journal/Notizen Fenster öffnen"""
+        try:
+            if self.journal_window and self.journal_window.winfo_exists():
+                self.journal_window.lift()
+                self.journal_window.focus_force()
+                return
+            
+            if self.journal_manager:
+                self.journal_window = JournalWindow(self, self.journal_manager)
+                self.journal_window.protocol("WM_DELETE_WINDOW", 
+                    lambda: self._close_window('journal_window'))
+            else:
+                messagebox.showwarning("Warnung", "Journal-System nicht verfügbar")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Journal konnte nicht geöffnet werden:\n{e}")
+    
+    def open_settings(self):
+        """Einstellungen Fenster öffnen"""
+        try:
+            if self.settings_window and self.settings_window.winfo_exists():
+                self.settings_window.lift()
+                self.settings_window.focus_force()
+                return
+            
+            if self.settings_manager:
+                self.settings_window = SettingsWindow(self, self.settings_manager)
+                self.settings_window.protocol("WM_DELETE_WINDOW", 
+                    lambda: self._close_window('settings_window'))
+            else:
+                messagebox.showwarning("Warnung", "Settings-System nicht verfügbar")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Einstellungen konnten nicht geöffnet werden:\n{e}")
+    
+    def _close_window(self, window_name: str):
+        """Hilfsmethode zum sicheren Schließen von Fenstern"""
+        window = getattr(self, window_name, None)
+        if window:
+            try:
+                window.destroy()
+            except:
+                pass
+            setattr(self, window_name, None)
     
     def destroy(self):
         """Aufräumen beim Schließen"""

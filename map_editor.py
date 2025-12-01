@@ -2,6 +2,8 @@
 Map Editor für "Der Eine Ring"
 Vollständiger Karten-Editor mit Material-Manager, River-Direktions-System und Layer-System
 Extrahiert aus main.py für modulare Nutzung
+
+V2.0 - Verbessertes UI-Framework mit besseren Dialogen
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, simpledialog
@@ -21,6 +23,19 @@ from advanced_drawing_tools import BezierCurveTool, PolygonTool, TextTool, Trans
 from lighting_system import LightingEngine, LightSource, LIGHT_PRESETS
 from map_editor_extensions import SelectTool, ContextPanel, SmoothPolygonDrawer, GeometryTools
 from edge_detection import EdgeDetector, SmartDarknessDrawer
+
+# UI-Framework importieren für konsistentes Design
+try:
+    from ui_framework import (
+        UIColors, UISizes, UIIcons, WindowManager,
+        BaseDialog, VTTButton, VTTLabel, VTTFrame,
+        show_info, show_warning, show_error, ask_confirm,
+        center_window, ensure_minimum_size
+    )
+    UI_FRAMEWORK_AVAILABLE = True
+except ImportError:
+    UI_FRAMEWORK_AVAILABLE = False
+    print("⚠️ UI-Framework nicht gefunden - verwende Fallbacks")
 
 class MapEditor(tk.Frame):
     def __init__(self, parent, width=50, height=50, map_data=None):
@@ -2834,22 +2849,60 @@ class MapEditor(tk.Frame):
 
 
 def ask_canvas_size(parent=None):
-    """Dialog zur Auswahl der Canvas-Größe vor dem Start"""
+    """
+    Dialog zur Auswahl der Canvas-Größe vor dem Start.
+    
+    V2.0 Verbesserungen:
+    - Bessere Zentrierung auf Parent
+    - Größere Mindestgröße
+    - Konsistente Farben aus UI-Framework
+    """
+    # Farben aus UI-Framework
+    bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+    bg_panel = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1a1a1a"
+    accent_gold = UIColors.ACCENT_GOLD if UI_FRAMEWORK_AVAILABLE else "#d4af37"
+    accent_green = UIColors.ACCENT_GREEN if UI_FRAMEWORK_AVAILABLE else "#2a7d2a"
+    accent_red = UIColors.ACCENT_RED if UI_FRAMEWORK_AVAILABLE else "#7d2a2a"
+    accent_blue = UIColors.ACCENT_BLUE if UI_FRAMEWORK_AVAILABLE else "#2a5d8d"
+    
     dialog = tk.Toplevel(parent) if parent else tk.Tk()
     dialog.title("🗺️ Neue Karte erstellen")
-    dialog.geometry("450x500")  # Größer: 400x350 → 450x500
-    dialog.configure(bg="#1a1a1a")
-    dialog.resizable(False, False)
     
+    # Größe und Position
+    dialog_width = 500
+    dialog_height = 550
+    
+    # Zentral positionieren
     if parent:
         dialog.transient(parent)
         dialog.grab_set()
+        
+        # Auf Parent zentrieren
+        try:
+            parent.update_idletasks()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            x = px + (pw - dialog_width) // 2
+            y = py + (ph - dialog_height) // 2
+        except:
+            x = (dialog.winfo_screenwidth() - dialog_width) // 2
+            y = (dialog.winfo_screenheight() - dialog_height) // 2
+    else:
+        x = (dialog.winfo_screenwidth() - dialog_width) // 2
+        y = (dialog.winfo_screenheight() - dialog_height) // 2
+    
+    dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+    dialog.configure(bg=bg_panel)
+    dialog.resizable(False, False)
+    dialog.minsize(dialog_width, dialog_height)
     
     result = {"width": 50, "height": 50, "confirmed": False}
     
     tk.Label(dialog, text="🗺️ Karten-Größe wählen",
-            font=("Arial", 16, "bold"),
-            bg="#1a1a1a", fg="#d4af37").pack(pady=20)
+            font=("Arial", 18, "bold"),
+            bg=bg_panel, fg=accent_gold).pack(pady=25)
     
     # Vorlagen
     tk.Label(dialog, text="Vorlagen:",

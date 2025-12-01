@@ -1,28 +1,60 @@
 """
 Gamemaster-Kontrollpanel für VTT-System
 Steuert Webcam, Fog-of-War, Zoom und weitere Features
+
+V2.0 - Verbesserte UI mit Framework-Integration
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
 import cv2
 from PIL import Image, ImageTk
 
+# UI-Framework importieren für konsistentes Design
+try:
+    from ui_framework import (
+        UIColors, UISizes, UIIcons, WindowManager,
+        VTTButton, VTTLabel, VTTFrame,
+        show_info, show_warning, show_error, ask_confirm,
+        ensure_minimum_size, center_window
+    )
+    UI_FRAMEWORK_AVAILABLE = True
+except ImportError:
+    UI_FRAMEWORK_AVAILABLE = False
+
+
 class GamemasterControlPanel(tk.Toplevel):
-    """Kontrollpanel für den Spielleiter"""
+    """
+    Kontrollpanel für den Spielleiter.
+    
+    Verbesserungen V2.0:
+    - Mindestgröße für lesbare UI
+    - Konsistentes Farbschema
+    - Bessere Tab-Organisation
+    - Status-Leiste
+    """
     
     def __init__(self, parent, projector_window=None, webcam_tracker=None):
         super().__init__(parent)
         
-        self.title("Gamemaster Kontrollpanel")
-        self.state('zoomed')  # Fullscreen/Maximiert starten
-        self.configure(bg="#1e1e1e")
+        self.title("🎮 Gamemaster Kontrollpanel")
         
-        # WICHTIG: Fenster auf primären Monitor (Laptop) platzieren
-        # Projektor ist auf sekundärem Monitor
-        self.attributes('-topmost', False)  # Nicht über allem
+        # Farben aus UI-Framework
+        bg_color = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1e1e1e"
+        self.configure(bg=bg_color)
         
-        # Position auf primärem Monitor erzwingen (links oben)
-        self.geometry("+50+50")
+        # WICHTIG: Mindestgröße setzen BEVOR Fenster positioniert wird!
+        self.minsize(900, 700)  # Breiter als vorher
+        
+        # Position auf primären Monitor (links oben, nicht zoomed sofort)
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        
+        # 80% der Bildschirmhöhe, 50% Breite
+        win_width = max(900, int(screen_width * 0.5))
+        win_height = max(700, int(screen_height * 0.8))
+        
+        # Links positionieren (Projektor ist rechts/auf zweitem Monitor)
+        self.geometry(f"{win_width}x{win_height}+50+50")
         
         self.projector_window = projector_window
         self.webcam_tracker = webcam_tracker
@@ -31,37 +63,100 @@ class GamemasterControlPanel(tk.Toplevel):
         self.preview_running = False
         self.preview_label = None
         
+        # Style für ttk-Widgets
+        self._setup_ttk_style()
+        
         self.setup_ui()
+        self._create_status_bar()
+    
+    def _setup_ttk_style(self):
+        """Konfiguriert ttk-Styles für dunkles Theme"""
+        style = ttk.Style()
+        style.theme_use('clam')
+        
+        bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+        bg_panel = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1e1e1e"
+        text_primary = UIColors.TEXT_PRIMARY if UI_FRAMEWORK_AVAILABLE else "#ffffff"
+        
+        style.configure('TNotebook', background=bg_panel)
+        style.configure('TNotebook.Tab', 
+                       background=bg_dark, 
+                       foreground=text_primary,
+                       padding=[15, 8])
+        style.map('TNotebook.Tab',
+                 background=[('selected', bg_panel)],
+                 foreground=[('selected', '#d4af37')])
+    
+    def _create_status_bar(self):
+        """Erstellt Status-Leiste unten"""
+        bg_dark = UIColors.BG_DARK if UI_FRAMEWORK_AVAILABLE else "#0a0a0a"
+        
+        status_bar = tk.Frame(self, bg=bg_dark, height=30)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        status_bar.pack_propagate(False)
+        
+        self.status_label = tk.Label(status_bar, 
+                                    text="✅ GM-Panel bereit",
+                                    font=("Arial", 9),
+                                    bg=bg_dark, fg="#888888")
+        self.status_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        # Projektor-Status
+        self.projector_status = tk.Label(status_bar, 
+                                        text="📺 Projektor: Nicht verbunden",
+                                        font=("Arial", 9),
+                                        bg=bg_dark, fg="#ff8800")
+        self.projector_status.pack(side=tk.RIGHT, padx=10, pady=5)
+        
+        # Prüfe Projektor-Verbindung
+        self._update_projector_status()
+    
+    def _update_projector_status(self):
+        """Aktualisiert Projektor-Status in der Status-Leiste"""
+        if self.projector_window and self.projector_window.winfo_exists():
+            self.projector_status.config(text="📺 Projektor: Verbunden", fg="#44ff44")
+        else:
+            self.projector_status.config(text="📺 Projektor: Nicht verbunden", fg="#ff8800")
+        
+        # Alle 2 Sekunden prüfen
+        self.after(2000, self._update_projector_status)
+    
+    def _set_status(self, message: str):
+        """Aktualisiert Status-Nachricht"""
+        if hasattr(self, 'status_label'):
+            self.status_label.config(text=message)
         
     def setup_ui(self):
-        """UI-Elemente erstellen"""
+        """UI-Elemente erstellen - verbesserte Version"""
+        bg_panel = UIColors.BG_PANEL if UI_FRAMEWORK_AVAILABLE else "#1e1e1e"
+        
         # Notebook für verschiedene Tabs
         notebook = ttk.Notebook(self)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Tab 1: Webcam-Steuerung
-        webcam_frame = tk.Frame(notebook, bg="#1e1e1e")
-        notebook.add(webcam_frame, text="📹 Webcam")
+        webcam_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(webcam_frame, text="  📹 Webcam  ")
         self.setup_webcam_tab(webcam_frame)
         
         # Tab 2: Fog-of-War Steuerung
-        fog_frame = tk.Frame(notebook, bg="#1e1e1e")
-        notebook.add(fog_frame, text="🌫️ Fog-of-War")
+        fog_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(fog_frame, text="  🌫️ Fog-of-War  ")
         self.setup_fog_tab(fog_frame)
         
         # Tab 3: Kamera & Zoom
-        camera_frame = tk.Frame(notebook, bg="#1e1e1e")
-        notebook.add(camera_frame, text="🎥 Kamera")
+        camera_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(camera_frame, text="  🎥 Kamera  ")
         self.setup_camera_tab(camera_frame)
         
         # Tab 4: Einstellungen
-        settings_frame = tk.Frame(notebook, bg="#1e1e1e")
-        notebook.add(settings_frame, text="⚙️ Einstellungen")
+        settings_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(settings_frame, text="  ⚙️ Einstellungen  ")
         self.setup_settings_tab(settings_frame)
         
         # Tab 5: Detail-Maps
-        detail_frame = tk.Frame(notebook, bg="#1e1e1e")
-        notebook.add(detail_frame, text="🏘️ Detail-Maps")
+        detail_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(detail_frame, text="  🏘️ Detail-Maps  ")
         self.setup_detail_maps_tab(detail_frame)
     
     def setup_webcam_tab(self, parent):
