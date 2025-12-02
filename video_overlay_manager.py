@@ -92,6 +92,7 @@ class LoopMode(Enum):
     PING_PONG = "ping_pong"     # Vorwärts -> Rückwärts -> Vorwärts (nahtlos!)
     PING_PONG_SKIP_INTRO = "ping_pong_skip_intro"  # Wie PING_PONG, aber überspringt Intro-Frames
     CROSSFADE = "crossfade"     # Ende und Anfang überblenden (nur bei ähnlichen Frames)
+    LOOP_STABLE_SECTION = "loop_stable"  # Intro einmal, dann Loop im stabilen Bereich mit Crossfade
 
 
 class VideoPlayer:
@@ -100,13 +101,14 @@ class VideoPlayer:
     Unterstützt MP4, AVI, WebM etc.
     """
     
-    def __init__(self, file_path: str, loop: bool = True, crossfade_frames: int = 30,
-                 loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
-                 intro_frames: int = 30):
+    def __init__(self, file_path: str, loop: bool = True, crossfade_frames: int = 60,
+                 loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
+                 intro_frames: int = 150):
         """
         Args:
-            intro_frames: Anzahl der Intro-Frames die nur einmal am Anfang gespielt werden.
-                         Bei 30 FPS = 30 Frames = 1 Sekunde Intro, danach Ping-Pong-Loop.
+            crossfade_frames: Anzahl Frames für Crossfade am Loop-Punkt (60 = 1 Sek bei 60fps)
+            intro_frames: Frames am Anfang die nur einmal gespielt werden (150 = 2.5 Sek bei 60fps)
+            loop_mode: LOOP_STABLE_SECTION (Standard) - Intro einmal, dann stabiler Loop mit Crossfade
         """
         self.file_path = file_path
         self.loop = loop
@@ -349,6 +351,8 @@ class VideoPlayer:
             return self._next_frame_pingpong()
         elif self.loop_mode == LoopMode.PING_PONG_SKIP_INTRO:
             return self._next_frame_pingpong_skip_intro()
+        elif self.loop_mode == LoopMode.LOOP_STABLE_SECTION:
+            return self._next_frame_stable_loop()
         else:
             return self._next_frame_normal()
     
@@ -410,6 +414,52 @@ class VideoPlayer:
         elif self.current_frame < 0:
             self.current_frame = 0
             self._play_direction = 1
+        
+        return self.get_frame()
+    
+    def _next_frame_stable_loop(self) -> Optional[Image.Image]:
+        """
+        Loop im stabilen Bereich mit Crossfade:
+        
+        1. Erstes Abspielen: Frame 0 → Ende (Intro/Fade-In wird gespielt)
+        2. Danach: Loop nur im stabilen Bereich (intro_frames bis Ende)
+           mit Crossfade am Loop-Punkt für nahtlosen Übergang
+        
+        Perfekt für Videos mit Fade-In wie Regen der langsam einsetzt.
+        Der Crossfade blendet das Ende sanft zum stabilen Bereich über.
+        """
+        self.current_frame += 1
+        
+        # Prüfen ob wir im Crossfade-Bereich am Ende sind
+        crossfade_start = self.total_frames - self.crossfade_frames
+        
+        if self._intro_played and self.current_frame >= crossfade_start:
+            # Wir sind im Crossfade-Bereich - überblenden zum Loop-Start
+            fade_position = self.current_frame - crossfade_start
+            alpha = fade_position / float(self.crossfade_frames)
+            
+            if self.current_frame >= self.total_frames:
+                # Crossfade fertig, zurück zum stabilen Bereich
+                self.current_frame = self.intro_frames
+                if self.on_loop:
+                    self.on_loop()
+                return self.get_frame()
+            
+            # Crossfade: Mische aktuellen Frame mit Loop-Start-Frame
+            current_frame_img = self._read_frame(self.current_frame)
+            loop_start_frame = self.intro_frames + fade_position
+            loop_frame_img = self._read_frame(loop_start_frame)
+            
+            if current_frame_img and loop_frame_img:
+                return self._blend_frames(current_frame_img, loop_frame_img, alpha)
+            return current_frame_img or loop_frame_img
+        
+        # Ende erreicht ohne Crossfade (erstes Abspielen oder Crossfade deaktiviert)
+        if self.current_frame >= self.total_frames:
+            self._intro_played = True
+            self.current_frame = self.intro_frames
+            if self.on_loop:
+                self.on_loop()
         
         return self.get_frame()
     
@@ -543,14 +593,15 @@ class OverlayRenderer:
                    z_index: int = 100,
                    position: Tuple[int, int] = (0, 0),
                    loop: bool = True,
-                   crossfade_frames: int = 30,
-                   loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
-                   intro_frames: int = 30):
+                   crossfade_frames: int = 60,
+                   loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
+                   intro_frames: int = 150):
         """
         Fügt ein neues Overlay hinzu.
         
-        loop_mode: PING_PONG_SKIP_INTRO (Standard) - Intro einmal spielen, dann nahtloser Loop
-        intro_frames: Anzahl Frames am Anfang die nur einmal gespielt werden (z.B. Regen setzt ein)
+        loop_mode: LOOP_STABLE_SECTION (Standard) - Intro einmal, dann stabiler Loop mit Crossfade
+        intro_frames: Frames am Anfang (Fade-In) die nur einmal gespielt werden (150 = 2.5s bei 60fps)
+        crossfade_frames: Frames für sanfte Überblendung am Loop-Punkt (60 = 1s bei 60fps)
         """
         player = VideoPlayer(file_path, loop=loop, crossfade_frames=crossfade_frames, 
                             loop_mode=loop_mode, intro_frames=intro_frames)
@@ -727,17 +778,19 @@ class VideoMapRenderer:
             print(f"   Größe: {self.width}x{self.height}")
     
     def add_weather_overlay(self, weather_type: str, video_path: str, 
-                           loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
-                           intro_frames: int = 30):
+                           loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
+                           intro_frames: int = 150,
+                           crossfade_frames: int = 60):
         """
         Fügt ein Wetter-Overlay hinzu mit nahtlosem Loop.
         
-        PING_PONG_SKIP_INTRO (Standard): 
-        - Intro-Frames (z.B. Regen setzt ein) werden nur EINMAL am Anfang gespielt
-        - Danach pendelt das Video nahtlos zwischen intro_frames und Ende
-        - Kein harter Cut, kein Zurückspringen zum Anfang!
+        LOOP_STABLE_SECTION (Standard): 
+        - Intro/Fade-In wird nur EINMAL am Anfang gespielt
+        - Danach Loop im stabilen Bereich mit sanftem Crossfade
+        - Kein harter Cut, kein sichtbarer Übergang!
         
-        intro_frames: Anzahl Frames am Anfang die übersprungen werden (Standard: 30 = 1 Sek bei 30fps)
+        intro_frames: Frames am Anfang (Fade-In) die übersprungen werden (150 = 2.5s bei 60fps)
+        crossfade_frames: Frames für sanfte Überblendung am Loop-Punkt (60 = 1s bei 60fps)
         """
         if not self.overlay_renderer:
             return
@@ -749,7 +802,7 @@ class VideoMapRenderer:
             if oid.startswith("weather_"):
                 self.overlay_renderer.remove_overlay(oid)
         
-        # Neues Overlay mit Ping-Pong (Skip Intro) für nahtlosen Loop
+        # Neues Overlay mit stabilem Loop und Crossfade
         self.overlay_renderer.add_overlay(
             overlay_id,
             video_path,
@@ -757,7 +810,8 @@ class VideoMapRenderer:
             blend_mode=BlendMode.SCREEN,  # Für Regen/Schnee gut
             z_index=200,
             loop_mode=loop_mode,
-            intro_frames=intro_frames
+            intro_frames=intro_frames,
+            crossfade_frames=crossfade_frames
         )
     
     def add_effect_overlay(self, effect_id: str, video_path: str,
