@@ -93,6 +93,7 @@ class LoopMode(Enum):
     PING_PONG_SKIP_INTRO = "ping_pong_skip_intro"  # Wie PING_PONG, aber überspringt Intro-Frames
     CROSSFADE = "crossfade"     # Ende und Anfang überblenden (nur bei ähnlichen Frames)
     LOOP_STABLE_SECTION = "loop_stable"  # Intro einmal, dann Loop im stabilen Bereich mit Crossfade
+    LOOP_STABLE_ONLY = "loop_stable_only"  # NUR im stabilen Bereich loopen (kein Fade-In/Out)
 
 
 class VideoPlayer:
@@ -102,13 +103,14 @@ class VideoPlayer:
     """
     
     def __init__(self, file_path: str, loop: bool = True, crossfade_frames: int = 60,
-                 loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
-                 intro_frames: int = 150):
+                 loop_mode: LoopMode = LoopMode.LOOP_STABLE_ONLY,
+                 intro_frames: int = 150, outro_frames: int = 0):
         """
         Args:
             crossfade_frames: Anzahl Frames für Crossfade am Loop-Punkt (60 = 1 Sek bei 60fps)
-            intro_frames: Frames am Anfang die nur einmal gespielt werden (150 = 2.5 Sek bei 60fps)
-            loop_mode: LOOP_STABLE_SECTION (Standard) - Intro einmal, dann stabiler Loop mit Crossfade
+            intro_frames: Frames am Anfang (Fade-In) - nur einmal gespielt (150 = 2.5 Sek bei 60fps)
+            outro_frames: Frames am Ende (Fade-Out) - nur bei explizitem Fade-Out gespielt
+            loop_mode: LOOP_STABLE_ONLY (Standard) - Loopt nur im stabilen Bereich, kein Fade-Out
         """
         self.file_path = file_path
         self.loop = loop
@@ -133,6 +135,11 @@ class VideoPlayer:
         self._play_direction = 1  # 1 = vorwärts, -1 = rückwärts (für Ping-Pong)
         self._intro_played = False  # Wurde das Intro bereits gespielt?
         self.intro_frames = intro_frames  # Frames die nur einmal am Anfang laufen
+        self.outro_frames = outro_frames if outro_frames > 0 else intro_frames  # Frames am Ende (Fade-Out)
+        
+        # Stabiler Bereich (wird automatisch berechnet oder manuell gesetzt)
+        self.stable_start = intro_frames  # Beginn des stabilen Bereichs
+        self.stable_end = 0  # Ende des stabilen Bereichs (0 = wird nach Laden gesetzt)
         
         # Crossfade für nahtlosen Loop (z.B. 30 Frames = 1 Sekunde bei 30fps)
         self.crossfade_frames = crossfade_frames
@@ -140,10 +147,15 @@ class VideoPlayer:
         self._end_frames_cache: Dict[int, Image.Image] = {}    # Cache für letzte Frames
         self._crossfade_enabled = True
         
+        # Fade-Out Steuerung
+        self._fading_out = False  # Wird auf True gesetzt wenn Wetter aufhören soll
+        self._fade_out_start_frame = 0  # Frame an dem Fade-Out begann
+        
         # Callbacks
         self.on_frame: Optional[Callable[[Image.Image], None]] = None
         self.on_loop: Optional[Callable[[], None]] = None
         self.on_end: Optional[Callable[[], None]] = None
+        self.on_fade_out_complete: Optional[Callable[[], None]] = None  # Wenn Fade-Out fertig
         
         # Threading
         self._thread: Optional[threading.Thread] = None
@@ -178,8 +190,18 @@ class VideoPlayer:
         self.fps = self._capture.get(cv2.CAP_PROP_FPS) or 30.0
         self.total_frames = int(self._capture.get(cv2.CAP_PROP_FRAME_COUNT))
         
+        # Stabilen Bereich setzen (zwischen Intro und Outro)
+        self.stable_start = self.intro_frames
+        self.stable_end = self.total_frames - self.outro_frames
+        
+        # Falls Video zu kurz, stabilen Bereich anpassen
+        if self.stable_end <= self.stable_start:
+            self.stable_start = int(self.total_frames * 0.3)
+            self.stable_end = int(self.total_frames * 0.7)
+        
         self.is_loaded = True
         print(f"✅ Video geladen: {self.width}x{self.height} @ {self.fps}fps, {self.total_frames} Frames")
+        print(f"   Stabiler Bereich: Frame {self.stable_start}-{self.stable_end}")
         
         # Crossfade-Frames vorladen für nahtlosen Loop
         if self.loop and self._crossfade_enabled and self.total_frames > self.crossfade_frames * 2:
@@ -345,16 +367,88 @@ class VideoPlayer:
     def next_frame(self) -> Optional[Image.Image]:
         """
         Geht zum nächsten Frame basierend auf Loop-Modus.
-        PING_PONG: Video spielt vorwärts, dann rückwärts - kein harter Cut!
+        LOOP_STABLE_ONLY: Loopt nur im stabilen Bereich (beste Option für Regen!)
         """
+        # Fade-Out Modus: Spielt bis zum Ende und stoppt dann
+        if self._fading_out:
+            return self._next_frame_fade_out()
+        
         if self.loop_mode == LoopMode.PING_PONG:
             return self._next_frame_pingpong()
         elif self.loop_mode == LoopMode.PING_PONG_SKIP_INTRO:
             return self._next_frame_pingpong_skip_intro()
         elif self.loop_mode == LoopMode.LOOP_STABLE_SECTION:
             return self._next_frame_stable_loop()
+        elif self.loop_mode == LoopMode.LOOP_STABLE_ONLY:
+            return self._next_frame_stable_only()
         else:
             return self._next_frame_normal()
+    
+    def start_fade_out(self):
+        """
+        Startet den Fade-Out. Das Video spielt vom aktuellen Frame bis zum Ende
+        und stoppt dann. Perfekt für "Regen hört auf".
+        """
+        if not self._fading_out:
+            self._fading_out = True
+            self._fade_out_start_frame = self.current_frame
+            print(f"🌧️ → ☀️ Fade-Out gestartet bei Frame {self.current_frame}")
+    
+    def _next_frame_fade_out(self) -> Optional[Image.Image]:
+        """
+        Spielt Video bis zum Ende (Fade-Out) und stoppt dann.
+        """
+        self.current_frame += 1
+        
+        if self.current_frame >= self.total_frames:
+            # Fade-Out fertig
+            self.current_frame = self.total_frames - 1
+            self.is_playing = False
+            self._fading_out = False
+            if self.on_fade_out_complete:
+                self.on_fade_out_complete()
+            if self.on_end:
+                self.on_end()
+            return self.get_frame()
+        
+        return self.get_frame()
+    
+    def _next_frame_stable_only(self) -> Optional[Image.Image]:
+        """
+        Loopt NUR im stabilen Bereich mit Ping-Pong.
+        
+        - Erstes Abspielen: Fade-In (Frame 0 bis stable_start)
+        - Dann: Ping-Pong zwischen stable_start und stable_end
+        - Nie Fade-Out, bis explizit start_fade_out() aufgerufen wird
+        
+        Perfekt für konstanten Regen!
+        """
+        if not self._intro_played:
+            # Intro noch nicht durch - normal abspielen bis stable_start
+            self.current_frame += 1
+            if self.current_frame >= self.stable_start:
+                self._intro_played = True
+                self._play_direction = 1
+            return self.get_frame()
+        
+        # Im stabilen Bereich: Ping-Pong
+        self.current_frame += self._play_direction
+        
+        # Obere Grenze erreicht
+        if self.current_frame >= self.stable_end:
+            self.current_frame = self.stable_end
+            self._play_direction = -1
+            if self.on_loop:
+                self.on_loop()
+        
+        # Untere Grenze erreicht
+        elif self.current_frame <= self.stable_start:
+            self.current_frame = self.stable_start
+            self._play_direction = 1
+            if self.on_loop:
+                self.on_loop()
+        
+        return self.get_frame()
     
     def _next_frame_pingpong(self) -> Optional[Image.Image]:
         """
@@ -594,14 +688,15 @@ class OverlayRenderer:
                    position: Tuple[int, int] = (0, 0),
                    loop: bool = True,
                    crossfade_frames: int = 60,
-                   loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
+                   loop_mode: LoopMode = LoopMode.LOOP_STABLE_ONLY,
                    intro_frames: int = 150):
         """
         Fügt ein neues Overlay hinzu.
         
-        loop_mode: LOOP_STABLE_SECTION (Standard) - Intro einmal, dann stabiler Loop mit Crossfade
+        loop_mode: LOOP_STABLE_ONLY (Standard) - Loopt nur im stabilen Bereich (kein Fade-Out)
         intro_frames: Frames am Anfang (Fade-In) die nur einmal gespielt werden (150 = 2.5s bei 60fps)
-        crossfade_frames: Frames für sanfte Überblendung am Loop-Punkt (60 = 1s bei 60fps)
+        
+        Ruf player.start_fade_out() auf um das Wetter enden zu lassen.
         """
         player = VideoPlayer(file_path, loop=loop, crossfade_frames=crossfade_frames, 
                             loop_mode=loop_mode, intro_frames=intro_frames)
@@ -778,19 +873,18 @@ class VideoMapRenderer:
             print(f"   Größe: {self.width}x{self.height}")
     
     def add_weather_overlay(self, weather_type: str, video_path: str, 
-                           loop_mode: LoopMode = LoopMode.LOOP_STABLE_SECTION,
+                           loop_mode: LoopMode = LoopMode.LOOP_STABLE_ONLY,
                            intro_frames: int = 150,
                            crossfade_frames: int = 60):
         """
         Fügt ein Wetter-Overlay hinzu mit nahtlosem Loop.
         
-        LOOP_STABLE_SECTION (Standard): 
+        LOOP_STABLE_ONLY (Standard): 
         - Intro/Fade-In wird nur EINMAL am Anfang gespielt
-        - Danach Loop im stabilen Bereich mit sanftem Crossfade
-        - Kein harter Cut, kein sichtbarer Übergang!
+        - Danach Ping-Pong-Loop NUR im stabilen Bereich
+        - Kein Fade-Out bis stop_weather() aufgerufen wird!
         
-        intro_frames: Frames am Anfang (Fade-In) die übersprungen werden (150 = 2.5s bei 60fps)
-        crossfade_frames: Frames für sanfte Überblendung am Loop-Punkt (60 = 1s bei 60fps)
+        intro_frames: Frames am Anfang (Fade-In) - danach beginnt stabiler Loop (150 = 2.5s bei 60fps)
         """
         if not self.overlay_renderer:
             return
@@ -813,6 +907,23 @@ class VideoMapRenderer:
             intro_frames=intro_frames,
             crossfade_frames=crossfade_frames
         )
+    
+    def stop_weather(self, weather_type: str = None):
+        """
+        Beendet das Wetter mit Fade-Out Animation.
+        Das Video spielt vom aktuellen Frame bis zum Ende (Fade-Out) und stoppt dann.
+        
+        weather_type: Welches Wetter stoppen, oder None für alle Wetter-Overlays
+        """
+        if not self.overlay_renderer:
+            return
+        
+        for oid, data in self.overlay_renderer.overlays.items():
+            if oid.startswith("weather_"):
+                if weather_type is None or oid == f"weather_{weather_type}":
+                    player = data["player"]
+                    player.start_fade_out()
+                    print(f"🌧️ → ☀️ Wetter '{oid}' wird beendet (Fade-Out)")
     
     def add_effect_overlay(self, effect_id: str, video_path: str,
                           opacity: float = 1.0,
