@@ -86,13 +86,28 @@ class VideoSource:
         }
 
 
+class LoopMode(Enum):
+    """Loop-Modi für Videos"""
+    NORMAL = "normal"           # Normaler Loop: Ende -> Anfang (harter Cut)
+    PING_PONG = "ping_pong"     # Vorwärts -> Rückwärts -> Vorwärts (nahtlos!)
+    PING_PONG_SKIP_INTRO = "ping_pong_skip_intro"  # Wie PING_PONG, aber überspringt Intro-Frames
+    CROSSFADE = "crossfade"     # Ende und Anfang überblenden (nur bei ähnlichen Frames)
+
+
 class VideoPlayer:
     """
     Video-Player für einzelne Videos
     Unterstützt MP4, AVI, WebM etc.
     """
     
-    def __init__(self, file_path: str, loop: bool = True):
+    def __init__(self, file_path: str, loop: bool = True, crossfade_frames: int = 30,
+                 loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
+                 intro_frames: int = 30):
+        """
+        Args:
+            intro_frames: Anzahl der Intro-Frames die nur einmal am Anfang gespielt werden.
+                         Bei 30 FPS = 30 Frames = 1 Sekunde Intro, danach Ping-Pong-Loop.
+        """
         self.file_path = file_path
         self.loop = loop
         
@@ -109,7 +124,19 @@ class VideoPlayer:
         self._reader = None
         self._frame_cache: Dict[int, Image.Image] = {}
         self._cache_enabled = True
-        self._max_cache_frames = 60
+        self._max_cache_frames = 120  # Mehr Cache für Ping-Pong
+        
+        # Loop-Modus für nahtloses Abspielen
+        self.loop_mode = loop_mode
+        self._play_direction = 1  # 1 = vorwärts, -1 = rückwärts (für Ping-Pong)
+        self._intro_played = False  # Wurde das Intro bereits gespielt?
+        self.intro_frames = intro_frames  # Frames die nur einmal am Anfang laufen
+        
+        # Crossfade für nahtlosen Loop (z.B. 30 Frames = 1 Sekunde bei 30fps)
+        self.crossfade_frames = crossfade_frames
+        self._start_frames_cache: Dict[int, Image.Image] = {}  # Cache für erste Frames
+        self._end_frames_cache: Dict[int, Image.Image] = {}    # Cache für letzte Frames
+        self._crossfade_enabled = True
         
         # Callbacks
         self.on_frame: Optional[Callable[[Image.Image], None]] = None
@@ -151,6 +178,10 @@ class VideoPlayer:
         
         self.is_loaded = True
         print(f"✅ Video geladen: {self.width}x{self.height} @ {self.fps}fps, {self.total_frames} Frames")
+        
+        # Crossfade-Frames vorladen für nahtlosen Loop
+        if self.loop and self._crossfade_enabled and self.total_frames > self.crossfade_frames * 2:
+            self._preload_crossfade_frames()
     
     def _load_with_imageio(self):
         """Lädt Video mit imageio"""
@@ -165,16 +196,53 @@ class VideoPlayer:
             
             self.is_loaded = True
             print(f"✅ Video geladen (imageio): {self.width}x{self.height} @ {self.fps}fps")
+            
+            # Crossfade-Frames vorladen für nahtlosen Loop
+            if self.loop and self._crossfade_enabled and self.total_frames > self.crossfade_frames * 2:
+                self._preload_crossfade_frames()
         except Exception as e:
             print(f"❌ Video-Ladefehler: {e}")
     
+    def _preload_crossfade_frames(self):
+        """
+        Lädt die ersten und letzten Frames vor für Crossfade.
+        Dies ermöglicht einen nahtlosen Loop ohne harten Cut.
+        """
+        print(f"🔄 Lade Crossfade-Frames vor ({self.crossfade_frames} Frames)...")
+        
+        # Erste N Frames laden (Anfang des Videos)
+        for i in range(self.crossfade_frames):
+            frame = self._read_frame(i)
+            if frame:
+                self._start_frames_cache[i] = frame
+        
+        # Letzte N Frames laden (Ende des Videos)
+        end_start = self.total_frames - self.crossfade_frames
+        for i in range(self.crossfade_frames):
+            frame_num = end_start + i
+            frame = self._read_frame(frame_num)
+            if frame:
+                self._end_frames_cache[i] = frame
+        
+        print(f"✅ Crossfade-Frames geladen: {len(self._start_frames_cache)} Start, {len(self._end_frames_cache)} Ende")
+    
     def get_frame(self, frame_number: int = -1) -> Optional[Image.Image]:
-        """Holt einen spezifischen Frame"""
+        """Holt einen spezifischen Frame, mit Crossfade am Loop-Punkt"""
         if not self.is_loaded:
             return None
         
         if frame_number < 0:
             frame_number = self.current_frame
+        
+        # Prüfen ob wir im Crossfade-Bereich am Ende sind
+        if (self.loop and self._crossfade_enabled and 
+            self.total_frames > self.crossfade_frames * 2):
+            
+            crossfade_start = self.total_frames - self.crossfade_frames
+            
+            if frame_number >= crossfade_start:
+                # Wir sind im Crossfade-Bereich am Ende
+                return self._get_crossfaded_frame(frame_number)
         
         # Cache prüfen
         if frame_number in self._frame_cache:
@@ -191,6 +259,57 @@ class VideoPlayer:
             self._frame_cache[frame_number] = frame
         
         return frame
+    
+    def _get_crossfaded_frame(self, frame_number: int) -> Optional[Image.Image]:
+        """
+        Erstellt einen Crossfade-Frame zwischen Ende und Anfang des Videos.
+        Blendet sanft vom Ende-Frame zum entsprechenden Start-Frame über.
+        """
+        crossfade_start = self.total_frames - self.crossfade_frames
+        fade_position = frame_number - crossfade_start  # 0 bis crossfade_frames-1
+        
+        # Alpha-Wert für Überblendung (0.0 = nur Ende, 1.0 = nur Anfang)
+        alpha = fade_position / float(self.crossfade_frames - 1) if self.crossfade_frames > 1 else 0.0
+        
+        # End-Frame holen (aus Cache oder laden)
+        end_frame = self._end_frames_cache.get(fade_position)
+        if not end_frame:
+            end_frame = self._read_frame(frame_number)
+        
+        # Start-Frame holen (der entsprechende Frame vom Anfang)
+        start_frame = self._start_frames_cache.get(fade_position)
+        if not start_frame:
+            start_frame = self._read_frame(fade_position)
+        
+        # Wenn einer fehlt, den anderen zurückgeben
+        if not end_frame and not start_frame:
+            return None
+        if not end_frame:
+            return start_frame
+        if not start_frame:
+            return end_frame
+        
+        # Crossfade berechnen: blend = end * (1-alpha) + start * alpha
+        return self._blend_frames(end_frame, start_frame, alpha)
+    
+    def _blend_frames(self, frame1: Image.Image, frame2: Image.Image, alpha: float) -> Image.Image:
+        """
+        Blendet zwei Frames ineinander.
+        alpha = 0.0: nur frame1
+        alpha = 1.0: nur frame2
+        """
+        # Sicherstellen dass beide Frames RGBA sind
+        if frame1.mode != 'RGBA':
+            frame1 = frame1.convert('RGBA')
+        if frame2.mode != 'RGBA':
+            frame2 = frame2.convert('RGBA')
+        
+        # Größen angleichen falls nötig
+        if frame1.size != frame2.size:
+            frame2 = frame2.resize(frame1.size, Image.LANCZOS)
+        
+        # Blend mit PIL
+        return Image.blend(frame1, frame2, alpha)
     
     def _read_frame(self, frame_number: int) -> Optional[Image.Image]:
         """Liest einen Frame direkt"""
@@ -222,7 +341,80 @@ class VideoPlayer:
             return None
     
     def next_frame(self) -> Optional[Image.Image]:
-        """Geht zum nächsten Frame"""
+        """
+        Geht zum nächsten Frame basierend auf Loop-Modus.
+        PING_PONG: Video spielt vorwärts, dann rückwärts - kein harter Cut!
+        """
+        if self.loop_mode == LoopMode.PING_PONG:
+            return self._next_frame_pingpong()
+        elif self.loop_mode == LoopMode.PING_PONG_SKIP_INTRO:
+            return self._next_frame_pingpong_skip_intro()
+        else:
+            return self._next_frame_normal()
+    
+    def _next_frame_pingpong(self) -> Optional[Image.Image]:
+        """
+        Ping-Pong-Loop: Vorwärts bis Ende, dann Rückwärts bis Anfang, wiederholen.
+        Perfekt für Regen/Schnee - niemand bemerkt den Richtungswechsel!
+        """
+        self.current_frame += self._play_direction
+        
+        # Am Ende angekommen -> Richtung umkehren
+        if self.current_frame >= self.total_frames - 1:
+            self.current_frame = self.total_frames - 1
+            self._play_direction = -1  # Jetzt rückwärts
+            if self.on_loop:
+                self.on_loop()
+        
+        # Am Anfang angekommen -> Richtung umkehren  
+        elif self.current_frame <= 0:
+            self.current_frame = 0
+            self._play_direction = 1  # Jetzt vorwärts
+            if self.on_loop:
+                self.on_loop()
+        
+        return self.get_frame()
+    
+    def _next_frame_pingpong_skip_intro(self) -> Optional[Image.Image]:
+        """
+        Ping-Pong mit Intro-Skip:
+        
+        1. Erstes Abspielen: Frame 0 → Ende (Intro wird gespielt)
+        2. Danach: Pendelt nur noch zwischen intro_frames und Ende
+                   Die ersten Frames werden NIE mehr gezeigt!
+        
+        Beispiel mit intro_frames=30, total_frames=300:
+        - Erstes Mal:  0 → 1 → 2 → ... → 299 (komplett vorwärts)
+        - Dann Loop:   299 → 298 → ... → 30 → 31 → ... → 299 → 298 → ...
+                       (pendelt zwischen Frame 30 und 299, Frame 0-29 werden übersprungen)
+        """
+        self.current_frame += self._play_direction
+        
+        # Am Ende angekommen -> Richtung umkehren (rückwärts)
+        if self.current_frame >= self.total_frames - 1:
+            self.current_frame = self.total_frames - 1
+            self._play_direction = -1
+            self._intro_played = True  # Intro ist jetzt durch
+            if self.on_loop:
+                self.on_loop()
+        
+        # Rückwärts: Stoppe bei intro_frames (nicht bei 0!)
+        elif self._intro_played and self._play_direction == -1:
+            if self.current_frame <= self.intro_frames:
+                self.current_frame = self.intro_frames
+                self._play_direction = 1  # Wieder vorwärts
+                if self.on_loop:
+                    self.on_loop()
+        
+        # Nur für den Fall dass wir irgendwie unter 0 kommen
+        elif self.current_frame < 0:
+            self.current_frame = 0
+            self._play_direction = 1
+        
+        return self.get_frame()
+    
+    def _next_frame_normal(self) -> Optional[Image.Image]:
+        """Normaler Loop mit optionalem Crossfade"""
         self.current_frame += 1
         
         if self.current_frame >= self.total_frames:
@@ -308,6 +500,28 @@ class VideoPlayer:
             self._reader = None
         
         self._frame_cache.clear()
+        self._start_frames_cache.clear()
+        self._end_frames_cache.clear()
+    
+    def set_crossfade_duration(self, frames: int):
+        """
+        Setzt die Anzahl der Crossfade-Frames.
+        Bei 30 FPS: 30 Frames = 1 Sekunde Überblendung
+        """
+        self.crossfade_frames = max(0, frames)
+        # Cache neu laden wenn Video bereits geladen
+        if self.is_loaded and self.loop and self.crossfade_frames > 0:
+            self._start_frames_cache.clear()
+            self._end_frames_cache.clear()
+            if self.total_frames > self.crossfade_frames * 2:
+                self._preload_crossfade_frames()
+    
+    def enable_crossfade(self, enabled: bool = True):
+        """Aktiviert/deaktiviert den Crossfade-Loop"""
+        self._crossfade_enabled = enabled
+        if enabled and self.is_loaded and self.loop:
+            if not self._start_frames_cache and self.total_frames > self.crossfade_frames * 2:
+                self._preload_crossfade_frames()
 
 
 class OverlayRenderer:
@@ -328,9 +542,18 @@ class OverlayRenderer:
                    blend_mode: BlendMode = BlendMode.NORMAL,
                    z_index: int = 100,
                    position: Tuple[int, int] = (0, 0),
-                   loop: bool = True):
-        """Fügt ein neues Overlay hinzu"""
-        player = VideoPlayer(file_path, loop=loop)
+                   loop: bool = True,
+                   crossfade_frames: int = 30,
+                   loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
+                   intro_frames: int = 30):
+        """
+        Fügt ein neues Overlay hinzu.
+        
+        loop_mode: PING_PONG_SKIP_INTRO (Standard) - Intro einmal spielen, dann nahtloser Loop
+        intro_frames: Anzahl Frames am Anfang die nur einmal gespielt werden (z.B. Regen setzt ein)
+        """
+        player = VideoPlayer(file_path, loop=loop, crossfade_frames=crossfade_frames, 
+                            loop_mode=loop_mode, intro_frames=intro_frames)
         
         self.overlays[overlay_id] = {
             "player": player,
@@ -343,7 +566,8 @@ class OverlayRenderer:
         
         # Automatisch starten
         player.play()
-        print(f"🎬 Overlay hinzugefügt: {overlay_id} (z={z_index})")
+        mode_name = loop_mode.value if loop_mode else "normal"
+        print(f"🎬 Overlay hinzugefügt: {overlay_id} (z={z_index}, loop={mode_name})")
     
     def remove_overlay(self, overlay_id: str):
         """Entfernt ein Overlay"""
@@ -485,12 +709,12 @@ class VideoMapRenderer:
         self._stop_event = threading.Event()
         self._is_rendering = False
     
-    def load_video_map(self, video_path: str):
-        """Lädt eine Video-Map"""
+    def load_video_map(self, video_path: str, crossfade_frames: int = 30):
+        """Lädt eine Video-Map mit optionalem Crossfade für nahtlosen Loop"""
         if self.current_video:
             self.current_video.close()
         
-        self.current_video = VideoPlayer(video_path, loop=True)
+        self.current_video = VideoPlayer(video_path, loop=True, crossfade_frames=crossfade_frames)
         
         if self.current_video.is_loaded:
             self.width = self.current_video.width
@@ -502,8 +726,19 @@ class VideoMapRenderer:
             print(f"🗺️ Video-Map geladen: {video_path}")
             print(f"   Größe: {self.width}x{self.height}")
     
-    def add_weather_overlay(self, weather_type: str, video_path: str):
-        """Fügt ein Wetter-Overlay hinzu"""
+    def add_weather_overlay(self, weather_type: str, video_path: str, 
+                           loop_mode: LoopMode = LoopMode.PING_PONG_SKIP_INTRO,
+                           intro_frames: int = 30):
+        """
+        Fügt ein Wetter-Overlay hinzu mit nahtlosem Loop.
+        
+        PING_PONG_SKIP_INTRO (Standard): 
+        - Intro-Frames (z.B. Regen setzt ein) werden nur EINMAL am Anfang gespielt
+        - Danach pendelt das Video nahtlos zwischen intro_frames und Ende
+        - Kein harter Cut, kein Zurückspringen zum Anfang!
+        
+        intro_frames: Anzahl Frames am Anfang die übersprungen werden (Standard: 30 = 1 Sek bei 30fps)
+        """
         if not self.overlay_renderer:
             return
         
@@ -514,19 +749,22 @@ class VideoMapRenderer:
             if oid.startswith("weather_"):
                 self.overlay_renderer.remove_overlay(oid)
         
-        # Neues Overlay hinzufügen
+        # Neues Overlay mit Ping-Pong (Skip Intro) für nahtlosen Loop
         self.overlay_renderer.add_overlay(
             overlay_id,
             video_path,
             opacity=0.6,
             blend_mode=BlendMode.SCREEN,  # Für Regen/Schnee gut
-            z_index=200
+            z_index=200,
+            loop_mode=loop_mode,
+            intro_frames=intro_frames
         )
     
     def add_effect_overlay(self, effect_id: str, video_path: str,
                           opacity: float = 1.0,
-                          blend_mode: BlendMode = BlendMode.NORMAL):
-        """Fügt ein Effekt-Overlay hinzu"""
+                          blend_mode: BlendMode = BlendMode.NORMAL,
+                          loop_mode: LoopMode = LoopMode.PING_PONG):
+        """Fügt ein Effekt-Overlay hinzu mit nahtlosem Ping-Pong-Loop"""
         if not self.overlay_renderer:
             return
         
@@ -535,7 +773,8 @@ class VideoMapRenderer:
             video_path,
             opacity=opacity,
             blend_mode=blend_mode,
-            z_index=150
+            z_index=150,
+            loop_mode=loop_mode
         )
     
     def remove_overlay(self, overlay_id: str):
