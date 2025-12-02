@@ -269,22 +269,29 @@ class ProjectorWindow(tk.Toplevel):
         self.weather_overlay_opacity = 0.7  # Transparenz (0-1)
         self.weather_overlay_path = None
         
-        # GM-KONTROLLIERTES OVERLAY SYSTEM (performant mit vorberechneten PhotoImages)
+        # GM-KONTROLLIERTES OVERLAY SYSTEM (separates Layer über Map)
         self.overlay_enabled = False  # Vom GM Panel gesteuert
         self.overlay_frames = []  # Original PIL-Frames vom GM Panel
-        self.overlay_photos = []  # Fertige PhotoImages (Map + Overlay composited)
+        self.overlay_photos = []  # Fertige PhotoImages (nur Overlay, nicht composited)
+        self.overlay_canvas_item = None  # Separates Canvas-Item für Overlay
         self.overlay_prepared = []  # Legacy
-        self.overlay_map_cache = None  # Gecachte Map für Compositing
+        self.overlay_map_cache = None  # Nicht mehr verwendet
         self.overlay_canvas_size = None  # Aktuelle Canvas-Größe
         self.overlay_loading = False  # True während Vorbereitung
         self.overlay_current = 0
-        self.overlay_opacity = 0.8  # Etwas höher für bessere Sichtbarkeit
+        self.overlay_opacity = 0.9  # Höher für bessere Sichtbarkeit
         self.overlay_speed = 1.0  # Playback speed multiplier
         self.overlay_x = 0  # X-Offset
         self.overlay_y = 0  # Y-Offset
         self.overlay_scale = 1.0  # Skalierung
         self.overlay_mode = "tile"  # tile, stretch, center
         self.overlay_animation_id = None  # after() ID für Animation
+        self._overlay_photo_ref = None  # Referenz für GC-Schutz
+        
+        # Karten-Abdunkelung für Wetter-Effekte
+        self.darken_map = False  # True = Karte wird abgedunkelt
+        self.darken_amount = 0.3  # Stärke der Abdunkelung (0-1)
+        self._darken_canvas_item = None  # Canvas-Item für Abdunkelung
         
         # WETTER-PRESETS (Name -> GIF-Pfad)
         self.weather_presets = {}  # Wird beim Laden gefüllt
@@ -791,6 +798,9 @@ class ProjectorWindow(tk.Toplevel):
             self.canvas.itemconfig(self.canvas_image_id, image=self.map_photo)
             self.canvas.coords(self.canvas_image_id, offset_x, offset_y)
         
+        # === KARTEN-ABDUNKELUNG (für Wetter-Effekte) ===
+        self._update_darken_layer(canvas_width, canvas_height)
+        
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def center_view(self):
@@ -1013,6 +1023,56 @@ class ProjectorWindow(tk.Toplevel):
             self.overlay_current = (self.overlay_current + 1) % len(self.overlay_frames)
     
     # ============================================================
+    # KARTEN-ABDUNKELUNG (für Wetter-Effekte)
+    # ============================================================
+    
+    def _update_darken_layer(self, canvas_width, canvas_height):
+        """Aktualisiert oder erstellt das Abdunkelungs-Rechteck über der Karte"""
+        if self.darken_map and self.overlay_enabled:
+            # Abdunkelung aktiviert - erstelle oder aktualisiere Layer
+            # Berechne Hex-Farbe basierend auf darken_amount (0-1)
+            # Bei amount=0.3 -> 30% Abdunkelung -> 70% Helligkeit
+            darkness = int((1.0 - self.darken_amount) * 255)  # Invertiert für stipple-Effekt
+            
+            if self._darken_canvas_item is None:
+                # Erstelle semi-transparentes Rechteck
+                # Tkinter Canvas hat keine echte Transparenz, also nutzen wir stipple
+                self._darken_canvas_item = self.canvas.create_rectangle(
+                    0, 0, canvas_width, canvas_height,
+                    fill="black",
+                    outline="",
+                    stipple="gray50" if self.darken_amount >= 0.4 else "gray25",
+                    tags="darken_layer"
+                )
+                # Stelle sicher, dass es über der Map aber unter dem Overlay liegt
+                self.canvas.tag_raise("darken_layer", "map")
+            else:
+                # Aktualisiere Größe und Stipple-Muster
+                self.canvas.coords(self._darken_canvas_item, 0, 0, canvas_width, canvas_height)
+                # Wähle passendes Stipple-Pattern basierend auf Stärke
+                if self.darken_amount >= 0.5:
+                    stipple = "gray75"  # 75% Füllung = sehr dunkel
+                elif self.darken_amount >= 0.35:
+                    stipple = "gray50"  # 50% Füllung = mittel dunkel
+                elif self.darken_amount >= 0.2:
+                    stipple = "gray25"  # 25% Füllung = leicht dunkel
+                else:
+                    stipple = "gray12"  # 12.5% Füllung = kaum dunkel
+                self.canvas.itemconfig(self._darken_canvas_item, stipple=stipple)
+                
+            # Nach Overlay positionieren (Overlay soll ÜBER Abdunkelung sein)
+            if self.overlay_canvas_item:
+                self.canvas.tag_raise("overlay", "darken_layer")
+        else:
+            # Abdunkelung deaktiviert - entferne Layer falls vorhanden
+            if self._darken_canvas_item is not None:
+                try:
+                    self.canvas.delete(self._darken_canvas_item)
+                except:
+                    pass
+                self._darken_canvas_item = None
+    
+    # ============================================================
     # GM-KONTROLLIERTES OVERLAY SYSTEM
     # ============================================================
     
@@ -1031,7 +1091,7 @@ class ProjectorWindow(tk.Toplevel):
             self.stop_overlay_animation()
     
     def start_overlay_animation(self):
-        """Startet die Overlay-Animation - bereitet ALLE Frames als PhotoImages vor"""
+        """Startet die Overlay-Animation als SEPARATES Layer über der Map"""
         if not self.overlay_frames:
             return
         
@@ -1049,26 +1109,33 @@ class ProjectorWindow(tk.Toplevel):
         
         self.overlay_canvas_size = (canvas_w, canvas_h)
         
-        print(f"🎬 Bereite {len(self.overlay_frames)} Frames vor...")
+        total_frames = len(self.overlay_frames)
         
-        # Cache die Map einmal
-        self._cache_map_for_overlay()
+        # SMOOTH LOOP STRATEGIE:
+        # 1. Überspringe die ersten 20% (Anfang des Regenfalls)
+        # 2. Nutze den Rest und erstelle Cross-Fade am Loop-Punkt
+        skip_start = int(total_frames * 0.20)  # Erste 20% überspringen (Regenfall-Start)
         
-        # PERFORMANCE-KRITISCH: Bereite ALLE Frames als fertige PhotoImages vor
-        # Das vermeidet Compositing während der Animation!
-        self.overlay_photos = []
+        # Frames ab skip_start bis Ende
+        loop_frames = self.overlay_frames[skip_start:]
         
-        base_map = self.overlay_map_cache
-        if base_map and base_map.mode != 'RGBA':
-            base_map = base_map.convert('RGBA')
+        if len(loop_frames) < 20:
+            loop_frames = self.overlay_frames  # Fallback
+            skip_start = 0
         
-        for i, frame in enumerate(self.overlay_frames):
-            # Resize Overlay auf Canvas-Größe
+        print(f"🎬 Bereite {len(loop_frames)} Frames vor (überspringe erste {skip_start} Anfangs-Frames)...")
+        
+        # Cross-Fade für nahtlosen Loop: 
+        # Die letzten N Frames werden mit den ersten N Frames überblendet
+        fade_frames = min(15, len(loop_frames) // 4)  # 15 Frames oder 25% 
+        
+        # Bereite Frames vor
+        prepared_frames = []
+        for i, frame in enumerate(loop_frames):
             if frame.mode != 'RGBA':
                 frame = frame.convert('RGBA')
-            
             if frame.size != (canvas_w, canvas_h):
-                frame = frame.resize((canvas_w, canvas_h), Image.Resampling.NEAREST)  # NEAREST = schnellster!
+                frame = frame.resize((canvas_w, canvas_h), Image.Resampling.BILINEAR)
             
             # Opacity anwenden
             if self.overlay_opacity < 1.0:
@@ -1076,21 +1143,43 @@ class ProjectorWindow(tk.Toplevel):
                 a = a.point(lambda x: int(x * self.overlay_opacity))
                 frame = Image.merge('RGBA', (r, g, b, a))
             
-            # Composite mit Map JETZT (nicht während Animation!)
-            if base_map:
-                result = Image.alpha_composite(base_map, frame)
-            else:
-                result = frame
+            prepared_frames.append(frame)
+        
+        # Cross-Fade am Loop-Punkt erstellen
+        # Ersetze die letzten fade_frames mit Überblendung zu den ersten
+        for i in range(fade_frames):
+            # Blend-Faktor: 0.0 am Anfang (100% aktueller Frame), 1.0 am Ende (100% erster Frame)
+            alpha = i / fade_frames
             
-            # Zu PhotoImage konvertieren und speichern
-            photo = ImageTk.PhotoImage(result)
+            # Index vom Ende
+            end_idx = len(prepared_frames) - fade_frames + i
+            # Index vom Anfang
+            start_idx = i
+            
+            if end_idx < len(prepared_frames) and start_idx < len(prepared_frames):
+                # Überblende: aktueller End-Frame mit Start-Frame
+                end_frame = prepared_frames[end_idx]
+                start_frame = prepared_frames[start_idx]
+                
+                # PIL blend: result = frame1 * (1 - alpha) + frame2 * alpha
+                blended = Image.blend(end_frame, start_frame, alpha)
+                prepared_frames[end_idx] = blended
+        
+        print(f"✅ Cross-Fade erstellt ({fade_frames} Frames)")
+        
+        # Zu PhotoImages konvertieren
+        self.overlay_photos = []
+        for frame in prepared_frames:
+            photo = ImageTk.PhotoImage(frame)
             self.overlay_photos.append(photo)
-            
-            # Fortschritt
-            if (i + 1) % 30 == 0:
-                print(f"   {i + 1}/{len(self.overlay_frames)} Frames...")
         
         print(f"✅ {len(self.overlay_photos)} PhotoImages bereit - starte Animation")
+        
+        # Erstelle separates Canvas-Item für Overlay
+        if not hasattr(self, 'overlay_canvas_item') or not self.overlay_canvas_item:
+            self.overlay_canvas_item = self.canvas.create_image(
+                0, 0, anchor='nw', tags='overlay_anim'
+            )
         
         # Animation starten
         self.overlay_current = 0
@@ -1131,7 +1220,7 @@ class ProjectorWindow(tk.Toplevel):
         pass
     
     def _animate_overlay_fast(self):
-        """SUPER SCHNELLE Animation - nur PhotoImage wechseln!"""
+        """SUPER SCHNELLE Animation - nur Overlay-Layer PhotoImage wechseln!"""
         if not self.overlay_enabled or not self.overlay_photos:
             return
         
@@ -1139,16 +1228,15 @@ class ProjectorWindow(tk.Toplevel):
             # Aktuelles PhotoImage holen
             photo = self.overlay_photos[self.overlay_current]
             
-            # Canvas aktualisieren (SUPER SCHNELL!)
-            if self.canvas_image_id:
-                self.canvas.itemconfig(self.canvas_image_id, image=photo)
-            else:
-                self.canvas_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
+            # NUR das Overlay-Layer aktualisieren (Map bleibt unberührt!)
+            if hasattr(self, 'overlay_canvas_item') and self.overlay_canvas_item:
+                self.canvas.itemconfig(self.overlay_canvas_item, image=photo)
+                self.canvas.tag_raise('overlay_anim')  # Immer über der Map
             
             # Referenz behalten!
-            self.canvas.photo = photo
+            self._overlay_photo_ref = photo
             
-            # Nächster Frame
+            # Nächster Frame (smooth loop)
             self.overlay_current = (self.overlay_current + 1) % len(self.overlay_photos)
             
             # Timer für nächsten Frame (33ms = ~30fps)
@@ -1168,15 +1256,25 @@ class ProjectorWindow(tk.Toplevel):
             self.after_cancel(self.overlay_animation_id)
             self.overlay_animation_id = None
         
+        # Overlay-Layer vom Canvas entfernen
+        if hasattr(self, 'overlay_canvas_item') and self.overlay_canvas_item:
+            self.canvas.delete('overlay_anim')
+            self.overlay_canvas_item = None
+        
+        # Abdunkelungs-Layer entfernen
+        if hasattr(self, '_darken_canvas_item') and self._darken_canvas_item:
+            try:
+                self.canvas.delete(self._darken_canvas_item)
+            except:
+                pass
+            self._darken_canvas_item = None
+        
         # Speicher freigeben
         self.overlay_photos = []
         self.overlay_prepared = []
         self.overlay_map_cache = None
         self.overlay_canvas_size = None
-        
-        # Map ohne Overlay neu rendern
-        if render_now:
-            self.render_map()
+        self._overlay_photo_ref = None
     
     def get_overlay_frame(self, target_size: tuple):
         """Hole aktuellen GM-Overlay Frame, skaliert auf Zielgröße"""
@@ -2118,6 +2216,9 @@ class ProjectorWindow(tk.Toplevel):
             )
         
         self.canvas.photo = photo
+        
+        # === KARTEN-ABDUNKELUNG (für Wetter-Effekte) ===
+        self._update_darken_layer(canvas_width, canvas_height)
     
     def destroy(self):
         """Aufräumen beim Schließen"""

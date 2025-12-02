@@ -883,6 +883,30 @@ class OverlayEditor(PropertyEditor):
         self.opacity_scale.set(self.overlay.opacity)
         self.opacity_scale.pack(side=tk.LEFT, padx=5)
         self.opacity_scale.bind("<ButtonRelease-1>", self._on_opacity_change)
+        
+        # Darken Map Option (für Regen, Sturm etc.)
+        row3 = tk.Frame(params, bg="#2a1a4e")
+        row3.pack(fill=tk.X, pady=2)
+        
+        self.darken_var = tk.BooleanVar(value=getattr(self.overlay, 'darken_map', False))
+        darken_cb = tk.Checkbutton(
+            row3, text="🌑 Map abdunkeln",
+            variable=self.darken_var,
+            bg="#2a1a4e", fg="white",
+            selectcolor="#0f3460",
+            command=self._on_darken_change
+        )
+        darken_cb.pack(side=tk.LEFT)
+        
+        self.create_label(row3, "Stärke:").pack(side=tk.LEFT, padx=(15, 0))
+        self.darken_scale = tk.Scale(
+            row3, from_=0.1, to=0.7, resolution=0.05,
+            orient=tk.HORIZONTAL, length=80,
+            bg="#2a1a4e", fg="white", highlightthickness=0
+        )
+        self.darken_scale.set(getattr(self.overlay, 'darken_amount', 0.3))
+        self.darken_scale.pack(side=tk.LEFT, padx=5)
+        self.darken_scale.bind("<ButtonRelease-1>", self._on_darken_amount_change)
     
     def _on_name_change(self, event):
         self.overlay.name = self.name_entry.get()
@@ -898,6 +922,14 @@ class OverlayEditor(PropertyEditor):
     
     def _on_opacity_change(self, event):
         self.overlay.opacity = self.opacity_scale.get()
+        self.notify_change()
+    
+    def _on_darken_change(self):
+        self.overlay.darken_map = self.darken_var.get()
+        self.notify_change()
+    
+    def _on_darken_amount_change(self, event):
+        self.overlay.darken_amount = self.darken_scale.get()
         self.notify_change()
     
     def _browse_source(self):

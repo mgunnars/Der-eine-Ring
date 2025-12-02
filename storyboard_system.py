@@ -208,6 +208,10 @@ class Overlay:
     # Kategorien für einfache Verwaltung
     category: str = "effect"        # weather, effect, ui, ambient
     
+    # Map-Verdunkelung (für Regen, Sturm etc.)
+    darken_map: bool = False        # Map abdunkeln wenn Overlay aktiv
+    darken_amount: float = 0.3      # Wie stark abdunkeln (0.0 - 1.0)
+    
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -221,7 +225,9 @@ class Overlay:
             "loop": self.loop,
             "visible": self.visible,
             "animation_speed": self.animation_speed,
-            "category": self.category
+            "category": self.category,
+            "darken_map": self.darken_map,
+            "darken_amount": self.darken_amount
         }
     
     @classmethod
@@ -238,7 +244,9 @@ class Overlay:
             loop=data.get("loop", True),
             visible=data.get("visible", True),
             animation_speed=data.get("animation_speed", 1.0),
-            category=data.get("category", "effect")
+            category=data.get("category", "effect"),
+            darken_map=data.get("darken_map", False),
+            darken_amount=data.get("darken_amount", 0.3)
         )
 
 

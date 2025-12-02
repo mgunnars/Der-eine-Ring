@@ -677,6 +677,37 @@ class GamemasterControlPanel(tk.Toplevel):
                       bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
                       command=self.update_overlay_transform).pack(side=tk.LEFT, padx=5)
         
+        # Abdunkelung (für Wetter-Overlays)
+        darken_frame = tk.LabelFrame(parent, text="🌑 Karten-Abdunkelung", bg="#2d2d2d", fg="white")
+        darken_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        darken_toggle_frame = tk.Frame(darken_frame, bg="#2d2d2d")
+        darken_toggle_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.darken_map_var = tk.BooleanVar(value=False)
+        darken_check = tk.Checkbutton(darken_toggle_frame, 
+                                      text="Karte abdunkeln (für Regen/Sturm)",
+                                      variable=self.darken_map_var,
+                                      command=self.update_darken_map,
+                                      bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
+                                      font=("Arial", 10))
+        darken_check.pack(side=tk.LEFT, padx=5)
+        
+        darken_slider_frame = tk.Frame(darken_frame, bg="#2d2d2d")
+        darken_slider_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(darken_slider_frame, text="Stärke:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.darken_amount_var = tk.DoubleVar(value=0.3)
+        darken_slider = tk.Scale(darken_slider_frame, from_=0.1, to=0.7, resolution=0.05,
+                                 orient=tk.HORIZONTAL, variable=self.darken_amount_var,
+                                 command=self.update_darken_amount,
+                                 bg="#2d2d2d", fg="white", highlightthickness=0)
+        darken_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.darken_value_label = tk.Label(darken_slider_frame, text="30%", bg="#2d2d2d", fg="white", width=5)
+        self.darken_value_label.pack(side=tk.RIGHT, padx=5)
+        
         # Random Overlay System
         random_frame = tk.LabelFrame(parent, text="Zufälliges Overlay", bg="#2d2d2d", fg="white")
         random_frame.pack(fill=tk.X, padx=10, pady=10)
@@ -754,6 +785,17 @@ class GamemasterControlPanel(tk.Toplevel):
                 overlay = self._scene_overlays[idx]
                 if hasattr(overlay, 'file_path') and overlay.file_path:
                     self.load_overlay_from_path(overlay.file_path)
+                    
+                    # Übernehme darken_map Einstellungen aus dem Overlay
+                    if hasattr(overlay, 'darken_map'):
+                        self.darken_map_var.set(overlay.darken_map)
+                        if self.projector_window:
+                            self.projector_window.darken_map = overlay.darken_map
+                    if hasattr(overlay, 'darken_amount'):
+                        self.darken_amount_var.set(overlay.darken_amount)
+                        self.darken_value_label.config(text=f"{int(overlay.darken_amount * 100)}%")
+                        if self.projector_window:
+                            self.projector_window.darken_amount = overlay.darken_amount
     
     def load_overlay_file(self, file_type):
         """Lädt eine Overlay-Datei (GIF oder Video)"""
@@ -897,6 +939,23 @@ class GamemasterControlPanel(tk.Toplevel):
             self.projector_window.overlay_mode = self.overlay_mode_var.get()
             self.scale_value_label.config(text=f"{int(self.overlay_scale_var.get() * 100)}%")
             self.projector_window.render_map()
+    
+    def update_darken_map(self):
+        """Aktiviert/Deaktiviert Karten-Abdunkelung"""
+        darken = self.darken_map_var.get()
+        if self.projector_window:
+            self.projector_window.darken_map = darken
+            self.projector_window.render_map()
+        self._set_status(f"Karten-Abdunkelung {'aktiviert' if darken else 'deaktiviert'}")
+    
+    def update_darken_amount(self, value):
+        """Aktualisiert Stärke der Karten-Abdunkelung"""
+        amount = float(value)
+        self.darken_value_label.config(text=f"{int(amount * 100)}%")
+        if self.projector_window:
+            self.projector_window.darken_amount = amount
+            if self.projector_window.darken_map:
+                self.projector_window.render_map()
     
     def clear_overlay(self):
         """Entfernt aktuelles Overlay"""
