@@ -135,7 +135,7 @@ class VideoPlayer:
         self._play_direction = 1  # 1 = vorwärts, -1 = rückwärts (für Ping-Pong)
         self._intro_played = False  # Wurde das Intro bereits gespielt?
         self.intro_frames = intro_frames  # Frames die nur einmal am Anfang laufen
-        self.outro_frames = outro_frames if outro_frames > 0 else intro_frames  # Frames am Ende (Fade-Out)
+        self.outro_frames = outro_frames  # Frames am Ende (Fade-Out) - 0 = kein Fade-Out im Video
         
         # Stabiler Bereich (wird automatisch berechnet oder manuell gesetzt)
         self.stable_start = intro_frames  # Beginn des stabilen Bereichs
@@ -190,9 +190,15 @@ class VideoPlayer:
         self.fps = self._capture.get(cv2.CAP_PROP_FPS) or 30.0
         self.total_frames = int(self._capture.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # Stabilen Bereich setzen (zwischen Intro und Outro)
+        # Stabilen Bereich setzen
+        # stable_start = nach dem Intro (Fade-In)
+        # stable_end = Ende des Videos (wenn outro_frames=0) oder vor dem Outro
         self.stable_start = self.intro_frames
-        self.stable_end = self.total_frames - self.outro_frames
+        if self.outro_frames > 0:
+            self.stable_end = self.total_frames - self.outro_frames
+        else:
+            # Kein Outro - der stabile Bereich geht bis zum Ende!
+            self.stable_end = self.total_frames - 1
         
         # Falls Video zu kurz, stabilen Bereich anpassen
         if self.stable_end <= self.stable_start:
@@ -201,7 +207,7 @@ class VideoPlayer:
         
         self.is_loaded = True
         print(f"✅ Video geladen: {self.width}x{self.height} @ {self.fps}fps, {self.total_frames} Frames")
-        print(f"   Stabiler Bereich: Frame {self.stable_start}-{self.stable_end}")
+        print(f"   Stabiler Bereich: Frame {self.stable_start}-{self.stable_end} (Loop-Bereich)")
         
         # Crossfade-Frames vorladen für nahtlosen Loop
         if self.loop and self._crossfade_enabled and self.total_frames > self.crossfade_frames * 2:
