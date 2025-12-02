@@ -292,6 +292,9 @@ class ProjectorWindow(tk.Toplevel):
         self.darken_map = False  # True = Karte wird abgedunkelt
         self.darken_amount = 0.3  # Stärke der Abdunkelung (0-1)
         self._darken_canvas_item = None  # Canvas-Item für Abdunkelung
+        self._darken_photo = None  # PhotoImage Referenz (GC-Schutz)
+        self._darken_size = None  # Cached size
+        self._darken_amount_cached = None  # Cached amount
         
         # WETTER-PRESETS (Name -> GIF-Pfad)
         self.weather_presets = {}  # Wird beim Laden gefüllt
@@ -1027,38 +1030,45 @@ class ProjectorWindow(tk.Toplevel):
     # ============================================================
     
     def _update_darken_layer(self, canvas_width, canvas_height):
-        """Aktualisiert oder erstellt das Abdunkelungs-Rechteck über der Karte"""
+        """Aktualisiert oder erstellt ein echtes halbtransparentes Abdunkelungs-Bild über der Karte"""
+        from PIL import Image, ImageTk
+        
         if self.darken_map and self.overlay_enabled:
-            # Abdunkelung aktiviert - erstelle oder aktualisiere Layer
-            # Berechne Hex-Farbe basierend auf darken_amount (0-1)
-            # Bei amount=0.3 -> 30% Abdunkelung -> 70% Helligkeit
-            darkness = int((1.0 - self.darken_amount) * 255)  # Invertiert für stipple-Effekt
+            # Prüfe ob Größe sich geändert hat oder neu erstellt werden muss
+            need_recreate = (
+                self._darken_canvas_item is None or
+                not hasattr(self, '_darken_size') or
+                self._darken_size != (canvas_width, canvas_height) or
+                not hasattr(self, '_darken_amount_cached') or
+                self._darken_amount_cached != self.darken_amount
+            )
             
-            if self._darken_canvas_item is None:
-                # Erstelle semi-transparentes Rechteck
-                # Tkinter Canvas hat keine echte Transparenz, also nutzen wir stipple
-                self._darken_canvas_item = self.canvas.create_rectangle(
-                    0, 0, canvas_width, canvas_height,
-                    fill="black",
-                    outline="",
-                    stipple="gray50" if self.darken_amount >= 0.4 else "gray25",
-                    tags="darken_layer"
-                )
+            if need_recreate:
+                # Erstelle echtes halbtransparentes schwarzes Bild
+                # Alpha = darken_amount * 255 (z.B. 0.3 = 76 Alpha)
+                alpha = int(self.darken_amount * 255)
+                
+                # Erstelle RGBA-Bild mit schwarzer Farbe und variablem Alpha
+                darken_img = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, alpha))
+                
+                # Konvertiere zu PhotoImage
+                self._darken_photo = ImageTk.PhotoImage(darken_img)
+                self._darken_size = (canvas_width, canvas_height)
+                self._darken_amount_cached = self.darken_amount
+                
+                # Erstelle oder aktualisiere Canvas-Item
+                if self._darken_canvas_item is None:
+                    self._darken_canvas_item = self.canvas.create_image(
+                        0, 0,
+                        image=self._darken_photo,
+                        anchor='nw',
+                        tags="darken_layer"
+                    )
+                else:
+                    self.canvas.itemconfig(self._darken_canvas_item, image=self._darken_photo)
+                
                 # Stelle sicher, dass es über der Map aber unter dem Overlay liegt
                 self.canvas.tag_raise("darken_layer", "map")
-            else:
-                # Aktualisiere Größe und Stipple-Muster
-                self.canvas.coords(self._darken_canvas_item, 0, 0, canvas_width, canvas_height)
-                # Wähle passendes Stipple-Pattern basierend auf Stärke
-                if self.darken_amount >= 0.5:
-                    stipple = "gray75"  # 75% Füllung = sehr dunkel
-                elif self.darken_amount >= 0.35:
-                    stipple = "gray50"  # 50% Füllung = mittel dunkel
-                elif self.darken_amount >= 0.2:
-                    stipple = "gray25"  # 25% Füllung = leicht dunkel
-                else:
-                    stipple = "gray12"  # 12.5% Füllung = kaum dunkel
-                self.canvas.itemconfig(self._darken_canvas_item, stipple=stipple)
                 
             # Nach Overlay positionieren (Overlay soll ÜBER Abdunkelung sein)
             if self.overlay_canvas_item:
@@ -1071,6 +1081,7 @@ class ProjectorWindow(tk.Toplevel):
                 except:
                     pass
                 self._darken_canvas_item = None
+                self._darken_photo = None
     
     # ============================================================
     # GM-KONTROLLIERTES OVERLAY SYSTEM
@@ -1112,12 +1123,15 @@ class ProjectorWindow(tk.Toplevel):
         total_frames = len(self.overlay_frames)
         
         # SMOOTH LOOP STRATEGIE:
-        # 1. Überspringe die ersten 20% (Anfang des Regenfalls)
-        # 2. Nutze den Rest und erstelle Cross-Fade am Loop-Punkt
-        skip_start = int(total_frames * 0.20)  # Erste 20% überspringen (Regenfall-Start)
+        # 1. Überspringe die ersten 30% (Anfang des Regenfalls)
+        # 2. Überspringe die letzten 10% (Ende kann auch Artefakte haben)
+        # 3. Nutze den mittleren Teil und erstelle Cross-Fade am Loop-Punkt
+        skip_start = int(total_frames * 0.30)  # Erste 30% überspringen (Regenfall-Start)
+        skip_end = int(total_frames * 0.10)    # Letzte 10% überspringen (End-Artefakte)
         
-        # Frames ab skip_start bis Ende
-        loop_frames = self.overlay_frames[skip_start:]
+        # Frames aus dem mittleren Bereich
+        end_idx = total_frames - skip_end if skip_end > 0 else total_frames
+        loop_frames = self.overlay_frames[skip_start:end_idx]
         
         if len(loop_frames) < 20:
             loop_frames = self.overlay_frames  # Fallback
@@ -1268,6 +1282,9 @@ class ProjectorWindow(tk.Toplevel):
             except:
                 pass
             self._darken_canvas_item = None
+            self._darken_photo = None
+            self._darken_size = None
+            self._darken_amount_cached = None
         
         # Speicher freigeben
         self.overlay_photos = []
