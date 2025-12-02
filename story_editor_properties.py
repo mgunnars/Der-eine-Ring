@@ -846,13 +846,13 @@ class OverlayEditor(PropertyEditor):
         params = tk.Frame(self.frame, bg="#2a1a4e")
         params.pack(fill=tk.X, padx=10, pady=5)
         
-        # Source
+        # Source (file_path)
         row = tk.Frame(params, bg="#2a1a4e")
         row.pack(fill=tk.X, pady=2)
         
         self.create_label(row, "Quelle:").pack(side=tk.LEFT)
         self.source_entry = tk.Entry(row, bg="#0f3460", fg="white", insertbackground="white")
-        self.source_entry.insert(0, self.overlay.source or "")
+        self.source_entry.insert(0, self.overlay.file_path or "")
         self.source_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
         tk.Button(
@@ -903,8 +903,8 @@ class OverlayEditor(PropertyEditor):
     def _browse_source(self):
         filepath = filedialog.askopenfilename(
             filetypes=[
-                ("Alle unterstützten", "*.png;*.jpg;*.mp4;*.webm"),
-                ("Bilder", "*.png;*.jpg;*.jpeg"),
+                ("Alle unterstützten", "*.png;*.jpg;*.gif;*.mp4;*.webm"),
+                ("Bilder", "*.png;*.jpg;*.jpeg;*.gif"),
                 ("Videos", "*.mp4;*.webm"),
                 ("Alle", "*.*")
             ]
@@ -912,7 +912,7 @@ class OverlayEditor(PropertyEditor):
         if filepath:
             self.source_entry.delete(0, tk.END)
             self.source_entry.insert(0, filepath)
-            self.overlay.source = filepath
+            self.overlay.file_path = filepath
             self.notify_change()
 
 

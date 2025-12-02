@@ -158,6 +158,11 @@ class GamemasterControlPanel(tk.Toplevel):
         detail_frame = tk.Frame(notebook, bg=bg_panel)
         notebook.add(detail_frame, text="  🏘️ Detail-Maps  ")
         self.setup_detail_maps_tab(detail_frame)
+        
+        # Tab 6: Overlay-Steuerung
+        overlay_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(overlay_frame, text="  🌧️ Overlay  ")
+        self.setup_overlay_tab(overlay_frame)
     
     def setup_webcam_tab(self, parent):
         """Webcam-Steuerung Tab"""
@@ -501,6 +506,503 @@ class GamemasterControlPanel(tk.Toplevel):
         
         # Initial Liste laden
         self.refresh_detail_list()
+    
+    def setup_overlay_tab(self, parent):
+        """Overlay-Steuerung Tab für Wetter-/Umgebungseffekte"""
+        title = tk.Label(parent, text="Overlay-Effekte", font=("Arial", 16, "bold"),
+                        bg="#1e1e1e", fg="white")
+        title.pack(pady=10)
+        
+        # Info
+        info = tk.Label(parent, 
+                       text="Wähle ein Overlay für die aktuelle Szene (Regen, Schnee, Nebel...)",
+                       bg="#1e1e1e", fg="#aaaaaa", font=("Arial", 9))
+        info.pack(padx=10, pady=5)
+        
+        # Overlay an/aus Toggle
+        toggle_frame = tk.Frame(parent, bg="#1e1e1e")
+        toggle_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.overlay_enabled_var = tk.BooleanVar(value=False)
+        self.overlay_toggle = tk.Checkbutton(toggle_frame, 
+                                             text="Overlay aktiviert",
+                                             variable=self.overlay_enabled_var,
+                                             command=self.toggle_overlay,
+                                             bg="#1e1e1e", fg="white", selectcolor="#2d2d2d",
+                                             font=("Arial", 12, "bold"))
+        self.overlay_toggle.pack(side=tk.LEFT, padx=5)
+        
+        # Aktuelles Overlay-Info
+        self.overlay_status = tk.Label(toggle_frame, text="Kein Overlay geladen", 
+                                       bg="#1e1e1e", fg="orange", font=("Arial", 10))
+        self.overlay_status.pack(side=tk.RIGHT, padx=5)
+        
+        # Overlay-Auswahl aus Szene
+        scene_frame = tk.LabelFrame(parent, text="Szenen-Overlays", bg="#2d2d2d", fg="white")
+        scene_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        scene_info = tk.Label(scene_frame, 
+                             text="Overlays die für die aktuelle Szene definiert sind:",
+                             bg="#2d2d2d", fg="#aaaaaa", font=("Arial", 9))
+        scene_info.pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Listbox für Szenen-Overlays
+        list_frame = tk.Frame(scene_frame, bg="#2d2d2d")
+        list_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.scene_overlay_listbox = tk.Listbox(list_frame, bg="#1e1e1e", fg="white", 
+                                                 font=("Courier", 10), height=4,
+                                                 selectbackground="#4CAF50")
+        self.scene_overlay_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.scene_overlay_listbox.bind('<<ListboxSelect>>', self.on_scene_overlay_select)
+        
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.scene_overlay_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.scene_overlay_listbox.config(yscrollcommand=scrollbar.set)
+        
+        # Datei-Overlay laden
+        file_frame = tk.LabelFrame(parent, text="Eigenes Overlay laden", bg="#2d2d2d", fg="white")
+        file_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        file_btn_frame = tk.Frame(file_frame, bg="#2d2d2d")
+        file_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        load_gif_btn = tk.Button(file_btn_frame, text="📁 GIF laden",
+                                 command=lambda: self.load_overlay_file("gif"),
+                                 bg="#2196F3", fg="white", font=("Arial", 10),
+                                 padx=10, pady=5)
+        load_gif_btn.pack(side=tk.LEFT, padx=5)
+        
+        load_video_btn = tk.Button(file_btn_frame, text="🎬 Video laden (MP4/WebM)",
+                                   command=lambda: self.load_overlay_file("video"),
+                                   bg="#9C27B0", fg="white", font=("Arial", 10),
+                                   padx=10, pady=5)
+        load_video_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Aktuell geladene Datei
+        self.overlay_file_label = tk.Label(file_frame, text="Keine Datei geladen", 
+                                           bg="#2d2d2d", fg="#aaaaaa", font=("Arial", 9))
+        self.overlay_file_label.pack(anchor=tk.W, padx=5, pady=5)
+        
+        # Overlay-Einstellungen
+        settings_frame = tk.LabelFrame(parent, text="Einstellungen", bg="#2d2d2d", fg="white")
+        settings_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Opacity Slider
+        opacity_frame = tk.Frame(settings_frame, bg="#2d2d2d")
+        opacity_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(opacity_frame, text="Deckkraft:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.overlay_opacity_var = tk.DoubleVar(value=0.7)
+        opacity_slider = tk.Scale(opacity_frame, from_=0.0, to=1.0, resolution=0.05,
+                                  orient=tk.HORIZONTAL, variable=self.overlay_opacity_var,
+                                  command=self.update_overlay_opacity,
+                                  bg="#2d2d2d", fg="white", highlightthickness=0)
+        opacity_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.opacity_value_label = tk.Label(opacity_frame, text="70%", bg="#2d2d2d", fg="white", width=5)
+        self.opacity_value_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Playback Speed
+        speed_frame = tk.Frame(settings_frame, bg="#2d2d2d")
+        speed_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(speed_frame, text="Geschwindigkeit:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.overlay_speed_var = tk.DoubleVar(value=1.0)
+        speed_slider = tk.Scale(speed_frame, from_=0.1, to=3.0, resolution=0.1,
+                                orient=tk.HORIZONTAL, variable=self.overlay_speed_var,
+                                command=self.update_overlay_speed,
+                                bg="#2d2d2d", fg="white", highlightthickness=0)
+        speed_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.speed_value_label = tk.Label(speed_frame, text="1.0x", bg="#2d2d2d", fg="white", width=5)
+        self.speed_value_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Position & Größe
+        transform_frame = tk.LabelFrame(parent, text="Position & Größe", bg="#2d2d2d", fg="white")
+        transform_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Position X/Y
+        pos_frame = tk.Frame(transform_frame, bg="#2d2d2d")
+        pos_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(pos_frame, text="Position X:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        self.overlay_x_var = tk.IntVar(value=0)
+        x_spin = tk.Spinbox(pos_frame, from_=-2000, to=2000, increment=10,
+                            textvariable=self.overlay_x_var, width=6,
+                            command=self.update_overlay_transform)
+        x_spin.pack(side=tk.LEFT, padx=2)
+        x_spin.bind('<Return>', lambda e: self.update_overlay_transform())
+        
+        tk.Label(pos_frame, text="Y:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        self.overlay_y_var = tk.IntVar(value=0)
+        y_spin = tk.Spinbox(pos_frame, from_=-2000, to=2000, increment=10,
+                            textvariable=self.overlay_y_var, width=6,
+                            command=self.update_overlay_transform)
+        y_spin.pack(side=tk.LEFT, padx=2)
+        y_spin.bind('<Return>', lambda e: self.update_overlay_transform())
+        
+        # Größe (Scale)
+        scale_frame = tk.Frame(transform_frame, bg="#2d2d2d")
+        scale_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(scale_frame, text="Größe:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.overlay_scale_var = tk.DoubleVar(value=1.0)
+        scale_slider = tk.Scale(scale_frame, from_=0.1, to=3.0, resolution=0.1,
+                                orient=tk.HORIZONTAL, variable=self.overlay_scale_var,
+                                command=self.update_overlay_transform,
+                                bg="#2d2d2d", fg="white", highlightthickness=0)
+        scale_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        self.scale_value_label = tk.Label(scale_frame, text="100%", bg="#2d2d2d", fg="white", width=5)
+        self.scale_value_label.pack(side=tk.RIGHT, padx=5)
+        
+        # Modus: Kacheln oder Skalieren
+        mode_frame = tk.Frame(transform_frame, bg="#2d2d2d")
+        mode_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(mode_frame, text="Modus:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.overlay_mode_var = tk.StringVar(value="tile")
+        tk.Radiobutton(mode_frame, text="Kacheln", variable=self.overlay_mode_var, value="tile",
+                      bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
+                      command=self.update_overlay_transform).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(mode_frame, text="Strecken", variable=self.overlay_mode_var, value="stretch",
+                      bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
+                      command=self.update_overlay_transform).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(mode_frame, text="Zentriert", variable=self.overlay_mode_var, value="center",
+                      bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
+                      command=self.update_overlay_transform).pack(side=tk.LEFT, padx=5)
+        
+        # Random Overlay System
+        random_frame = tk.LabelFrame(parent, text="Zufälliges Overlay", bg="#2d2d2d", fg="white")
+        random_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Random aktivieren
+        random_toggle_frame = tk.Frame(random_frame, bg="#2d2d2d")
+        random_toggle_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.random_overlay_var = tk.BooleanVar(value=False)
+        random_check = tk.Checkbutton(random_toggle_frame, 
+                                      text="Zufälliges Overlay aktiviert",
+                                      variable=self.random_overlay_var,
+                                      command=self.toggle_random_overlay,
+                                      bg="#2d2d2d", fg="white", selectcolor="#1e1e1e",
+                                      font=("Arial", 10, "bold"))
+        random_check.pack(side=tk.LEFT, padx=5)
+        
+        # Intervall
+        interval_frame = tk.Frame(random_frame, bg="#2d2d2d")
+        interval_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(interval_frame, text="Wechsel alle:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.random_interval_var = tk.IntVar(value=60)
+        interval_spin = tk.Spinbox(interval_frame, from_=10, to=600, increment=10,
+                                   textvariable=self.random_interval_var, width=5)
+        interval_spin.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(interval_frame, text="Sekunden", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        # Random-Status
+        self.random_status_label = tk.Label(random_frame, text="Deaktiviert", 
+                                            bg="#2d2d2d", fg="orange", font=("Arial", 9))
+        self.random_status_label.pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Aktionsbuttons
+        action_frame = tk.Frame(parent, bg="#1e1e1e")
+        action_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        clear_btn = tk.Button(action_frame, text="❌ Overlay entfernen",
+                              command=self.clear_overlay,
+                              bg="#f44336", fg="white", font=("Arial", 10, "bold"),
+                              padx=15, pady=5)
+        clear_btn.pack(side=tk.LEFT, padx=5)
+        
+        editor_btn = tk.Button(action_frame, text="🎨 Partikel-Editor öffnen",
+                               command=self.open_particle_editor,
+                               bg="#FF9800", fg="white", font=("Arial", 10, "bold"),
+                               padx=15, pady=5)
+        editor_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Overlay-Daten initialisieren
+        self.current_overlay_frames = []
+        self.current_overlay_path = None
+    
+    def toggle_overlay(self):
+        """Overlay an/aus schalten"""
+        enabled = self.overlay_enabled_var.get()
+        if self.projector_window:
+            self.projector_window.overlay_enabled = enabled
+            if enabled and self.current_overlay_frames:
+                # Animation starten (set_overlay_frames ruft start_overlay_animation auf)
+                self.projector_window.set_overlay_frames(self.current_overlay_frames)
+            else:
+                self.projector_window.stop_overlay_animation()
+        status = "aktiviert" if enabled else "deaktiviert"
+        self._set_status(f"Overlay {status}")
+    
+    def on_scene_overlay_select(self, event):
+        """Wenn ein Szenen-Overlay ausgewählt wird"""
+        selection = self.scene_overlay_listbox.curselection()
+        if selection and hasattr(self, '_scene_overlays') and self._scene_overlays:
+            idx = selection[0]
+            if idx < len(self._scene_overlays):
+                overlay = self._scene_overlays[idx]
+                if hasattr(overlay, 'file_path') and overlay.file_path:
+                    self.load_overlay_from_path(overlay.file_path)
+    
+    def load_overlay_file(self, file_type):
+        """Lädt eine Overlay-Datei (GIF oder Video)"""
+        from tkinter import filedialog
+        
+        if file_type == "gif":
+            filetypes = [("GIF Dateien", "*.gif"), ("Alle Dateien", "*.*")]
+        else:
+            filetypes = [("Video Dateien", "*.mp4 *.webm"), ("Alle Dateien", "*.*")]
+        
+        filepath = filedialog.askopenfilename(
+            title=f"Overlay-Datei auswählen",
+            filetypes=filetypes
+        )
+        
+        if filepath:
+            self.load_overlay_from_path(filepath)
+    
+    def load_overlay_from_path(self, filepath):
+        """Lädt Overlay aus Dateipfad"""
+        import os
+        from PIL import Image
+        import numpy as np
+        
+        try:
+            ext = os.path.splitext(filepath)[1].lower()
+            frames = []
+            
+            if ext == '.gif':
+                # GIF laden - hat oft schon Transparenz
+                img = Image.open(filepath)
+                try:
+                    while True:
+                        frame = img.copy().convert('RGBA')
+                        frames.append(frame)
+                        img.seek(img.tell() + 1)
+                except EOFError:
+                    pass
+            elif ext in ['.mp4', '.webm']:
+                # Video mit cv2 laden
+                try:
+                    import cv2
+                    
+                    cap = cv2.VideoCapture(filepath)
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    
+                    # Limitiere auf max 150 Frames für bessere Performance
+                    max_frames = min(total_frames, 150)
+                    skip = max(1, total_frames // max_frames)
+                    
+                    frame_idx = 0
+                    while True:
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                        
+                        # Frame-Skipping für Performance
+                        frame_idx += 1
+                        if skip > 1 and frame_idx % skip != 0:
+                            continue
+                        
+                        # Prüfe ob WebM mit Alpha-Kanal (4 Channels)
+                        if len(frame.shape) == 3 and frame.shape[2] == 4:
+                            # Hat Alpha - BGRA zu RGBA
+                            frame_rgba = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+                        else:
+                            # Kein Alpha (MP4) - nutze Additive Blending statt Transparenz!
+                            # Das funktioniert besser für Regen/Schnee-Effekte
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            
+                            # Erstelle Alpha basierend auf Helligkeit (Luminanz)
+                            # Formel: 0.299*R + 0.587*G + 0.114*B
+                            luminance = (0.299 * frame_rgb[:,:,0] + 
+                                        0.587 * frame_rgb[:,:,1] + 
+                                        0.114 * frame_rgb[:,:,2])
+                            
+                            # Alpha = Helligkeit (weiß = sichtbar, schwarz = transparent)
+                            alpha = luminance.astype(np.uint8)
+                            
+                            # RGBA zusammenbauen
+                            frame_rgba = np.dstack([frame_rgb, alpha])
+                        
+                        pil_frame = Image.fromarray(frame_rgba, 'RGBA')
+                        frames.append(pil_frame)
+                        
+                        if len(frames) >= max_frames:
+                            break
+                    
+                    cap.release()
+                    print(f"✅ Video geladen: {len(frames)} Frames (von {total_frames})")
+                except ImportError:
+                    messagebox.showerror("Fehler", "OpenCV (cv2) nicht installiert für Video-Support")
+                    return
+            
+            if frames:
+                self.current_overlay_frames = frames
+                self.current_overlay_path = filepath
+                
+                filename = os.path.basename(filepath)
+                self.overlay_file_label.config(text=f"Geladen: {filename} ({len(frames)} Frames)")
+                self.overlay_status.config(text=f"✓ {filename}", fg="#44ff44")
+                
+                # Frames an Projector senden UND aktivieren
+                if self.projector_window:
+                    self.projector_window.set_overlay_frames(frames)
+                    self.projector_window.overlay_enabled = True
+                    self.projector_window.render_map()
+                    print(f"✅ Overlay aktiviert im Projector: {len(frames)} Frames")
+                
+                # Checkbox aktivieren
+                self.overlay_enabled_var.set(True)
+                
+                self._set_status(f"Overlay geladen: {filename}")
+            else:
+                messagebox.showwarning("Warnung", "Keine Frames in der Datei gefunden")
+                
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Konnte Overlay nicht laden: {e}")
+    
+    def update_overlay_opacity(self, value):
+        """Aktualisiert Overlay-Deckkraft"""
+        opacity = float(value)
+        self.opacity_value_label.config(text=f"{int(opacity * 100)}%")
+        if self.projector_window:
+            self.projector_window.overlay_opacity = opacity
+            self.projector_window.render_map()
+    
+    def update_overlay_speed(self, value):
+        """Aktualisiert Overlay-Geschwindigkeit"""
+        speed = float(value)
+        self.speed_value_label.config(text=f"{speed:.1f}x")
+        if self.projector_window:
+            self.projector_window.overlay_speed = speed
+    
+    def update_overlay_transform(self, *args):
+        """Aktualisiert Position, Größe und Modus des Overlays"""
+        if self.projector_window:
+            self.projector_window.overlay_x = self.overlay_x_var.get()
+            self.projector_window.overlay_y = self.overlay_y_var.get()
+            self.projector_window.overlay_scale = self.overlay_scale_var.get()
+            self.projector_window.overlay_mode = self.overlay_mode_var.get()
+            self.scale_value_label.config(text=f"{int(self.overlay_scale_var.get() * 100)}%")
+            self.projector_window.render_map()
+    
+    def clear_overlay(self):
+        """Entfernt aktuelles Overlay"""
+        self.current_overlay_frames = []
+        self.current_overlay_path = None
+        self.overlay_enabled_var.set(False)
+        self.overlay_file_label.config(text="Keine Datei geladen")
+        self.overlay_status.config(text="Kein Overlay geladen", fg="orange")
+        
+        # Random stoppen
+        self.random_overlay_var.set(False)
+        self.stop_random_overlay()
+        
+        if self.projector_window:
+            self.projector_window.overlay_enabled = False
+            self.projector_window.set_overlay_frames([])
+            self.projector_window.render_map()
+        
+        self._set_status("Overlay entfernt")
+    
+    def toggle_random_overlay(self):
+        """Aktiviert/Deaktiviert zufällige Overlay-Wechsel"""
+        if self.random_overlay_var.get():
+            self.start_random_overlay()
+        else:
+            self.stop_random_overlay()
+    
+    def start_random_overlay(self):
+        """Startet zufällige Overlay-Wechsel"""
+        if not hasattr(self, '_scene_overlays') or not self._scene_overlays:
+            messagebox.showwarning("Warnung", "Keine Szenen-Overlays verfügbar!\n\nLade zuerst Overlays über das Storyboard.")
+            self.random_overlay_var.set(False)
+            return
+        
+        if len(self._scene_overlays) < 2:
+            messagebox.showwarning("Warnung", "Mindestens 2 Overlays für Random-Modus benötigt!")
+            self.random_overlay_var.set(False)
+            return
+        
+        self.random_status_label.config(text="🔀 Random aktiv", fg="#44ff44")
+        self._schedule_random_overlay()
+        self._set_status("Random-Overlay gestartet")
+    
+    def stop_random_overlay(self):
+        """Stoppt zufällige Overlay-Wechsel"""
+        if hasattr(self, '_random_overlay_timer'):
+            self.after_cancel(self._random_overlay_timer)
+            self._random_overlay_timer = None
+        self.random_status_label.config(text="Deaktiviert", fg="orange")
+    
+    def _schedule_random_overlay(self):
+        """Plant den nächsten zufälligen Overlay-Wechsel"""
+        if not self.random_overlay_var.get():
+            return
+        
+        interval = self.random_interval_var.get() * 1000  # In Millisekunden
+        self._random_overlay_timer = self.after(interval, self._switch_random_overlay)
+    
+    def _switch_random_overlay(self):
+        """Wechselt zu einem zufälligen Overlay"""
+        import random
+        import os
+        
+        if not hasattr(self, '_scene_overlays') or not self._scene_overlays:
+            self.stop_random_overlay()
+            return
+        
+        # Zufälliges Overlay wählen (nicht das aktuelle)
+        available = [o for o in self._scene_overlays 
+                     if hasattr(o, 'file_path') and o.file_path and o.file_path != self.current_overlay_path]
+        
+        if available:
+            overlay = random.choice(available)
+            self.load_overlay_from_path(overlay.file_path)
+            self._set_status(f"🔀 Random: {os.path.basename(overlay.file_path)}")
+        
+        # Nächsten Wechsel planen
+        self._schedule_random_overlay()
+    
+    def open_particle_editor(self):
+        """Öffnet den Partikel-Editor"""
+        import subprocess
+        import sys
+        import os
+        
+        editor_path = os.path.join(os.path.dirname(__file__), "particle_editor_2d.py")
+        if os.path.exists(editor_path):
+            subprocess.Popen([sys.executable, editor_path])
+            self._set_status("Partikel-Editor geöffnet")
+        else:
+            messagebox.showerror("Fehler", "particle_editor_2d.py nicht gefunden")
+    
+    def update_scene_overlays(self, overlays):
+        """Aktualisiert die Liste der Szenen-Overlays"""
+        self._scene_overlays = overlays  # Speichere für spätere Auswahl
+        self.scene_overlay_listbox.delete(0, tk.END)
+        for overlay in overlays:
+            if hasattr(overlay, 'file_path') and overlay.file_path:
+                import os
+                name = overlay.name if overlay.name else os.path.basename(overlay.file_path)
+                self.scene_overlay_listbox.insert(tk.END, f"📎 {name}")
+        
+        # HINWEIS: Overlay wird NICHT automatisch geladen!
+        # User kann es manuell aus der Liste auswählen
+        if overlays and len(overlays) > 0:
+            print(f"🌧️ {len(overlays)} Overlay(s) verfügbar - klicke zum Laden")
     
     # Callback-Funktionen
     

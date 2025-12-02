@@ -9,6 +9,7 @@ from PIL import Image, ImageTk, ImageDraw, ImageFilter
 import json
 import random
 import os
+import threading
 import xml.etree.ElementTree as ET
 from fog_texture_generator import FogTextureGenerator
 from lighting_system import LightingEngine
@@ -261,6 +262,44 @@ class ProjectorWindow(tk.Toplevel):
         self.has_animated_tiles = False  # Prüfen ob Map animierte Tiles hat
         self.frame_skip_counter = 0  # Für Performance-Optimierung
         
+        # WETTER-OVERLAY SYSTEM (animierte GIFs)
+        self.weather_overlay_frames = []  # Liste von PIL Images (GIF Frames)
+        self.weather_overlay_current = 0  # Aktueller Frame Index
+        self.weather_overlay_enabled = False
+        self.weather_overlay_opacity = 0.7  # Transparenz (0-1)
+        self.weather_overlay_path = None
+        
+        # GM-KONTROLLIERTES OVERLAY SYSTEM (performant mit vorberechneten PhotoImages)
+        self.overlay_enabled = False  # Vom GM Panel gesteuert
+        self.overlay_frames = []  # Original PIL-Frames vom GM Panel
+        self.overlay_photos = []  # Fertige PhotoImages (Map + Overlay composited)
+        self.overlay_prepared = []  # Legacy
+        self.overlay_map_cache = None  # Gecachte Map für Compositing
+        self.overlay_canvas_size = None  # Aktuelle Canvas-Größe
+        self.overlay_loading = False  # True während Vorbereitung
+        self.overlay_current = 0
+        self.overlay_opacity = 0.8  # Etwas höher für bessere Sichtbarkeit
+        self.overlay_speed = 1.0  # Playback speed multiplier
+        self.overlay_x = 0  # X-Offset
+        self.overlay_y = 0  # Y-Offset
+        self.overlay_scale = 1.0  # Skalierung
+        self.overlay_mode = "tile"  # tile, stretch, center
+        self.overlay_animation_id = None  # after() ID für Animation
+        
+        # WETTER-PRESETS (Name -> GIF-Pfad)
+        self.weather_presets = {}  # Wird beim Laden gefüllt
+        self.weather_folder = os.path.join(os.path.dirname(__file__), "weather_overlays")
+        self.current_weather = "clear"  # Aktuelles Wetter
+        self.load_weather_presets()
+        
+        # RANDOM WETTER SYSTEM
+        self.random_weather_enabled = False
+        self.random_weather_interval = (300, 900)  # 5-15 Minuten in Sekunden
+        self.random_weather_duration = (60, 180)   # 1-3 Minuten Wetter-Dauer
+        self.random_weather_timer = None
+        self.random_weather_end_timer = None
+        self.random_weather_types = ["rain", "snow", "storm"]  # Welche Wetter können zufällig kommen
+        
         # CACHING für statische Map-Teile
         self.static_map_cache = None  # PIL Image der statischen Tiles
         self.static_map_size = None  # (width, height, tile_size) für Cache-Invalidierung
@@ -387,6 +426,14 @@ class ProjectorWindow(tk.Toplevel):
                                 relief=tk.RAISED, bd=2, width=3)
             info_btn.pack(side=tk.RIGHT, padx=5, pady=5)
             
+            # Wetter-Overlay Button
+            self.weather_btn = tk.Button(self.control_bar, text="🌧️",
+                                command=self.open_weather_dialog,
+                                bg="#3a3a3a", fg="white",
+                                font=("Arial", 10, "bold"),
+                                relief=tk.RAISED, bd=2, width=3)
+            self.weather_btn.pack(side=tk.RIGHT, padx=2, pady=5)
+            
             # Control-Bar nach 5 Sekunden ausblenden
             self.control_visible = True
             self.after(5000, lambda: self.hide_controls())
@@ -415,10 +462,14 @@ class ProjectorWindow(tk.Toplevel):
             self.pan_start_y = 0
             
             # Info-Text (kann ausgeblendet werden)
-            self.info_label = tk.Label(self, text="ESC = Beenden | F11 = Vollbild | Rechtsklick = Detail-Ansicht", 
+            self.info_label = tk.Label(self, text="ESC = Beenden | F11 = Vollbild | W = Wetter-Overlay | Rechtsklick = Detail", 
                                        bg="#0a0a0a", fg="#666666", 
                                        font=("Arial", 10))
             self.info_label.place(x=10, y=10)
+            
+            # Tastaturkürzel für Wetter
+            self.bind('<w>', lambda e: self.open_weather_dialog())
+            self.bind('<W>', lambda e: self.toggle_weather_overlay())
             
             # Info nach 3 Sekunden ausblenden
             self.after(3000, lambda: self.info_label.place_forget())
@@ -684,6 +735,20 @@ class ProjectorWindow(tk.Toplevel):
             # Zurück zu RGB für Fog-Rendering
             map_image = map_image.convert('RGB')
         
+        # === WETTER-OVERLAY (nach Lighting, vor Fog) ===
+        # Altes Weather-System (falls verwendet)
+        if self.weather_overlay_enabled and self.weather_overlay_frames:
+            weather_frame = self.get_weather_overlay_frame((map_image.width, map_image.height))
+            if weather_frame:
+                if map_image.mode != 'RGBA':
+                    map_image = map_image.convert('RGBA')
+                map_image = Image.alpha_composite(map_image, weather_frame)
+                map_image = map_image.convert('RGB')
+        
+        # HINWEIS: GM-Overlay wird jetzt als separates Canvas-Layer angezeigt
+        # (siehe overlay_canvas_id und _animate_overlay_fast)
+        # Kein Compositing mehr nötig hier - viel performanter!
+        
         # Fog-of-War über alles zeichnen
         if self.fog_enabled:
             for y in range(height):
@@ -791,6 +856,622 @@ class ProjectorWindow(tk.Toplevel):
         current = self.attributes('-fullscreen')
         self.attributes('-fullscreen', not current)
     
+    # ==================== WETTER-OVERLAY SYSTEM ====================
+    
+    def load_weather_overlay(self, gif_path: str):
+        """Lade ein animiertes GIF als Wetter-Overlay"""
+        from PIL import Image
+        
+        try:
+            gif = Image.open(gif_path)
+            self.weather_overlay_frames = []
+            self.weather_overlay_path = gif_path
+            
+            # Extrahiere alle Frames
+            frame_count = 0
+            try:
+                while True:
+                    # Konvertiere zu RGBA
+                    frame = gif.copy().convert('RGBA')
+                    self.weather_overlay_frames.append(frame)
+                    frame_count += 1
+                    gif.seek(gif.tell() + 1)
+            except EOFError:
+                pass
+            
+            if frame_count > 0:
+                self.weather_overlay_enabled = True
+                self.weather_overlay_current = 0
+                # Aktiviere Animation wenn nicht schon aktiv
+                if not self.is_animating:
+                    self.has_animated_tiles = True
+                    self.start_animation()
+                print(f"🌧️ Wetter-Overlay geladen: {gif_path} ({frame_count} Frames)")
+                return True
+            else:
+                print(f"⚠️ Keine Frames in GIF gefunden: {gif_path}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Fehler beim Laden des Wetter-Overlays: {e}")
+            return False
+    
+    def set_weather_overlay_opacity(self, opacity: float):
+        """Setze Transparenz des Wetter-Overlays (0.0 - 1.0)"""
+        self.weather_overlay_opacity = max(0.0, min(1.0, opacity))
+        self.render_map()
+    
+    def toggle_weather_overlay(self):
+        """Wetter-Overlay ein/ausschalten"""
+        if self.weather_overlay_frames:
+            self.weather_overlay_enabled = not self.weather_overlay_enabled
+            self.render_map()
+            return self.weather_overlay_enabled
+        return False
+    
+    def clear_weather_overlay(self):
+        """Entferne Wetter-Overlay"""
+        self.weather_overlay_frames = []
+        self.weather_overlay_enabled = False
+        self.weather_overlay_current = 0
+        self.weather_overlay_path = None
+        self.render_map()
+    
+    def open_weather_dialog(self):
+        """Öffne Dialog zum Laden eines Wetter-Overlay GIFs"""
+        from tkinter import filedialog, simpledialog
+        
+        # Wenn bereits ein Overlay geladen ist, frage ob neues laden oder ausschalten
+        if self.weather_overlay_frames:
+            from tkinter import messagebox
+            result = messagebox.askyesnocancel(
+                "Wetter-Overlay",
+                f"Aktuelles Overlay: {os.path.basename(self.weather_overlay_path or 'Unbekannt')}\n"
+                f"Status: {'AN' if self.weather_overlay_enabled else 'AUS'}\n\n"
+                "Ja = Neues GIF laden\n"
+                "Nein = Overlay ein/ausschalten\n"
+                "Abbrechen = Nichts tun"
+            )
+            
+            if result is None:  # Abbrechen
+                return
+            elif result is False:  # Nein = Toggle
+                self.toggle_weather_overlay()
+                status = "AN" if self.weather_overlay_enabled else "AUS"
+                print(f"🌧️ Wetter-Overlay: {status}")
+                return
+            # result is True = Ja, neues laden (weiter unten)
+        
+        # Datei-Dialog für GIF
+        gif_path = filedialog.askopenfilename(
+            title="Wetter-Overlay GIF auswählen",
+            filetypes=[
+                ("GIF Animationen", "*.gif"),
+                ("Alle Bilddateien", "*.gif;*.png;*.apng"),
+                ("Alle Dateien", "*.*")
+            ]
+        )
+        
+        if gif_path:
+            if self.load_weather_overlay(gif_path):
+                # Frage nach Transparenz
+                try:
+                    opacity = simpledialog.askfloat(
+                        "Overlay Transparenz",
+                        "Transparenz (0.0 = unsichtbar, 1.0 = voll sichtbar):",
+                        initialvalue=0.7,
+                        minvalue=0.0,
+                        maxvalue=1.0
+                    )
+                    if opacity is not None:
+                        self.set_weather_overlay_opacity(opacity)
+                except:
+                    pass
+                
+                self.render_map()
+    
+    def get_weather_overlay_frame(self, target_size: tuple) -> 'Image':
+        """Hole aktuellen Wetter-Overlay Frame, skaliert auf Zielgröße"""
+        from PIL import Image
+        
+        if not self.weather_overlay_frames or not self.weather_overlay_enabled:
+            return None
+        
+        # Aktuellen Frame holen
+        frame = self.weather_overlay_frames[self.weather_overlay_current]
+        
+        # Auf Zielgröße skalieren (tile pattern)
+        frame_w, frame_h = frame.size
+        target_w, target_h = target_size
+        
+        # Wenn Frame kleiner als Ziel: Kacheln
+        if frame_w < target_w or frame_h < target_h:
+            tiled = Image.new('RGBA', target_size, (0, 0, 0, 0))
+            for y in range(0, target_h, frame_h):
+                for x in range(0, target_w, frame_w):
+                    tiled.paste(frame, (x, y))
+            result = tiled
+        else:
+            # Sonst: Skalieren
+            result = frame.resize(target_size, Image.Resampling.LANCZOS)
+        
+        # Opacity anwenden
+        if self.weather_overlay_opacity < 1.0:
+            # Alpha-Kanal modifizieren
+            r, g, b, a = result.split()
+            a = a.point(lambda x: int(x * self.weather_overlay_opacity))
+            result = Image.merge('RGBA', (r, g, b, a))
+        
+        return result
+    
+    def advance_weather_frame(self):
+        """Zum nächsten Wetter-Overlay Frame wechseln"""
+        if self.weather_overlay_frames and self.weather_overlay_enabled:
+            self.weather_overlay_current = (self.weather_overlay_current + 1) % len(self.weather_overlay_frames)
+        # Auch GM-Overlay Frame weiterschauen
+        if self.overlay_frames and self.overlay_enabled:
+            self.overlay_current = (self.overlay_current + 1) % len(self.overlay_frames)
+    
+    # ============================================================
+    # GM-KONTROLLIERTES OVERLAY SYSTEM
+    # ============================================================
+    
+    def set_overlay_frames(self, frames):
+        """Setze Overlay-Frames vom GM Panel"""
+        self.overlay_frames = frames
+        self.overlay_current = 0
+        if frames:
+            print(f"🎬 GM-Overlay: {len(frames)} Frames gesetzt")
+            # Aktiviere Overlay automatisch wenn Frames gesetzt werden
+            self.overlay_enabled = True
+            # Starte Overlay-Animation
+            self.start_overlay_animation()
+        else:
+            print("🎬 GM-Overlay: Gelöscht")
+            self.stop_overlay_animation()
+    
+    def start_overlay_animation(self):
+        """Startet die Overlay-Animation - bereitet ALLE Frames als PhotoImages vor"""
+        if not self.overlay_frames:
+            return
+        
+        # Stoppe vorherige Animation
+        if self.overlay_animation_id:
+            self.after_cancel(self.overlay_animation_id)
+            self.overlay_animation_id = None
+        
+        # Canvas-Größe ermitteln
+        canvas_w = self.canvas.winfo_width()
+        canvas_h = self.canvas.winfo_height()
+        
+        if canvas_w <= 1 or canvas_h <= 1:
+            canvas_w, canvas_h = 800, 600
+        
+        self.overlay_canvas_size = (canvas_w, canvas_h)
+        
+        print(f"🎬 Bereite {len(self.overlay_frames)} Frames vor...")
+        
+        # Cache die Map einmal
+        self._cache_map_for_overlay()
+        
+        # PERFORMANCE-KRITISCH: Bereite ALLE Frames als fertige PhotoImages vor
+        # Das vermeidet Compositing während der Animation!
+        self.overlay_photos = []
+        
+        base_map = self.overlay_map_cache
+        if base_map and base_map.mode != 'RGBA':
+            base_map = base_map.convert('RGBA')
+        
+        for i, frame in enumerate(self.overlay_frames):
+            # Resize Overlay auf Canvas-Größe
+            if frame.mode != 'RGBA':
+                frame = frame.convert('RGBA')
+            
+            if frame.size != (canvas_w, canvas_h):
+                frame = frame.resize((canvas_w, canvas_h), Image.Resampling.NEAREST)  # NEAREST = schnellster!
+            
+            # Opacity anwenden
+            if self.overlay_opacity < 1.0:
+                r, g, b, a = frame.split()
+                a = a.point(lambda x: int(x * self.overlay_opacity))
+                frame = Image.merge('RGBA', (r, g, b, a))
+            
+            # Composite mit Map JETZT (nicht während Animation!)
+            if base_map:
+                result = Image.alpha_composite(base_map, frame)
+            else:
+                result = frame
+            
+            # Zu PhotoImage konvertieren und speichern
+            photo = ImageTk.PhotoImage(result)
+            self.overlay_photos.append(photo)
+            
+            # Fortschritt
+            if (i + 1) % 30 == 0:
+                print(f"   {i + 1}/{len(self.overlay_frames)} Frames...")
+        
+        print(f"✅ {len(self.overlay_photos)} PhotoImages bereit - starte Animation")
+        
+        # Animation starten
+        self.overlay_current = 0
+        self.overlay_loading = False
+        self._animate_overlay_fast()
+    
+    def _prepare_single_frame(self, idx, canvas_w, canvas_h):
+        """Nicht mehr verwendet - alles wird in start_overlay_animation gemacht"""
+        pass
+    
+    def _cache_map_for_overlay(self):
+        """Cached die aktuelle Map für schnelles Overlay-Compositing"""
+        # Hole aktuelle Map-Größe
+        canvas_w, canvas_h = self.overlay_canvas_size or (800, 600)
+        
+        # Für SVG-Maps: Nutze den gecachten static cache
+        if self.is_svg_mode and hasattr(self, 'svg_static_cache') and self.svg_static_cache:
+            # Crop auf Canvas-Größe (wie in render_svg_map)
+            self.overlay_map_cache = self.svg_static_cache.copy()
+            if self.overlay_map_cache.size != (canvas_w, canvas_h):
+                # Resize auf Canvas-Größe
+                self.overlay_map_cache = self.overlay_map_cache.resize(
+                    (canvas_w, canvas_h), Image.Resampling.BILINEAR
+                )
+        else:
+            # Für Tile-Maps: Nutze static_map_cache
+            if hasattr(self, 'static_map_cache') and self.static_map_cache:
+                self.overlay_map_cache = self.static_map_cache.copy()
+                if self.overlay_map_cache.size != (canvas_w, canvas_h):
+                    self.overlay_map_cache = self.overlay_map_cache.resize(
+                        (canvas_w, canvas_h), Image.Resampling.BILINEAR
+                    )
+            else:
+                self.overlay_map_cache = None
+    
+    def _prepare_overlay_frame(self, idx, canvas_w, canvas_h):
+        """Legacy - nicht mehr verwendet"""
+        pass
+    
+    def _animate_overlay_fast(self):
+        """SUPER SCHNELLE Animation - nur PhotoImage wechseln!"""
+        if not self.overlay_enabled or not self.overlay_photos:
+            return
+        
+        try:
+            # Aktuelles PhotoImage holen
+            photo = self.overlay_photos[self.overlay_current]
+            
+            # Canvas aktualisieren (SUPER SCHNELL!)
+            if self.canvas_image_id:
+                self.canvas.itemconfig(self.canvas_image_id, image=photo)
+            else:
+                self.canvas_image_id = self.canvas.create_image(0, 0, anchor='nw', image=photo)
+            
+            # Referenz behalten!
+            self.canvas.photo = photo
+            
+            # Nächster Frame
+            self.overlay_current = (self.overlay_current + 1) % len(self.overlay_photos)
+            
+            # Timer für nächsten Frame (33ms = ~30fps)
+            delay = int(33 / self.overlay_speed)
+            self.overlay_animation_id = self.after(delay, self._animate_overlay_fast)
+            
+        except Exception as e:
+            print(f"⚠️ Overlay Fehler: {e}")
+    
+    def _animate_overlay(self):
+        """Legacy - ruft neue schnelle Version auf"""
+        self._animate_overlay_fast()
+    
+    def stop_overlay_animation(self, render_now=True):
+        """Stoppt die Overlay-Animation"""
+        if self.overlay_animation_id:
+            self.after_cancel(self.overlay_animation_id)
+            self.overlay_animation_id = None
+        
+        # Speicher freigeben
+        self.overlay_photos = []
+        self.overlay_prepared = []
+        self.overlay_map_cache = None
+        self.overlay_canvas_size = None
+        
+        # Map ohne Overlay neu rendern
+        if render_now:
+            self.render_map()
+    
+    def get_overlay_frame(self, target_size: tuple):
+        """Hole aktuellen GM-Overlay Frame, skaliert auf Zielgröße"""
+        from PIL import Image
+        
+        if not self.overlay_frames or not self.overlay_enabled:
+            return None
+        
+        # Aktuellen Frame holen
+        frame = self.overlay_frames[self.overlay_current]
+        
+        # Skalierung anwenden
+        if self.overlay_scale != 1.0:
+            new_w = int(frame.width * self.overlay_scale)
+            new_h = int(frame.height * self.overlay_scale)
+            frame = frame.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        
+        frame_w, frame_h = frame.size
+        target_w, target_h = target_size
+        
+        # Ergebnis-Bild erstellen
+        result = Image.new('RGBA', target_size, (0, 0, 0, 0))
+        
+        if self.overlay_mode == "tile":
+            # Kacheln mit Offset
+            start_x = self.overlay_x % frame_w if frame_w > 0 else 0
+            start_y = self.overlay_y % frame_h if frame_h > 0 else 0
+            
+            for y in range(-frame_h + start_y, target_h, frame_h):
+                for x in range(-frame_w + start_x, target_w, frame_w):
+                    result.paste(frame, (x, y), frame if frame.mode == 'RGBA' else None)
+                    
+        elif self.overlay_mode == "stretch":
+            # Auf volle Größe strecken
+            stretched = frame.resize(target_size, Image.Resampling.LANCZOS)
+            result.paste(stretched, (self.overlay_x, self.overlay_y), stretched if stretched.mode == 'RGBA' else None)
+            
+        elif self.overlay_mode == "center":
+            # Zentriert mit Offset
+            x = (target_w - frame_w) // 2 + self.overlay_x
+            y = (target_h - frame_h) // 2 + self.overlay_y
+            result.paste(frame, (x, y), frame if frame.mode == 'RGBA' else None)
+        
+        # Opacity anwenden
+        if self.overlay_opacity < 1.0:
+            # Alpha-Kanal modifizieren
+            r, g, b, a = result.split()
+            a = a.point(lambda x: int(x * self.overlay_opacity))
+            result = Image.merge('RGBA', (r, g, b, a))
+        
+        return result
+    
+    def load_weather_presets(self):
+        """Lade vordefinierte Wetter-Overlays aus dem weather_overlays Ordner"""
+        self.weather_presets = {"clear": None}  # Clear = kein Overlay
+        
+        if not os.path.exists(self.weather_folder):
+            os.makedirs(self.weather_folder)
+            print(f"📁 Wetter-Ordner erstellt: {self.weather_folder}")
+            print(f"   Lege GIF-Dateien dort ab (z.B. rain.gif, snow.gif, storm.gif)")
+            return
+        
+        # Suche nach GIF-Dateien
+        for file in os.listdir(self.weather_folder):
+            if file.lower().endswith('.gif'):
+                name = os.path.splitext(file)[0].lower()
+                self.weather_presets[name] = os.path.join(self.weather_folder, file)
+                print(f"🌤️ Wetter-Preset geladen: {name}")
+    
+    def set_weather(self, weather_type: str):
+        """Setze ein vordefiniertes Wetter"""
+        weather_type = weather_type.lower()
+        self.current_weather = weather_type
+        
+        if weather_type == "clear" or weather_type not in self.weather_presets:
+            # Kein Wetter
+            self.clear_weather_overlay()
+            self.update_weather_button()
+            print(f"☀️ Wetter: Klar")
+            return True
+        
+        gif_path = self.weather_presets.get(weather_type)
+        if gif_path and os.path.exists(gif_path):
+            success = self.load_weather_overlay(gif_path)
+            if success:
+                self.update_weather_button()
+                print(f"🌧️ Wetter: {weather_type}")
+            return success
+        
+        print(f"⚠️ Wetter-Overlay nicht gefunden: {weather_type}")
+        return False
+    
+    def update_weather_button(self):
+        """Aktualisiere Wetter-Button Text"""
+        if hasattr(self, 'weather_btn'):
+            icons = {
+                "clear": "☀️",
+                "rain": "🌧️",
+                "snow": "❄️",
+                "storm": "⛈️",
+                "fog": "🌫️",
+                "leaves": "🍂",
+            }
+            icon = icons.get(self.current_weather, "🌤️")
+            self.weather_btn.config(text=icon)
+    
+    def open_weather_dialog(self):
+        """Öffne Wetter-Auswahl Dialog"""
+        dialog = tk.Toplevel(self)
+        dialog.title("Wetter-Steuerung")
+        dialog.geometry("350x450")
+        dialog.configure(bg="#2a2a2a")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Titel
+        tk.Label(dialog, text="🌤️ Wetter-Steuerung", font=("Arial", 14, "bold"),
+                bg="#2a2a2a", fg="white").pack(pady=10)
+        
+        # === Wetter-Buttons ===
+        weather_frame = tk.LabelFrame(dialog, text="Wetter auswählen", bg="#2a2a2a", fg="white")
+        weather_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # Clear-Button
+        tk.Button(weather_frame, text="☀️ Klar", command=lambda: [self.set_weather("clear"), dialog.destroy()],
+                 bg="#4a7a4a", fg="white", font=("Arial", 11), width=12).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Dynamische Buttons für alle geladenen Presets
+        icons = {"rain": "🌧️", "snow": "❄️", "storm": "⛈️", "fog": "🌫️", "leaves": "🍂", "dust": "💨"}
+        for name in self.weather_presets:
+            if name != "clear":
+                icon = icons.get(name, "🌤️")
+                btn = tk.Button(weather_frame, text=f"{icon} {name.capitalize()}", 
+                               command=lambda n=name: [self.set_weather(n), dialog.destroy()],
+                               bg="#4a4a7a", fg="white", font=("Arial", 11), width=12)
+                btn.pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # === Custom GIF laden ===
+        custom_frame = tk.LabelFrame(dialog, text="Custom Overlay", bg="#2a2a2a", fg="white")
+        custom_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        tk.Button(custom_frame, text="📁 GIF laden...", command=lambda: self._load_custom_weather(dialog),
+                 bg="#5a5a5a", fg="white", font=("Arial", 10)).pack(pady=5)
+        
+        # === Opacity Slider ===
+        opacity_frame = tk.LabelFrame(dialog, text="Deckkraft", bg="#2a2a2a", fg="white")
+        opacity_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        opacity_var = tk.DoubleVar(value=self.weather_overlay_opacity * 100)
+        opacity_slider = tk.Scale(opacity_frame, from_=0, to=100, orient=tk.HORIZONTAL,
+                                 variable=opacity_var, bg="#3a3a3a", fg="white",
+                                 highlightthickness=0, troughcolor="#1a1a1a",
+                                 command=lambda v: self.set_weather_overlay_opacity(float(v)/100))
+        opacity_slider.pack(fill=tk.X, padx=10, pady=5)
+        
+        # === Random Wetter ===
+        random_frame = tk.LabelFrame(dialog, text="🎲 Zufälliges Wetter", bg="#2a2a2a", fg="white")
+        random_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        self.random_weather_var = tk.BooleanVar(value=self.random_weather_enabled)
+        random_check = tk.Checkbutton(random_frame, text="Aktiviert", variable=self.random_weather_var,
+                                     bg="#2a2a2a", fg="white", selectcolor="#3a3a3a",
+                                     command=self._toggle_random_weather)
+        random_check.pack(anchor=tk.W, padx=10)
+        
+        # Intervall
+        interval_frame = tk.Frame(random_frame, bg="#2a2a2a")
+        interval_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(interval_frame, text="Intervall (Min):", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        self.interval_min_var = tk.StringVar(value=str(self.random_weather_interval[0] // 60))
+        self.interval_max_var = tk.StringVar(value=str(self.random_weather_interval[1] // 60))
+        tk.Entry(interval_frame, textvariable=self.interval_min_var, width=4, bg="#3a3a3a", fg="white").pack(side=tk.LEFT, padx=2)
+        tk.Label(interval_frame, text="-", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        tk.Entry(interval_frame, textvariable=self.interval_max_var, width=4, bg="#3a3a3a", fg="white").pack(side=tk.LEFT, padx=2)
+        
+        # Dauer
+        duration_frame = tk.Frame(random_frame, bg="#2a2a2a")
+        duration_frame.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(duration_frame, text="Dauer (Min):", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        self.duration_min_var = tk.StringVar(value=str(self.random_weather_duration[0] // 60))
+        self.duration_max_var = tk.StringVar(value=str(self.random_weather_duration[1] // 60))
+        tk.Entry(duration_frame, textvariable=self.duration_min_var, width=4, bg="#3a3a3a", fg="white").pack(side=tk.LEFT, padx=2)
+        tk.Label(duration_frame, text="-", bg="#2a2a2a", fg="white").pack(side=tk.LEFT)
+        tk.Entry(duration_frame, textvariable=self.duration_max_var, width=4, bg="#3a3a3a", fg="white").pack(side=tk.LEFT, padx=2)
+        
+        # Speichern Button
+        tk.Button(random_frame, text="Einstellungen speichern", 
+                 command=lambda: self._save_random_settings(),
+                 bg="#4a6a4a", fg="white").pack(pady=5)
+        
+        # === Status ===
+        status_text = f"Aktuell: {self.current_weather.capitalize()}"
+        if self.random_weather_enabled:
+            status_text += " | 🎲 Zufällig AN"
+        tk.Label(dialog, text=status_text, bg="#2a2a2a", fg="#aaaaaa").pack(pady=10)
+        
+        # Schließen Button
+        tk.Button(dialog, text="Schließen", command=dialog.destroy,
+                 bg="#5a5a5a", fg="white", font=("Arial", 10)).pack(pady=10)
+    
+    def _load_custom_weather(self, dialog):
+        """Lade ein benutzerdefiniertes GIF"""
+        from tkinter import filedialog
+        filepath = filedialog.askopenfilename(
+            title="Wetter-Overlay GIF auswählen",
+            filetypes=[("GIF Dateien", "*.gif"), ("Alle Dateien", "*.*")]
+        )
+        if filepath:
+            if self.load_weather_overlay(filepath):
+                self.current_weather = "custom"
+                self.update_weather_button()
+                dialog.destroy()
+    
+    def _toggle_random_weather(self):
+        """Toggle zufälliges Wetter"""
+        self.random_weather_enabled = self.random_weather_var.get()
+        
+        if self.random_weather_enabled:
+            self._start_random_weather_timer()
+            print("🎲 Zufälliges Wetter aktiviert")
+        else:
+            self._stop_random_weather_timer()
+            print("🎲 Zufälliges Wetter deaktiviert")
+    
+    def _save_random_settings(self):
+        """Speichere Random-Wetter Einstellungen"""
+        try:
+            min_interval = int(self.interval_min_var.get()) * 60
+            max_interval = int(self.interval_max_var.get()) * 60
+            min_duration = int(self.duration_min_var.get()) * 60
+            max_duration = int(self.duration_max_var.get()) * 60
+            
+            self.random_weather_interval = (min(min_interval, max_interval), max(min_interval, max_interval))
+            self.random_weather_duration = (min(min_duration, max_duration), max(min_duration, max_duration))
+            
+            print(f"🎲 Random-Einstellungen: Intervall {self.random_weather_interval[0]//60}-{self.random_weather_interval[1]//60} Min, "
+                  f"Dauer {self.random_weather_duration[0]//60}-{self.random_weather_duration[1]//60} Min")
+            
+            # Neu starten wenn aktiv
+            if self.random_weather_enabled:
+                self._stop_random_weather_timer()
+                self._start_random_weather_timer()
+        except ValueError:
+            print("⚠️ Ungültige Eingabe für Random-Einstellungen")
+    
+    def _start_random_weather_timer(self):
+        """Starte Timer für nächstes zufälliges Wetter"""
+        import random
+        
+        # Zufälliges Intervall bis zum nächsten Wetter-Event
+        interval = random.randint(self.random_weather_interval[0], self.random_weather_interval[1])
+        
+        self.random_weather_timer = self.after(interval * 1000, self._trigger_random_weather)
+        print(f"⏱️ Nächstes Wetter in {interval // 60} Minuten")
+    
+    def _stop_random_weather_timer(self):
+        """Stoppe Random-Wetter Timer"""
+        if self.random_weather_timer:
+            self.after_cancel(self.random_weather_timer)
+            self.random_weather_timer = None
+        if self.random_weather_end_timer:
+            self.after_cancel(self.random_weather_end_timer)
+            self.random_weather_end_timer = None
+    
+    def _trigger_random_weather(self):
+        """Löse zufälliges Wetter-Event aus"""
+        import random
+        
+        # Wähle zufälliges Wetter aus verfügbaren Presets
+        available = [w for w in self.random_weather_types if w in self.weather_presets]
+        
+        if available:
+            weather = random.choice(available)
+            duration = random.randint(self.random_weather_duration[0], self.random_weather_duration[1])
+            
+            print(f"🎲 Zufälliges Wetter: {weather} für {duration // 60} Minuten")
+            self.set_weather(weather)
+            
+            # Timer zum Beenden des Wetters
+            self.random_weather_end_timer = self.after(duration * 1000, self._end_random_weather)
+        else:
+            # Kein Wetter verfügbar, neuen Timer starten
+            self._start_random_weather_timer()
+    
+    def _end_random_weather(self):
+        """Beende aktuelles Random-Wetter und starte neuen Timer"""
+        print(f"🎲 Wetter endet, zurück zu klar")
+        self.set_weather("clear")
+        
+        # Starte Timer für nächstes Wetter
+        if self.random_weather_enabled:
+            self._start_random_weather_timer()
+    
+    # ==================== ENDE WETTER-OVERLAY ====================
+
     def toggle_fog_ui(self):
         """Nebel per Button ein/ausschalten"""
         self.fog_enabled = not self.fog_enabled
@@ -976,6 +1657,12 @@ class ProjectorWindow(tk.Toplevel):
         
         # Frame erhöhen - 240 Frames für längere, langsamere Loops
         self.animation_frame = (self.animation_frame + 1) % 240
+        
+        # Wetter-Overlay Frame weiterschalten
+        if self.weather_overlay_enabled and self.weather_overlay_frames:
+            # Alle 2 Animation-Frames den Wetter-Frame weiterschalten (15 FPS für Wetter)
+            if self.animation_frame % 2 == 0:
+                self.advance_weather_frame()
         
         # Lighting-Animation (für flackernde Lichter) - WICHTIG: Immer updaten!
         if self.lighting_enabled:
@@ -1343,6 +2030,22 @@ class ProjectorWindow(tk.Toplevel):
             pass
         elif not self.lighting_engine.lights:
             pass
+        
+        # === WETTER-OVERLAY (nach Lighting, vor Fog) ===
+        # HINWEIS: GM-Overlay wird jetzt als separates animiertes Layer gehandhabt
+        # Hier nur noch das alte Weather-System (falls verwendet)
+        if self.weather_overlay_enabled and self.weather_overlay_frames:
+            weather_frame = self.get_weather_overlay_frame(viewport_img.size)
+            if weather_frame:
+                # Konvertiere zu RGBA für Alpha-Composite
+                if viewport_img.mode != 'RGBA':
+                    viewport_img = viewport_img.convert('RGBA')
+                # Composite
+                viewport_img = Image.alpha_composite(viewport_img, weather_frame)
+        
+        # HINWEIS: GM-Overlay wird jetzt als separates Canvas-Layer angezeigt
+        # (siehe overlay_canvas_id und _animate_overlay_fast)
+        # Kein Compositing mehr nötig hier!
         
         # Fog-of-War anwenden (auf ORIGINALER Tile-Grid-Basis)
         if self.fog_enabled and self.fog:

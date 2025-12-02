@@ -749,6 +749,12 @@ class DerEineRingProApp(tk.Tk):
             if UI_FRAMEWORK_AVAILABLE:
                 WindowManager.register("gm_panel", self.gm_panel)
             
+            # Prüfe ob es gespeicherte Overlays gibt
+            if hasattr(self, '_pending_scene_overlays') and self._pending_scene_overlays:
+                self.gm_panel.update_scene_overlays(self._pending_scene_overlays)
+                print(f"✅ Gespeicherte Overlays an GM Panel übergeben: {len(self._pending_scene_overlays)}")
+                self._pending_scene_overlays = None
+            
             self._update_status("GM-Panel geöffnet")
             
         except Exception as e:
@@ -1135,6 +1141,22 @@ class DerEineRingProApp(tk.Tk):
             # Status im Story Editor aktualisieren
             if hasattr(self, 'story_editor') and self.story_editor:
                 self.story_editor._set_status(f"✅ Projektor geöffnet mit '{scene.name}'")
+            
+            # === OVERLAYS AN GM PANEL ÜBERGEBEN ===
+            print(f"   🔍 DEBUG: scene.overlays = {getattr(scene, 'overlays', 'NOT FOUND')}")
+            if hasattr(scene, 'overlays') and scene.overlays:
+                print(f"   🌧️ Szenen-Overlays: {len(scene.overlays)}")
+                for i, ov in enumerate(scene.overlays):
+                    print(f"      [{i}] {ov.name}: {ov.file_path}")
+                if self.gm_panel and self.gm_panel.winfo_exists():
+                    self.gm_panel.update_scene_overlays(scene.overlays)
+                    print(f"   ✅ Overlays an GM Panel übergeben")
+                else:
+                    print(f"   ⚠️ GM Panel nicht geöffnet - Overlays gespeichert für später")
+                    # Speichere Overlays für später, wenn GM Panel geöffnet wird
+                    self._pending_scene_overlays = scene.overlays
+            else:
+                print(f"   ⚠️ Keine Overlays in der Szene")
                 
         except Exception as e:
             print(f"   ❌ Fehler: {e}")
@@ -1217,6 +1239,29 @@ class DerEineRingProApp(tk.Tk):
             # Status aktualisieren
             if hasattr(self, 'story_editor') and self.story_editor:
                 self.story_editor._set_status(f"✅ Szene '{scene.name}' im Projektor geladen")
+            
+            # === OVERLAYS AN GM PANEL ÜBERGEBEN ===
+            print(f"   🔍 DEBUG: scene.overlays = {getattr(scene, 'overlays', 'NOT FOUND')}")
+            print(f"   🔍 DEBUG: gm_panel = {self.gm_panel}")
+            print(f"   🔍 DEBUG: gm_panel exists = {self.gm_panel.winfo_exists() if self.gm_panel else False}")
+            
+            if hasattr(scene, 'overlays') and scene.overlays:
+                print(f"   🌧️ Szenen-Overlays: {len(scene.overlays)}")
+                for i, ov in enumerate(scene.overlays):
+                    print(f"      [{i}] {ov.name}: {ov.file_path}")
+                if self.gm_panel and self.gm_panel.winfo_exists():
+                    if hasattr(self.gm_panel, 'update_scene_overlays'):
+                        self.gm_panel.update_scene_overlays(scene.overlays)
+                        print(f"   ✅ Overlays an GM Panel übergeben")
+                    else:
+                        print(f"   ❌ GM Panel hat keine update_scene_overlays Methode")
+                else:
+                    print(f"   ⚠️ GM Panel nicht geöffnet - Overlays nicht übergeben")
+            else:
+                print(f"   ⚠️ Keine Overlays in der Szene definiert")
+                # Keine Overlays - Liste leeren
+                if self.gm_panel and self.gm_panel.winfo_exists() and hasattr(self.gm_panel, 'update_scene_overlays'):
+                    self.gm_panel.update_scene_overlays([])
                 
         except Exception as e:
             print(f"   ❌ Fehler: {e}")
