@@ -26,7 +26,7 @@
             {
               "id": "1f8b3fc9",
               "name": "Regen",
-              "file_path": "C:/Users/PC/Desktop/Programmieren/Der-eine-Ring-main/Der-eine-Ring-main/maps/overlays/regen_overlay.mp4",
+              "file_path": "C:/Users/PC/Desktop/Programmieren/Der-eine-Ring-main/Der-eine-Ring-main/maps/overlays/regen_overlay2.mp4",
               "opacity": 1.0,
               "blend_mode": "normal",
               "z_index": 100,
@@ -38,7 +38,9 @@
               "loop": true,
               "visible": true,
               "animation_speed": 1.0,
-              "category": "effect"
+              "category": "effect",
+              "darken_map": true,
+              "darken_amount": 0.2
             }
           ],
           "triggers": [],
@@ -70,5 +72,5 @@
   "videos_path": "videos/",
   "audio_path": "audio/",
   "created_at": "2025-12-01T17:14:19.716744",
-  "modified_at": "2025-12-02T13:47:08.456329"
+  "modified_at": "2025-12-02T18:32:23.094012"
 }
