@@ -616,6 +616,9 @@ class BossControlPanel(tk.Frame):
         self.on_damage_callback = on_damage_callback
         self.on_reveal_callback = on_reveal_callback
         
+        # Speichere Schadenswerte pro Boss (bleibt über Refreshes erhalten)
+        self.damage_values = {}  # boss_id -> IntVar
+        
         self._create_widgets()
         self.refresh()
     
@@ -720,7 +723,11 @@ class BossControlPanel(tk.Frame):
             dmg_frame = tk.Frame(frame, bg="#16213e")
             dmg_frame.pack(fill=tk.X, padx=10, pady=5)
             
-            dmg_var = tk.IntVar(value=10)
+            # Verwende gespeicherten Wert oder erstelle neuen mit Default 10
+            if boss.id not in self.damage_values:
+                self.damage_values[boss.id] = tk.IntVar(value=10)
+            dmg_var = self.damage_values[boss.id]
+            
             tk.Spinbox(dmg_frame, from_=1, to=1000, textvariable=dmg_var,
                       width=6, bg="#0f3460", fg="white").pack(side=tk.LEFT)
             
