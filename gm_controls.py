@@ -21,6 +21,13 @@ try:
 except ImportError:
     UI_FRAMEWORK_AVAILABLE = False
 
+# Boss-System importieren
+try:
+    from boss_system import BossControlPanel
+    BOSS_SYSTEM_AVAILABLE = True
+except ImportError:
+    BOSS_SYSTEM_AVAILABLE = False
+
 
 class GamemasterControlPanel(tk.Toplevel):
     """
@@ -163,6 +170,11 @@ class GamemasterControlPanel(tk.Toplevel):
         overlay_frame = tk.Frame(notebook, bg=bg_panel)
         notebook.add(overlay_frame, text="  🌧️ Overlay  ")
         self.setup_overlay_tab(overlay_frame)
+        
+        # Tab 7: Boss-Steuerung
+        boss_frame = tk.Frame(notebook, bg=bg_panel)
+        notebook.add(boss_frame, text="  🐉 Bosse  ")
+        self.setup_boss_tab(boss_frame)
     
     def setup_webcam_tab(self, parent):
         """Webcam-Steuerung Tab"""
@@ -285,9 +297,9 @@ class GamemasterControlPanel(tk.Toplevel):
                                  bg="#2d2d2d", fg="white")
         map_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Info-Text
-        info_text = ("Linksklick: Bereich enthüllen | Rechtsklick: Bereich verbergen\n"
-                    "Die Karte zeigt alle Tiles aufgedeckt - Grau = verborgen, Farbig = sichtbar")
+        # Info-Text mit verbesserter Legende
+        info_text = ("Linksklick: Fog enthüllen | Rechtsklick: Fog verbergen | Mittelklick: Boss-Hex enthüllen\n"
+                    "🟠 Orange = Unbekannt (❓) | 🔴 Rot = Boss enthüllt (🐉) | 🟢 Grün = Kein Boss (✓)")
         info_label = tk.Label(map_frame, text=info_text, bg="#2d2d2d", fg="#aaaaaa",
                             font=("Arial", 8), justify=tk.LEFT)
         info_label.pack(padx=5, pady=2)
@@ -316,17 +328,42 @@ class GamemasterControlPanel(tk.Toplevel):
         self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)  # Rechtsklick = Verbergen
         self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)        # Ziehen = Mehrere enthüllen
         
-        # Brush-Größe für Klick-Bereich
-        brush_frame = tk.Frame(map_frame, bg="#2d2d2d")
-        brush_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Controls für Pinsel und Zoom
+        controls_frame = tk.Frame(map_frame, bg="#2d2d2d")
+        controls_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        tk.Label(brush_frame, text="Pinsel-Größe:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        # Pinsel-Größe
+        tk.Label(controls_frame, text="Pinsel:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
         
         self.fog_brush_size = tk.IntVar(value=3)
-        brush_slider = tk.Scale(brush_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+        brush_slider = tk.Scale(controls_frame, from_=1, to=10, orient=tk.HORIZONTAL,
                                variable=self.fog_brush_size,
-                               bg="#2d2d2d", fg="white", highlightthickness=0)
-        brush_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                               bg="#2d2d2d", fg="white", highlightthickness=0,
+                               length=100)
+        brush_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Zoom-Slider für GM-Map
+        tk.Label(controls_frame, text="  |  Zoom:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        self.gm_map_zoom = tk.DoubleVar(value=1.0)
+        zoom_slider = tk.Scale(controls_frame, from_=0.5, to=2.0, resolution=0.1,
+                              orient=tk.HORIZONTAL, variable=self.gm_map_zoom,
+                              bg="#2d2d2d", fg="white", highlightthickness=0,
+                              length=100, command=lambda v: self.update_fog_map())
+        zoom_slider.pack(side=tk.LEFT, padx=5)
+        
+        # Zoom-Buttons
+        zoom_out_btn = tk.Button(controls_frame, text="➖", command=lambda: self._adjust_gm_zoom(-0.1),
+                                bg="#555555", fg="white", width=2)
+        zoom_out_btn.pack(side=tk.LEFT, padx=2)
+        
+        zoom_in_btn = tk.Button(controls_frame, text="➕", command=lambda: self._adjust_gm_zoom(0.1),
+                               bg="#555555", fg="white", width=2)
+        zoom_in_btn.pack(side=tk.LEFT, padx=2)
+        
+        fit_btn = tk.Button(controls_frame, text="📐 Einpassen", command=self._fit_gm_map,
+                           bg="#555555", fg="white")
+        fit_btn.pack(side=tk.LEFT, padx=5)
         
         # Karte initial zeichnen
         self.update_fog_map()
@@ -763,6 +800,71 @@ class GamemasterControlPanel(tk.Toplevel):
         self.current_overlay_frames = []
         self.current_overlay_path = None
     
+    def setup_boss_tab(self, parent):
+        """Boss-Steuerung Tab für Kampf-Bosse"""
+        title = tk.Label(parent, text="Boss-Steuerung", font=("Arial", 16, "bold"),
+                        bg="#1e1e1e", fg="white")
+        title.pack(pady=10)
+        
+        # Info
+        info = tk.Label(parent, 
+                       text="Verwalte enthüllte Bosse und füge ihnen Schaden zu",
+                       bg="#1e1e1e", fg="#aaaaaa", font=("Arial", 9))
+        info.pack(padx=10, pady=5)
+        
+        if not BOSS_SYSTEM_AVAILABLE:
+            # Fallback wenn Boss-System nicht geladen werden konnte
+            error_label = tk.Label(parent, 
+                                   text="⚠️ Boss-System konnte nicht geladen werden.\nBitte boss_system.py prüfen.",
+                                   bg="#1e1e1e", fg="#f44336", font=("Arial", 11))
+            error_label.pack(pady=20)
+            return
+        
+        # Boss Control Panel einbetten
+        if self.projector_window and hasattr(self.projector_window, 'boss_manager'):
+            boss_manager = self.projector_window.boss_manager
+            
+            def on_boss_damage(boss, placement):
+                """Callback wenn ein Boss Schaden erhält"""
+                if self.projector_window:
+                    self.projector_window.render_boss_overlays()
+                    self.projector_window.render_map()
+                    self._set_status(f"Boss '{boss.name}' HP: {boss.current_health}/{boss.max_health}")
+            
+            def on_boss_reveal(boss, placement):
+                """Callback wenn ein Boss enthüllt wird"""
+                if self.projector_window:
+                    self.projector_window.render_boss_overlays()
+                    self.projector_window.render_map()
+                    self._set_status(f"Boss '{boss.name}' enthüllt!")
+            
+            self.boss_control_panel = BossControlPanel(
+                parent, 
+                boss_manager,
+                on_damage_callback=on_boss_damage,
+                on_reveal_callback=on_boss_reveal
+            )
+            self.boss_control_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        else:
+            # Kein Projektor oder Boss-Manager verfügbar
+            no_projector = tk.Label(parent, 
+                                    text="⚠️ Projektor-Fenster nicht aktiv.\nBitte erst den Projektor-Modus starten.",
+                                    bg="#1e1e1e", fg="orange", font=("Arial", 11))
+            no_projector.pack(pady=20)
+            
+            # Button zum Aktualisieren
+            refresh_btn = tk.Button(parent, text="🔄 Verbindung prüfen",
+                                   command=self.refresh_boss_panel,
+                                   bg="#2196F3", fg="white", font=("Arial", 11),
+                                   padx=15, pady=8)
+            refresh_btn.pack(pady=10)
+    
+    def refresh_boss_panel(self):
+        """Aktualisiert das Boss-Panel mit aktuellem Projektor-Status"""
+        if hasattr(self, 'boss_control_panel'):
+            self.boss_control_panel.refresh()
+        self._set_status("Boss-Panel aktualisiert")
+
     def toggle_overlay(self):
         """Overlay an/aus schalten"""
         enabled = self.overlay_enabled_var.get()
@@ -1121,6 +1223,19 @@ class GamemasterControlPanel(tk.Toplevel):
             self.projector_window.render_map()
             self.update_fog_map()
     
+    def _adjust_gm_zoom(self, delta):
+        """Passt den GM-Map-Zoom an"""
+        if hasattr(self, 'gm_map_zoom'):
+            new_zoom = max(0.5, min(2.0, self.gm_map_zoom.get() + delta))
+            self.gm_map_zoom.set(new_zoom)
+            self.update_fog_map()
+    
+    def _fit_gm_map(self):
+        """Passt Zoom so an, dass die ganze Karte sichtbar ist"""
+        if hasattr(self, 'gm_map_zoom'):
+            self.gm_map_zoom.set(1.0)
+            self.update_fog_map()
+    
     def update_fog_map(self):
         """Zeichnet die interaktive Fog-Karte"""
         if not self.projector_window or not hasattr(self, 'fog_map_canvas'):
@@ -1225,9 +1340,16 @@ class GamemasterControlPanel(tk.Toplevel):
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
-            # Berechne Mini-Größe (max 500px für bessere Sicht, war 400)
-            max_size = 500
-            scale = min(max_size / svg_width, max_size / svg_height)
+            # Berechne Mini-Größe (dynamisch nach Fenstergröße)
+            self.fog_map_canvas.update_idletasks()
+            available_width = max(800, self.fog_map_canvas.winfo_width() - 20)
+            available_height = max(600, self.fog_map_canvas.winfo_height() - 20)
+            base_scale = min(available_width / svg_width, available_height / svg_height, 1.5)
+            
+            # User-Zoom anwenden
+            user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
+            scale = base_scale * user_zoom
+            
             mini_width = int(svg_width * scale)
             mini_height = int(svg_height * scale)
             
@@ -1284,11 +1406,19 @@ class GamemasterControlPanel(tk.Toplevel):
                 self.fog_map_canvas.tile_size = tile_width
                 self.fog_map_canvas.mini_scale = scale
                 
+                # === BOSS-HEXAGONE FÜR SVG-MAPS ZEICHNEN ===
+                # Prüfe ob es eine Hexagon-Map mit SVG-Hintergrund ist
+                map_data = self.projector_window.map_data
+                if map_data.get("hex_size"):
+                    self._draw_boss_hexagon_markers_svg(map_data, scale, mini_width, mini_height)
+                
                 # WICHTIG: Event-Bindings nach jedem Update neu setzen!
                 # (gehen nach Tab-Wechsel verloren)
                 self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
                 self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
                 self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
+                # Mittelklick für Boss-Enthüllung
+                self.fog_map_canvas.bind("<Button-2>", self.on_boss_hex_click)
         
         except Exception as e:
             print(f"⚠️ Fehler beim Rendern der SVG-Miniatur: {e}")
@@ -1303,6 +1433,13 @@ class GamemasterControlPanel(tk.Toplevel):
         hex_size = map_data.get("hex_size", 40)
         tiles = map_data.get("tiles", {})
         orientation = map_data.get("orientation", "pointy")
+        
+        # Debug: Zeige Tile-Struktur
+        if tiles:
+            first_key = next(iter(tiles))
+            first_val = tiles[first_key]
+            is_boss_check = first_val.get("is_boss_hex", "NO KEY") if isinstance(first_val, dict) else "NOT DICT"
+            print(f"🗺️ GM Hexagon Map: {len(tiles)} tiles, Typ={type(first_val).__name__}, is_boss_hex={is_boss_check}")
         
         # Terrain-Farben (passend zu Hexagon-Map-Terrain-Typen)
         terrain_colors = {
@@ -1352,9 +1489,19 @@ class GamemasterControlPanel(tk.Toplevel):
         map_width = max_x - min_x + hex_size * 2
         map_height = max_y - min_y + hex_size * 2
         
-        # Canvas-Breite (max 400px, Höhe proportional)
-        max_canvas_width = 400
-        scale = min(1.0, max_canvas_width / map_width) if map_width > 0 else 0.5
+        # Hole aktuelle Canvas-Größe (dynamisch nach Fenstergröße)
+        self.fog_map_canvas.update_idletasks()
+        available_width = max(800, self.fog_map_canvas.winfo_width() - 20)
+        available_height = max(600, self.fog_map_canvas.winfo_height() - 20)
+        
+        # Skaliere passend zur verfügbaren Fläche
+        scale_x = available_width / map_width if map_width > 0 else 1.0
+        scale_y = available_height / map_height if map_height > 0 else 1.0
+        base_scale = min(scale_x, scale_y, 1.5)  # Maximal 150% Vergrößerung
+        
+        # User-Zoom anwenden
+        user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
+        scale = base_scale * user_zoom
         
         mini_hex_size = hex_size * scale
         canvas_width = int(map_width * scale)
@@ -1425,7 +1572,7 @@ class GamemasterControlPanel(tk.Toplevel):
         # Fog-Overlay für verdeckte Bereiche
         # (Hexagon-Maps nutzen das Fog-System des Projektors)
         if hasattr(self.projector_window, 'fog') and self.projector_window.fog:
-            fog_grid = self.projector_window.fog.grid
+            fog_revealed = self.projector_window.fog.revealed  # numpy array, True=sichtbar
             fog_width = self.projector_window.fog.width
             fog_height = self.projector_window.fog.height
             
@@ -1438,14 +1585,18 @@ class GamemasterControlPanel(tk.Toplevel):
                 fog_x = max(0, min(fog_x, fog_width - 1))
                 fog_y = max(0, min(fog_y, fog_height - 1))
                 
-                if fog_y < len(fog_grid) and fog_x < len(fog_grid[fog_y]):
-                    if fog_grid[fog_y][fog_x] == 1:  # Verdeckt
-                        # Zeichne dunkles Overlay
-                        self.fog_map_canvas.itemconfig(
-                            tile_info["id"], 
-                            fill="#1a1a1a",
-                            stipple="gray50"
-                        )
+                # revealed ist numpy array: True = sichtbar, False = Nebel
+                if not fog_revealed[fog_y, fog_x]:  # Verdeckt (nicht revealed)
+                    # Zeichne dunkles Overlay
+                    self.fog_map_canvas.itemconfig(
+                        tile_info["id"], 
+                        fill="#1a1a1a",
+                        stipple="gray50"
+                    )
+        
+        # === BOSS-HEXAGONE MARKIEREN ===
+        # Zeige Boss-Hexagone mit orangem Rand an
+        self._draw_boss_hexagon_markers(tiles, scale, offset_x, offset_y, mini_hex_size, orientation, hex_size)
         
         # Scroll-Region setzen
         self.fog_map_canvas.config(scrollregion=(0, 0, canvas_width, canvas_height))
@@ -1454,7 +1605,417 @@ class GamemasterControlPanel(tk.Toplevel):
         self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
         self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
         self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
+        # Mittelklick für Boss-Enthüllung
+        self.fog_map_canvas.bind("<Button-2>", self.on_boss_hex_click)
     
+    def _draw_boss_hexagon_markers(self, tiles, scale, offset_x, offset_y, mini_hex_size, orientation, hex_size):
+        """Zeichnet orangene Markierungen für Boss-Hexagone"""
+        import math
+        
+        boss_hex_count = 0
+        for key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+                
+            is_boss_hex = tile_data.get("is_boss_hex", False)
+            if not is_boss_hex:
+                continue
+            
+            boss_hex_count += 1
+            
+            # Berechne Koordinaten
+            cx = tile_data.get("center_x", 0)
+            cy = tile_data.get("center_y", 0)
+            scaled_cx = cx * scale + offset_x
+            scaled_cy = cy * scale + offset_y
+            
+            # Prüfe ob Boss bereits enthüllt
+            is_revealed = False
+            boss_placed = False
+            if hasattr(self, 'projector_window') and self.projector_window:
+                if hasattr(self.projector_window, 'boss_manager'):
+                    parts = key.split(",")
+                    if len(parts) == 2:
+                        q, r = int(parts[0]), int(parts[1])
+                        for placement in self.projector_window.boss_manager.placements:
+                            if placement.hex_q == q and placement.hex_r == r:
+                                boss_placed = True
+                                is_revealed = placement.revealed
+                                break
+            
+            # Farbe basierend auf Status
+            if is_revealed:
+                outline_color = "#ff0000"  # Rot = Enthüllt (Boss sichtbar)
+                fill_stipple = ""
+            elif boss_placed:
+                outline_color = "#ff8800"  # Orange = Boss vorhanden, nicht enthüllt
+                fill_stipple = ""
+            else:
+                outline_color = "#ffaa00"  # Gelb-Orange = Boss-Hex ohne Boss
+                fill_stipple = "gray25"
+            
+            # Hexagon-Punkte für Rahmen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = scaled_cx + mini_hex_size * 0.85 * math.cos(angle)
+                py = scaled_cy + mini_hex_size * 0.85 * math.sin(angle)
+                points.append((px, py))
+            
+            # Zeichne Boss-Markierung (nur Umriss)
+            self.fog_map_canvas.create_polygon(
+                points, fill="", outline=outline_color, width=3, 
+                tags=f"boss_marker_{key}"
+            )
+            
+            # Zeichne kleines Boss-Icon in der Mitte
+            icon = "🐉" if boss_placed else "❓"
+            if is_revealed:
+                # Zeige Boss-Name wenn enthüllt
+                for placement in self.projector_window.boss_manager.placements:
+                    parts = key.split(",")
+                    if len(parts) == 2:
+                        q, r = int(parts[0]), int(parts[1])
+                        if placement.hex_q == q and placement.hex_r == r:
+                            boss = self.projector_window.boss_manager.get_boss(placement.boss_id)
+                            if boss:
+                                icon = "💀" if boss.is_defeated else "🐉"
+            
+            self.fog_map_canvas.create_text(
+                scaled_cx, scaled_cy, text=icon, 
+                font=("Arial", max(8, int(mini_hex_size * 0.5))),
+                fill="white", tags=f"boss_icon_{key}"
+            )
+        
+        # Debug-Ausgabe
+        if boss_hex_count > 0:
+            print(f"🗺️ GM-Panel: {boss_hex_count} Boss-Hexagone markiert")
+        else:
+            # Prüfe warum keine Boss-Hexagone gefunden wurden
+            dict_count = sum(1 for t in tiles.values() if isinstance(t, dict))
+            print(f"⚠️ GM-Panel: Keine Boss-Hexagone! ({dict_count} dict-tiles von {len(tiles)})")
+    
+    def _draw_boss_hexagon_markers_svg(self, map_data, scale, canvas_width, canvas_height):
+        """Zeichnet Boss-Hexagon-Markierungen für SVG-Maps mit Hexagon-Overlay"""
+        import math
+        
+        hex_size = map_data.get("hex_size", 40)
+        tiles = map_data.get("tiles", {})
+        orientation = map_data.get("orientation", "pointy")
+        
+        if not tiles:
+            print("⚠️ GM-Panel SVG: Keine Tiles vorhanden")
+            return
+        
+        # Berechne Bounding-Box der Hexagone
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+        
+        for key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                cx = tile_data.get("center_x", 0)
+                cy = tile_data.get("center_y", 0)
+            else:
+                parts = key.split(",")
+                if len(parts) == 2:
+                    q, r = int(parts[0]), int(parts[1])
+                    if orientation == "pointy":
+                        cx = hex_size * 1.5 * q
+                        cy = hex_size * math.sqrt(3) * (r + q / 2)
+                    else:
+                        cx = hex_size * math.sqrt(3) * (q + r / 2)
+                        cy = hex_size * 1.5 * r
+                else:
+                    continue
+            
+            min_x = min(min_x, cx)
+            min_y = min(min_y, cy)
+            max_x = max(max_x, cx)
+            max_y = max(max_y, cy)
+        
+        # Berechne Skalierung und Offset für Hexagon-Overlay
+        map_width = max_x - min_x + hex_size * 2
+        map_height = max_y - min_y + hex_size * 2
+        
+        # Skalierung passend zur Canvas-Größe
+        hex_scale = min(canvas_width / map_width, canvas_height / map_height) if map_width > 0 and map_height > 0 else 1.0
+        mini_hex_size = hex_size * hex_scale
+        
+        # Offset zum Zentrieren
+        offset_x = (hex_size - min_x) * hex_scale
+        offset_y = (hex_size - min_y) * hex_scale
+        
+        # Speichere Hexagon-Daten für Klick-Handler
+        self.fog_map_canvas.hex_tiles = {}
+        self.fog_map_canvas.hex_size = mini_hex_size
+        self.fog_map_canvas.hex_scale = hex_scale
+        self.fog_map_canvas.hex_offset_x = offset_x
+        self.fog_map_canvas.hex_offset_y = offset_y
+        self.fog_map_canvas.is_hexagon_mode = True
+        
+        boss_hex_count = 0
+        
+        # Zeichne nur Boss-Hexagone
+        for key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+            
+            # Speichere alle Hexagone für Klick-Erkennung
+            cx = tile_data.get("center_x", 0)
+            cy = tile_data.get("center_y", 0)
+            scaled_cx = cx * hex_scale + offset_x
+            scaled_cy = cy * hex_scale + offset_y
+            
+            self.fog_map_canvas.hex_tiles[key] = {
+                "center": (scaled_cx, scaled_cy),
+                "terrain": tile_data.get("terrain", "PLAINS")
+            }
+            
+            is_boss_hex = tile_data.get("is_boss_hex", False)
+            if not is_boss_hex:
+                continue
+            
+            boss_hex_count += 1
+            
+            # Extrahiere Koordinaten
+            parts = key.split(",")
+            q, r = 0, 0
+            if len(parts) == 2:
+                q, r = int(parts[0]), int(parts[1])
+            
+            # Prüfe ob Boss-Hex bereits enthüllt wurde (unabhängig von Boss-Definition)
+            is_revealed = False
+            boss_placed = False
+            has_boss_definition = False
+            
+            if hasattr(self, 'projector_window') and self.projector_window:
+                # Prüfe revealed_boss_hexes (Mittelklick-Enthüllung)
+                if hasattr(self.projector_window, 'revealed_boss_hexes'):
+                    is_revealed = (q, r) in self.projector_window.revealed_boss_hexes
+                
+                # Prüfe ob ein Boss hier platziert ist
+                if hasattr(self.projector_window, 'boss_manager'):
+                    for placement in self.projector_window.boss_manager.placements:
+                        if placement.hex_q == q and placement.hex_r == r:
+                            boss_placed = True
+                            has_boss_definition = True
+                            is_revealed = is_revealed or placement.revealed
+                            break
+            
+            # Farbe basierend auf Status - deutlichere Unterscheidung
+            # Tkinter unterstützt kein Alpha, daher stipple für Transparenz-Effekt
+            if is_revealed:
+                if boss_placed:
+                    outline_color = "#ff0000"  # Rot = Enthüllt MIT Boss
+                    fill_color = "#ff4444"  # Roter Hintergrund
+                    use_stipple = True
+                else:
+                    outline_color = "#00ff00"  # Grün = Enthüllt, KEIN Boss
+                    fill_color = "#44ff44"  # Grüner Hintergrund
+                    use_stipple = True
+            elif boss_placed:
+                outline_color = "#ff8800"  # Orange = Boss vorhanden, nicht enthüllt
+                fill_color = ""
+                use_stipple = False
+            else:
+                outline_color = "#ffaa00"  # Gelb-Orange = Boss-Hex, unbekannt
+                fill_color = ""
+                use_stipple = False
+            
+            # Hexagon-Punkte für Rahmen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = scaled_cx + mini_hex_size * 0.85 * math.cos(angle)
+                py = scaled_cy + mini_hex_size * 0.85 * math.sin(angle)
+                points.append((px, py))
+            
+            # Zeichne Boss-Markierung (mit Füllung wenn enthüllt)
+            if fill_color and use_stipple:
+                self.fog_map_canvas.create_polygon(
+                    points, fill=fill_color, outline=outline_color, width=3, 
+                    stipple="gray50", tags=f"boss_marker_{key}"
+                )
+            else:
+                self.fog_map_canvas.create_polygon(
+                    points, fill="", outline=outline_color, width=3, 
+                    tags=f"boss_marker_{key}"
+                )
+            
+            # Zeichne Icon basierend auf Status
+            if is_revealed:
+                if boss_placed:
+                    icon = "🐉"  # Boss war hier!
+                    # Prüfe ob besiegt
+                    if hasattr(self.projector_window, 'boss_manager'):
+                        for placement in self.projector_window.boss_manager.placements:
+                            if placement.hex_q == q and placement.hex_r == r:
+                                boss = self.projector_window.boss_manager.get_boss(placement.boss_id)
+                                if boss and boss.is_defeated:
+                                    icon = "💀"
+                                break
+                else:
+                    icon = "✓"  # Enthüllt, kein Boss
+            else:
+                icon = "❓"  # Noch nicht enthüllt
+            
+            self.fog_map_canvas.create_text(
+                scaled_cx, scaled_cy, text=icon, 
+                font=("Arial", max(10, int(mini_hex_size * 0.5))),
+                fill="white", tags=f"boss_icon_{key}"
+            )
+        
+        if boss_hex_count > 0:
+            print(f"🗺️ GM-Panel SVG: {boss_hex_count} Boss-Hexagone markiert")
+        else:
+            dict_count = sum(1 for t in tiles.values() if isinstance(t, dict))
+            boss_count = sum(1 for t in tiles.values() if isinstance(t, dict) and t.get("is_boss_hex", False))
+            print(f"⚠️ GM-Panel SVG: Keine Boss-Hexagone gefunden! ({boss_count} von {dict_count} dict-tiles)")
+    
+    def on_boss_hex_click(self, event):
+        """Mittelklick auf Boss-Hexagon = Boss enthüllen/verbergen"""
+        import math
+        
+        if not hasattr(self, 'fog_map_canvas') or not hasattr(self.fog_map_canvas, 'hex_tiles'):
+            return
+        
+        # Canvas-Koordinaten mit Scrolling
+        canvas_x = self.fog_map_canvas.canvasx(event.x)
+        canvas_y = self.fog_map_canvas.canvasy(event.y)
+        
+        hex_tiles = self.fog_map_canvas.hex_tiles
+        hex_size = self.fog_map_canvas.hex_size
+        
+        # Finde das nächste Hexagon zum Klickpunkt
+        closest_hex = None
+        closest_dist = float('inf')
+        
+        for key, tile_info in hex_tiles.items():
+            cx, cy = tile_info["center"]
+            dist = math.sqrt((canvas_x - cx)**2 + (canvas_y - cy)**2)
+            if dist < closest_dist and dist < hex_size * 1.2:
+                closest_dist = dist
+                closest_hex = key
+        
+        if not closest_hex:
+            return
+        
+        # Prüfe ob es ein Boss-Hexagon ist
+        map_data = self.projector_window.map_data
+        tiles = map_data.get("tiles", {})
+        tile_data = tiles.get(closest_hex, {})
+        
+        if not isinstance(tile_data, dict):
+            self._set_status("❌ Kein Boss-Hexagon")
+            return
+        
+        if not tile_data.get("is_boss_hex", False):
+            self._set_status("❌ Kein Boss-Hexagon")
+            return
+        
+        # Extrahiere Koordinaten
+        parts = closest_hex.split(",")
+        if len(parts) != 2:
+            return
+        q, r = int(parts[0]), int(parts[1])
+        
+        # Prüfe ob bereits enthüllt
+        if hasattr(self.projector_window, 'revealed_boss_hexes'):
+            if (q, r) in self.projector_window.revealed_boss_hexes:
+                self._set_status("ℹ️ Bereits enthüllt")
+                return
+        
+        # Boss-Hexagon enthüllen
+        if hasattr(self.projector_window, 'boss_manager'):
+            # Prüfe ob ein Boss hier platziert ist
+            has_boss = False
+            boss = None
+            
+            for placement in self.projector_window.boss_manager.placements:
+                if placement.hex_q == q and placement.hex_r == r:
+                    has_boss = True
+                    if not placement.revealed:
+                        boss = self.projector_window.boss_manager.reveal_boss_at_hex(q, r)
+                    else:
+                        # Bereits enthüllt, hole Boss-Info
+                        boss = self.projector_window.boss_manager.get_boss(placement.boss_id)
+                    break
+            
+            # Markiere das Hex als enthüllt (mit oder ohne Boss)
+            if hasattr(self.projector_window, 'mark_boss_hex_revealed'):
+                self.projector_window.mark_boss_hex_revealed(q, r, has_boss)
+            
+            # Status-Meldung mit Boss-Details
+            if boss:
+                hp_text = f"{boss.current_health}/{boss.max_health} HP"
+                self._set_status(f"🐉 BOSS: {boss.name} ({hp_text})")
+                # Boss zu revealed_bosses hinzufügen
+                if not hasattr(self.projector_window, 'revealed_bosses'):
+                    self.projector_window.revealed_bosses = {}
+                self.projector_window.revealed_bosses[(q, r)] = boss
+                
+                # ═══════════════════════════════════════════════════════════
+                # PRÜFE OB ALLE BOSSE ENTHÜLLT - wenn ja, restliche Hexe als leer markieren
+                # ═══════════════════════════════════════════════════════════
+                self._check_all_bosses_revealed()
+            else:
+                self._set_status("✨ Kein Boss hier!")
+            
+            # Karte und Boss-Panel aktualisieren
+            self.projector_window.render_map()
+            if hasattr(self, 'boss_control_panel'):
+                self.boss_control_panel.refresh()
+            self.update_fog_map()  # Verwendet SVG wenn verfügbar
+    
+    def _check_all_bosses_revealed(self):
+        """
+        Prüft ob alle Bosse enthüllt wurden.
+        Wenn ja, markiert alle restlichen Boss-Hexagone als 'kein Boss'.
+        """
+        if not hasattr(self.projector_window, 'boss_manager'):
+            return
+        
+        boss_manager = self.projector_window.boss_manager
+        
+        # Zähle definierte Bosse und enthüllte Bosse
+        total_bosses = len(boss_manager.placements)
+        revealed_bosses = sum(1 for p in boss_manager.placements if p.revealed)
+        
+        if total_bosses == 0:
+            return
+        
+        # Wenn alle Bosse enthüllt wurden
+        if revealed_bosses >= total_bosses:
+            print(f"🎉 ALLE {total_bosses} BOSSE ENTHÜLLT! Restliche Hexagone werden markiert...")
+            
+            # Sammle alle Boss-Hexagone
+            map_data = self.projector_window.map_data
+            tiles = map_data.get("tiles", {})
+            
+            # Markiere alle nicht-enthüllten Boss-Hexagone als "kein Boss"
+            for key, tile_data in tiles.items():
+                if not isinstance(tile_data, dict):
+                    continue
+                if not tile_data.get("is_boss_hex", False):
+                    continue
+                
+                parts = key.split(",")
+                if len(parts) != 2:
+                    continue
+                q, r = int(parts[0]), int(parts[1])
+                
+                # Wenn noch nicht enthüllt, als "leer" markieren
+                if (q, r) not in self.projector_window.revealed_boss_hexes:
+                    self.projector_window.mark_boss_hex_revealed(q, r, has_boss=False)
+            
+            self._set_status(f"🎉 Alle {total_bosses} Bosse gefunden! Restliche Hexe sind leer.")
+
     def on_fog_map_left_click(self, event):
         """Linksklick auf Karte = Bereich enthüllen"""
         self._fog_map_click(event, reveal=True)
@@ -1520,7 +2081,7 @@ class GamemasterControlPanel(tk.Toplevel):
         x2 = min(map_width - 1, tile_x + brush_size // 2)
         y2 = min(map_height - 1, tile_y + brush_size // 2)
         
-        # Fog updaten
+        # Fog updaten (Boss-System ist NICHT an Fog gekoppelt)
         if reveal:
             self.projector_window.fog.reveal_area(x1, y1, x2, y2)
         else:
@@ -1598,17 +2159,17 @@ class GamemasterControlPanel(tk.Toplevel):
         # Projektor-Karte neu rendern
         self.projector_window.render_map()
         
-        # Hexagon-Karte aktualisieren
-        self.update_fog_map_hexagon()
+        # GM-Karte aktualisieren (verwendet SVG wenn verfügbar)
+        self.update_fog_map()
 
     def _update_fog_tiles_local(self, x1, y1, x2, y2, reveal):
         """Updatet nur die geänderten Tiles lokal (Performance)"""
         if not hasattr(self, 'fog_map_canvas'):
             return
         
-        # Bei Hexagon-Mode: Komplettes Neu-Rendering
+        # Bei Hexagon-Mode: Komplettes Neu-Rendering (verwendet SVG wenn verfügbar)
         if getattr(self.fog_map_canvas, 'is_hexagon_mode', False):
-            self.update_fog_map_hexagon()
+            self.update_fog_map()
             return
         
         # Bei SVG-Mode: Komplettes Neu-Rendering nötig (kein Tile-basiertes Canvas)

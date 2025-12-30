@@ -1,0 +1,18 @@
+{
+  "boss_definitions": [
+    {
+      "id": "4f048794",
+      "name": "Spinne",
+      "max_health": 100,
+      "current_health": 100,
+      "image_path": null,
+      "description": "",
+      "name_color": "#ff4444",
+      "health_bar_color": "#00ff00",
+      "health_bar_damage_color": "#ff0000",
+      "abilities": [],
+      "loot": []
+    }
+  ],
+  "placements": []
+}

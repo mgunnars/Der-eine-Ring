@@ -1070,16 +1070,21 @@ class DerEineRingProApp(tk.Tk):
                         
                         if img:
                             # Erstelle Map-Daten für den Projektor mit dem Bild als Hintergrund
+                            # WICHTIG: Behalte originale Tiles für Boss-Hexagone etc.!
+                            original_tiles = map_data.get('tiles', {})
                             map_data = {
                                 "width": img.width // 32 + 1,
                                 "height": img.height // 32 + 1,
                                 "tile_size": 32,
                                 "background_image": bg_path,
-                                "tiles": {},  # Leere Tiles, Hintergrund wird angezeigt
+                                "tiles": original_tiles,  # Behalte originale Tiles!
                                 "name": map_data.get('name', 'Hexagon-Karte'),
-                                "is_hexagon_map": True
+                                "is_hexagon_map": True,
+                                "hex_size": map_data.get('hex_size', 40),
+                                "orientation": map_data.get('orientation', 'pointy')
                             }
                             print(f"      ✅ Hexagon-Map konvertiert: {img.width}x{img.height}px")
+                            print(f"      📦 Tiles beibehalten: {len(original_tiles)} Einträge")
                     else:
                         print(f"      ⚠️ Kein Hintergrundbild gefunden für Hexagon-Map")
                 # ===================================
@@ -1120,6 +1125,33 @@ class DerEineRingProApp(tk.Tk):
                     "name": scene.name
                 }
                 print(f"   ⚠️ Fallback zu leerer Map")
+            
+            # ═══════════════════════════════════════════════════════════
+            # BOSS-DATEN AUS STORYBOARD IN MAP_DATA EINFÜGEN
+            # ═══════════════════════════════════════════════════════════
+            boss_loaded = False
+            
+            # Zuerst: Prüfe ob Story Editor mit Storyboard existiert
+            if hasattr(self, 'story_editor') and self.story_editor:
+                storyboard = getattr(self.story_editor, 'storyboard', None)
+                if storyboard and hasattr(storyboard, 'boss_data') and storyboard.boss_data:
+                    if map_data:
+                        map_data["boss_data"] = storyboard.boss_data
+                        boss_count = len(storyboard.boss_data.get("boss_definitions", []))
+                        print(f"   🐉 {boss_count} Bosse aus Storyboard geladen")
+                        boss_loaded = True
+                
+                # Fallback: Hole Boss-Daten direkt vom Boss Panel
+                if not boss_loaded and hasattr(self.story_editor, 'boss_panel') and self.story_editor.boss_panel:
+                    boss_data = self.story_editor.boss_panel.to_dict()
+                    if boss_data and boss_data.get("boss_definitions"):
+                        if map_data:
+                            map_data["boss_data"] = boss_data
+                            print(f"   🐉 {len(boss_data.get('boss_definitions', []))} Bosse aus Boss-Panel geladen")
+                            boss_loaded = True
+            
+            if not boss_loaded:
+                print(f"   ⚠️ Keine Boss-Daten gefunden (Story Editor oder Boss-Panel nicht verfügbar)")
             
             # Projektor öffnen
             if svg_path:

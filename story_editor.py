@@ -29,6 +29,8 @@ from storyboard_system import (
 from story_editor_scenes import ScenesPanel, SceneTypeSelector, ChapterDialog
 from story_editor_graph import FlowGraphPanel
 from story_editor_properties import PropertiesPanel
+from story_editor_bosses import BossPanel
+from boss_system import BossManager
 
 
 class StoryEditor(tk.Toplevel):
@@ -209,11 +211,24 @@ class StoryEditor(tk.Toplevel):
         )
         self.main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Links: Szenen-Panel
+        # Links: Szenen-Panel mit Tabs (Szenen + Bosse)
         self.left_frame = tk.Frame(self.main_paned, bg="#16213e", width=280)
         self.main_paned.add(self.left_frame, minsize=200)
         
-        self.scenes_panel = ScenesPanel(self.left_frame, self)
+        # Tab-Container für Szenen und Bosse
+        self.left_notebook = ttk.Notebook(self.left_frame)
+        self.left_notebook.pack(fill=tk.BOTH, expand=True)
+        
+        # Tab 1: Szenen-Panel
+        scenes_tab = tk.Frame(self.left_notebook, bg="#16213e")
+        self.left_notebook.add(scenes_tab, text="📖 Szenen")
+        self.scenes_panel = ScenesPanel(scenes_tab, self)
+        
+        # Tab 2: Boss-Panel
+        boss_tab = tk.Frame(self.left_notebook, bg="#16213e")
+        self.left_notebook.add(boss_tab, text="🐉 Bosse")
+        self.boss_panel = BossPanel(boss_tab, on_change=self._mark_changed)
+        self.boss_panel.pack(fill=tk.BOTH, expand=True)
         
         # Mitte: Flow-Graph
         self.center_frame = tk.Frame(self.main_paned, bg="#0f3460")
@@ -272,6 +287,9 @@ class StoryEditor(tk.Toplevel):
         self._current_file_path = None
         self.has_unsaved_changes = False
         
+        # Boss-Panel zurücksetzen
+        self.boss_panel.set_boss_manager(BossManager())
+        
         self._refresh_all()
         self._set_status("Neues Storyboard erstellt")
     
@@ -293,6 +311,12 @@ class StoryEditor(tk.Toplevel):
                 self._current_file_path = path
                 self.has_unsaved_changes = False
                 
+                # Boss-Daten laden falls vorhanden
+                if self.storyboard.boss_data:
+                    self.boss_panel.from_dict(self.storyboard.boss_data)
+                else:
+                    self.boss_panel.set_boss_manager(BossManager())
+                
                 self._refresh_all()
                 self._set_status(f"Geladen: {os.path.basename(path)}")
             except Exception as e:
@@ -302,6 +326,8 @@ class StoryEditor(tk.Toplevel):
         """Storyboard speichern"""
         if self._current_file_path:
             try:
+                # Boss-Daten synchronisieren
+                self.storyboard.boss_data = self.boss_panel.to_dict()
                 self.storyboard.save(self._current_file_path)
                 self.has_unsaved_changes = False
                 self._update_title()
@@ -322,6 +348,8 @@ class StoryEditor(tk.Toplevel):
         
         if path:
             try:
+                # Boss-Daten synchronisieren
+                self.storyboard.boss_data = self.boss_panel.to_dict()
                 self.storyboard.save(path)
                 self._current_file_path = path
                 self.has_unsaved_changes = False

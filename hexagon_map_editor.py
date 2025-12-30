@@ -294,6 +294,131 @@ class EventEditDialog(tk.Toplevel):
         self.destroy()
 
 
+class TextInputDialog(tk.Toplevel):
+    """Dialog zur Eingabe von Text-Annotationen"""
+    
+    def __init__(self, parent, font_family: str, font_size: int, color: str, bold: bool, italic: bool):
+        super().__init__(parent)
+        self.result = None
+        
+        self.title("🏷️ Text hinzufügen")
+        self.configure(bg="#1a1a2e")
+        self.geometry("400x350")
+        self.resizable(False, False)
+        
+        self._center_on_parent(parent)
+        
+        main = tk.Frame(self, bg="#1a1a2e", padx=15, pady=15)
+        main.pack(fill=tk.BOTH, expand=True)
+        
+        # Text-Eingabe
+        tk.Label(main, text="Text:", font=("Arial", 11, "bold"),
+                bg="#1a1a2e", fg="#e94560").pack(anchor=tk.W)
+        self.text_entry = tk.Entry(main, font=("Arial", 14), width=35,
+                                   bg="#0f3460", fg="white", insertbackground="white")
+        self.text_entry.pack(fill=tk.X, pady=(5, 10))
+        self.text_entry.focus()
+        
+        # Schriftart
+        font_frame = tk.Frame(main, bg="#1a1a2e")
+        font_frame.pack(fill=tk.X, pady=5)
+        tk.Label(font_frame, text="Schrift:", bg="#1a1a2e", fg="white").pack(side=tk.LEFT)
+        self.font_var = tk.StringVar(value=font_family)
+        font_combo = ttk.Combobox(font_frame, textvariable=self.font_var,
+                                  values=["Arial", "Times New Roman", "Courier New", "Georgia",
+                                         "Verdana", "Comic Sans MS", "Impact", "Trebuchet MS"],
+                                  state="readonly", width=18)
+        font_combo.pack(side=tk.LEFT, padx=10)
+        
+        # Größe
+        self.size_var = tk.IntVar(value=font_size)
+        tk.Label(font_frame, text="Größe:", bg="#1a1a2e", fg="white").pack(side=tk.LEFT, padx=(10, 0))
+        size_spin = tk.Spinbox(font_frame, from_=8, to=72, textvariable=self.size_var,
+                               width=4, bg="#0f3460", fg="white")
+        size_spin.pack(side=tk.LEFT, padx=5)
+        
+        # Farbe
+        color_frame = tk.Frame(main, bg="#1a1a2e")
+        color_frame.pack(fill=tk.X, pady=5)
+        tk.Label(color_frame, text="Farbe:", bg="#1a1a2e", fg="white").pack(side=tk.LEFT)
+        self.color_var = color
+        self.color_btn = tk.Button(color_frame, text="  ", width=4, bg=color,
+                                   command=self._choose_color)
+        self.color_btn.pack(side=tk.LEFT, padx=10)
+        for c in ["#000000", "#ffffff", "#8B0000", "#006400", "#00008B", "#8B4513", "#FFD700"]:
+            btn = tk.Button(color_frame, text="", width=1, bg=c,
+                           command=lambda col=c: self._set_color(col))
+            btn.pack(side=tk.LEFT, padx=1)
+        
+        # Stil
+        style_frame = tk.Frame(main, bg="#1a1a2e")
+        style_frame.pack(fill=tk.X, pady=5)
+        self.bold_var = tk.BooleanVar(value=bold)
+        tk.Checkbutton(style_frame, text="Fett", variable=self.bold_var,
+                      bg="#1a1a2e", fg="white", selectcolor="#0f3460").pack(side=tk.LEFT)
+        self.italic_var = tk.BooleanVar(value=italic)
+        tk.Checkbutton(style_frame, text="Kursiv", variable=self.italic_var,
+                      bg="#1a1a2e", fg="white", selectcolor="#0f3460").pack(side=tk.LEFT, padx=10)
+        
+        # Rotation
+        rot_frame = tk.Frame(main, bg="#1a1a2e")
+        rot_frame.pack(fill=tk.X, pady=5)
+        tk.Label(rot_frame, text="Rotation:", bg="#1a1a2e", fg="white").pack(side=tk.LEFT)
+        self.rotation_var = tk.IntVar(value=0)
+        tk.Scale(rot_frame, variable=self.rotation_var, from_=-180, to=180,
+                orient=tk.HORIZONTAL, length=150, bg="#1a1a2e", fg="white",
+                highlightthickness=0, troughcolor="#0f3460").pack(side=tk.LEFT, padx=10)
+        tk.Label(rot_frame, text="°", bg="#1a1a2e", fg="white").pack(side=tk.LEFT)
+        
+        # Buttons
+        btn_frame = tk.Frame(main, bg="#1a1a2e")
+        btn_frame.pack(fill=tk.X, pady=(15, 0))
+        tk.Button(btn_frame, text="✓ Hinzufügen", command=self._ok,
+                 bg="#28a745", fg="white", font=("Arial", 11),
+                 relief=tk.FLAT, padx=20).pack(side=tk.LEFT, expand=True)
+        tk.Button(btn_frame, text="✗ Abbrechen", command=self.destroy,
+                 bg="#dc3545", fg="white", font=("Arial", 11),
+                 relief=tk.FLAT, padx=20).pack(side=tk.LEFT, expand=True)
+        
+        # Enter-Taste zum Bestätigen
+        self.text_entry.bind("<Return>", lambda e: self._ok())
+        
+        self.transient(parent)
+        self.grab_set()
+    
+    def _center_on_parent(self, parent):
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - 400) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - 350) // 2
+        self.geometry(f"+{x}+{y}")
+    
+    def _choose_color(self):
+        color = colorchooser.askcolor(initialcolor=self.color_var, title="Textfarbe wählen")
+        if color[1]:
+            self._set_color(color[1])
+    
+    def _set_color(self, color: str):
+        self.color_var = color
+        self.color_btn.configure(bg=color)
+    
+    def _ok(self):
+        text = self.text_entry.get().strip()
+        if not text:
+            messagebox.showwarning("Kein Text", "Bitte gib einen Text ein.")
+            return
+        
+        self.result = {
+            'text': text,
+            'font': self.font_var.get(),
+            'size': self.size_var.get(),
+            'color': self.color_var,
+            'bold': self.bold_var.get(),
+            'italic': self.italic_var.get(),
+            'rotation': self.rotation_var.get()
+        }
+        self.destroy()
+
+
 class HexagonMapEditor(tk.Toplevel):
     """Hauptfenster des Hexagon-Map-Editors"""
     
@@ -339,6 +464,29 @@ class HexagonMapEditor(tk.Toplevel):
         self.bg_visible: bool = True  # Hintergrund sichtbar?
         self.bg_opacity: float = 1.0  # Hintergrund-Transparenz (0-1)
         self.bg_on_top: bool = False  # Hintergrund über Tiles?
+        self.hex_outline_only: bool = False  # Hexagone nur als Umriss (ohne Füllung)?
+        self.hex_edge_blur: int = 0  # Blur-Stärke entlang der Hexagon-Kanten (0 = kein Blur)
+        self.hex_outline_opacity: float = 1.0  # Opacity der Outlines (0-1)
+        self.hex_outline_color: str = "#000000"  # Farbe der Hex-Outlines
+        self.hex_outline_width: int = 2  # Breite der Hex-Outlines
+        self.bg_with_hex_edges: Optional[Image.Image] = None  # Gecachtes Bild mit verschwommenen Kanten
+        
+        # === EINZELNES HEXAGON VERSCHIEBEN/SKALIEREN ===
+        self.moving_tile: Optional[Tuple[int, int]] = None  # Tile das gerade verschoben wird
+        self.scaling_tile: Optional[Tuple[int, int]] = None  # Tile das gerade skaliert wird
+        self.tile_original_center: Optional[Tuple[float, float]] = None  # Original-Position beim Verschieben
+        self.tile_scale_start_dist: float = 0.0  # Startdistanz beim Skalieren
+        self.individual_tile_sizes: Dict[Tuple[int, int], float] = {}  # Individuelle Größen pro Tile
+        
+        # === TEXT ANNOTATIONS ===
+        self.text_annotations: List[Dict] = []  # Liste von Text-Annotations
+        self.current_text_color: str = "#000000"  # Aktuelle Textfarbe
+        self.current_text_size: int = 16  # Aktuelle Schriftgröße
+        self.current_font_family: str = "Arial"  # Aktuelle Schriftart
+        self.current_text_bold: bool = False  # Fett?
+        self.current_text_italic: bool = False  # Kursiv?
+        self.selected_annotation: Optional[int] = None  # Index der ausgewählten Annotation
+        self.dragging_annotation: Optional[int] = None  # Annotation die gerade verschoben wird
         
         self.title(f"🔷 Hexagon-Editor: {self.hex_map.name}")
         self.configure(bg="#1a1a2e")
@@ -361,20 +509,46 @@ class HexagonMapEditor(tk.Toplevel):
         self.geometry(f"+{x}+{y}")
     
     def _create_ui(self):
-        # === TOOLBAR ===
-        toolbar = tk.Frame(self, bg="#0f3460", height=50)
-        toolbar.pack(fill=tk.X, side=tk.TOP)
-        toolbar.pack_propagate(False)
+        # === TOOLBAR mit horizontalem Scrolling ===
+        toolbar_container = tk.Frame(self, bg="#0f3460", height=60)
+        toolbar_container.pack(fill=tk.X, side=tk.TOP)
+        toolbar_container.pack_propagate(False)
+        
+        # Scroll-Buttons links
+        scroll_left_btn = tk.Button(toolbar_container, text="◀", 
+                                    command=lambda: self._scroll_toolbar(-200),
+                                    bg="#e94560", fg="white", font=("Arial", 12, "bold"),
+                                    relief=tk.FLAT, width=2)
+        scroll_left_btn.pack(side=tk.LEFT, fill=tk.Y, padx=2)
+        
+        # Canvas für horizontales Scrolling
+        self.toolbar_canvas = tk.Canvas(toolbar_container, bg="#0f3460", 
+                                        height=50, highlightthickness=0)
+        self.toolbar_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Scroll-Buttons rechts
+        scroll_right_btn = tk.Button(toolbar_container, text="▶", 
+                                     command=lambda: self._scroll_toolbar(200),
+                                     bg="#e94560", fg="white", font=("Arial", 12, "bold"),
+                                     relief=tk.FLAT, width=2)
+        scroll_right_btn.pack(side=tk.RIGHT, fill=tk.Y, padx=2)
+        
+        # Innerer Frame für Toolbar-Inhalt
+        toolbar = tk.Frame(self.toolbar_canvas, bg="#0f3460")
+        self.toolbar_window = self.toolbar_canvas.create_window((0, 0), window=toolbar, anchor=tk.NW)
         
         # Tool Buttons
         tools = [
             ("🖱️ Auswahl", "select"),
+            ("✋ Move/Scale", "move_scale"),
+            ("🏷️ Text", "text"),
             ("✏️ Norm-Hex", "draw_hex"),
             ("📍 Extents", "place_extent"),
             ("🔲 Interpolieren", "interpolate"),
             ("🗑️ Löschen", "delete"),
             ("🗺️ Terrain", "terrain"),
             ("⚔️ Events", "event"),
+            ("🐉 Boss", "boss"),
         ]
         
         self.tool_buttons = {}
@@ -404,6 +578,9 @@ class HexagonMapEditor(tk.Toplevel):
                  bg="#16213e", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
         
+        # Separator
+        tk.Frame(toolbar, bg="#e94560", width=2).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=5)
+        
         # Grid Button
         tk.Button(toolbar, text="🔲 Grid erstellen", command=self._create_grid_dialog,
                  bg="#16213e", fg="white", font=("Arial", 10),
@@ -423,6 +600,14 @@ class HexagonMapEditor(tk.Toplevel):
         tk.Button(toolbar, text="🎲 Zufalls-Events", command=self._random_events_dialog,
                  bg="#16213e", fg="white", font=("Arial", 10),
                  relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=2, pady=8)
+        
+        # Toolbar Scrollregion nach Aufbau aktualisieren
+        toolbar.update_idletasks()
+        self.toolbar_canvas.configure(scrollregion=self.toolbar_canvas.bbox("all"))
+        
+        # Mausrad-Scrolling für Toolbar
+        self.toolbar_canvas.bind("<MouseWheel>", self._on_toolbar_mousewheel)
+        toolbar.bind("<MouseWheel>", self._on_toolbar_mousewheel)
         
         # === MAIN AREA ===
         main_paned = tk.PanedWindow(self, orient=tk.HORIZONTAL, bg="#1a1a2e",
@@ -494,6 +679,139 @@ class HexagonMapEditor(tk.Toplevel):
         # Entfernen Button
         tk.Button(bg_frame, text="🗑️ Hintergrund entfernen", 
                  command=self._remove_background,
+                 bg="#dc3545", fg="white", font=("Arial", 9),
+                 relief=tk.FLAT).pack(fill=tk.X, pady=(5, 0))
+        
+        # === HEXAGON DARSTELLUNG ===
+        tk.Label(parent, text="🔷 HEXAGON-ANZEIGE", font=("Arial", 12, "bold"),
+                bg="#16213e", fg="#e94560").pack(anchor=tk.W, padx=10, pady=(10, 5))
+        
+        hex_display_frame = tk.Frame(parent, bg="#16213e")
+        hex_display_frame.pack(fill=tk.X, padx=10)
+        
+        # Nur Umriss Toggle
+        self.hex_outline_only_var = tk.BooleanVar(value=self.hex_outline_only)
+        tk.Checkbutton(hex_display_frame, text="Nur Umriss (keine Füllung)", 
+                      variable=self.hex_outline_only_var,
+                      bg="#16213e", fg="white", selectcolor="#0f3460",
+                      activebackground="#16213e",
+                      command=self._toggle_hex_outline_only).pack(anchor=tk.W)
+        
+        # Edge-Blur Slider (Kanten verschwimmen im Hintergrund)
+        edge_blur_frame = tk.Frame(hex_display_frame, bg="#16213e")
+        edge_blur_frame.pack(fill=tk.X, pady=(5, 0))
+        tk.Label(edge_blur_frame, text="Kanten-Blur:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.edge_blur_var = tk.IntVar(value=self.hex_edge_blur)
+        tk.Scale(edge_blur_frame, variable=self.edge_blur_var, from_=0, to=20,
+                orient=tk.HORIZONTAL, length=100,
+                bg="#16213e", fg="white", highlightthickness=0,
+                troughcolor="#0f3460", activebackground="#e94560",
+                command=self._on_edge_blur_change).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Outline-Opacity Slider
+        opacity_frame = tk.Frame(hex_display_frame, bg="#16213e")
+        opacity_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(opacity_frame, text="Linien-Opacity:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.outline_opacity_var = tk.DoubleVar(value=self.hex_outline_opacity)
+        tk.Scale(opacity_frame, variable=self.outline_opacity_var, from_=0.0, to=1.0,
+                resolution=0.1, orient=tk.HORIZONTAL, length=100,
+                bg="#16213e", fg="white", highlightthickness=0,
+                troughcolor="#0f3460", activebackground="#e94560",
+                command=self._on_outline_opacity_change).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Outline-Breite Slider
+        outline_width_frame = tk.Frame(hex_display_frame, bg="#16213e")
+        outline_width_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(outline_width_frame, text="Linienstärke:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.outline_width_var = tk.IntVar(value=self.hex_outline_width)
+        tk.Scale(outline_width_frame, variable=self.outline_width_var, from_=1, to=5,
+                orient=tk.HORIZONTAL, length=80,
+                bg="#16213e", fg="white", highlightthickness=0,
+                troughcolor="#0f3460", activebackground="#e94560",
+                command=self._on_outline_width_change).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Outline-Farbe Button
+        outline_color_frame = tk.Frame(hex_display_frame, bg="#16213e")
+        outline_color_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(outline_color_frame, text="Linienfarbe:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.outline_color_btn = tk.Button(outline_color_frame, text="  ", width=3,
+                                           bg=self.hex_outline_color,
+                                           command=self._choose_outline_color)
+        self.outline_color_btn.pack(side=tk.LEFT, padx=5)
+        # Schnellauswahl-Farben
+        for color in ["#000000", "#ffffff", "#ff0000", "#00ff00", "#0000ff", "#ffff00"]:
+            btn = tk.Button(outline_color_frame, text="", width=1, bg=color,
+                           command=lambda c=color: self._set_outline_color(c))
+            btn.pack(side=tk.LEFT, padx=1)
+        
+        # === TEXT ANNOTATIONS ===
+        tk.Label(parent, text="🏷️ TEXT", font=("Arial", 12, "bold"),
+                bg="#16213e", fg="#e94560").pack(anchor=tk.W, padx=10, pady=(10, 5))
+        
+        text_frame = tk.Frame(parent, bg="#16213e")
+        text_frame.pack(fill=tk.X, padx=10)
+        
+        # Schriftgröße
+        size_frame = tk.Frame(text_frame, bg="#16213e")
+        size_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(size_frame, text="Größe:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.text_size_var = tk.IntVar(value=self.current_text_size)
+        tk.Scale(size_frame, variable=self.text_size_var, from_=8, to=72,
+                orient=tk.HORIZONTAL, length=100,
+                bg="#16213e", fg="white", highlightthickness=0,
+                troughcolor="#0f3460", activebackground="#e94560",
+                command=self._on_text_size_change).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Schriftart
+        font_frame = tk.Frame(text_frame, bg="#16213e")
+        font_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(font_frame, text="Schrift:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.font_var = tk.StringVar(value=self.current_font_family)
+        font_combo = ttk.Combobox(font_frame, textvariable=self.font_var, 
+                                  values=["Arial", "Times New Roman", "Courier New", "Georgia", 
+                                         "Verdana", "Comic Sans MS", "Impact", "Trebuchet MS"],
+                                  state="readonly", width=12)
+        font_combo.pack(side=tk.LEFT, padx=5)
+        font_combo.bind("<<ComboboxSelected>>", self._on_font_change)
+        
+        # Textfarbe
+        color_frame = tk.Frame(text_frame, bg="#16213e")
+        color_frame.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(color_frame, text="Farbe:", bg="#16213e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT)
+        self.text_color_btn = tk.Button(color_frame, text="  ", width=3,
+                                        bg=self.current_text_color,
+                                        command=self._choose_text_color)
+        self.text_color_btn.pack(side=tk.LEFT, padx=5)
+        # Schnellauswahl-Farben
+        for color in ["#000000", "#ffffff", "#8B0000", "#006400", "#00008B", "#8B4513"]:
+            btn = tk.Button(color_frame, text="", width=1, bg=color,
+                           command=lambda c=color: self._set_text_color(c))
+            btn.pack(side=tk.LEFT, padx=1)
+        
+        # Stil-Buttons (Fett, Kursiv)
+        style_frame = tk.Frame(text_frame, bg="#16213e")
+        style_frame.pack(fill=tk.X, pady=(2, 0))
+        self.bold_var = tk.BooleanVar(value=self.current_text_bold)
+        tk.Checkbutton(style_frame, text="Fett", variable=self.bold_var,
+                      bg="#16213e", fg="white", selectcolor="#0f3460",
+                      activebackground="#16213e",
+                      command=self._on_text_style_change).pack(side=tk.LEFT)
+        self.italic_var = tk.BooleanVar(value=self.current_text_italic)
+        tk.Checkbutton(style_frame, text="Kursiv", variable=self.italic_var,
+                      bg="#16213e", fg="white", selectcolor="#0f3460",
+                      activebackground="#16213e",
+                      command=self._on_text_style_change).pack(side=tk.LEFT)
+        
+        # Text löschen Button
+        tk.Button(text_frame, text="🗑️ Ausgewählten Text löschen",
+                 command=self._delete_selected_annotation,
                  bg="#dc3545", fg="white", font=("Arial", 9),
                  relief=tk.FLAT).pack(fill=tk.X, pady=(5, 0))
         
@@ -1143,6 +1461,11 @@ class HexagonMapEditor(tk.Toplevel):
                 self.hex_map.background_image_path = self.bg_image_path
             self.hex_map.background_visible = self.bg_visible
             self.hex_map.background_on_top = self.bg_on_top
+            self.hex_map.hex_outline_only = self.hex_outline_only
+            # Speichere individuelle Tile-Größen (als string-keys für JSON)
+            self.hex_map.individual_tile_sizes = {f"{k[0]},{k[1]}": v for k, v in self.individual_tile_sizes.items()}
+            # Speichere Text-Annotations
+            self.hex_map.text_annotations = self.text_annotations
             
             self.hex_map.save(filepath)
             self.current_file_path = filepath
@@ -1162,8 +1485,26 @@ class HexagonMapEditor(tk.Toplevel):
             # Lade Hintergrund-Einstellungen
             self.bg_visible = getattr(self.hex_map, 'background_visible', True)
             self.bg_on_top = getattr(self.hex_map, 'background_on_top', False)
+            self.hex_outline_only = getattr(self.hex_map, 'hex_outline_only', False)
             self.bg_visible_var.set(self.bg_visible)
             self.bg_on_top_var.set(self.bg_on_top)
+            self.hex_outline_only_var.set(self.hex_outline_only)
+            
+            # Lade individuelle Tile-Größen
+            saved_sizes = getattr(self.hex_map, 'individual_tile_sizes', {})
+            self.individual_tile_sizes = {}
+            for k, v in saved_sizes.items():
+                parts = k.split(',')
+                if len(parts) == 2:
+                    try:
+                        self.individual_tile_sizes[(int(parts[0]), int(parts[1]))] = v
+                    except ValueError:
+                        pass
+            
+            # Lade Text-Annotations
+            self.text_annotations = getattr(self.hex_map, 'text_annotations', [])
+            if not isinstance(self.text_annotations, list):
+                self.text_annotations = []
             
             # Lade Hintergrundbild wenn vorhanden
             bg_path = getattr(self.hex_map, 'background_image_path', None)
@@ -1199,6 +1540,31 @@ class HexagonMapEditor(tk.Toplevel):
     
     def _on_click(self, event):
         x, y = self._canvas_to_map(event.x, event.y)
+        
+        # === TEXT MODUS ===
+        if self.current_tool == "text":
+            # Prüfe ob Klick auf bestehende Annotation
+            ann_idx = self._find_annotation_at(x, y)
+            if ann_idx is not None:
+                # Bestehende Annotation ausgewählt
+                self.selected_annotation = ann_idx
+                self.dragging_annotation = ann_idx
+                self.drag_start = (event.x, event.y)
+                # Lade Einstellungen der Annotation in UI
+                ann = self.text_annotations[ann_idx]
+                self.text_size_var.set(ann.get('size', 16))
+                self.font_var.set(ann.get('font', 'Arial'))
+                self.bold_var.set(ann.get('bold', False))
+                self.italic_var.set(ann.get('italic', False))
+                self._set_text_color(ann.get('color', '#000000'))
+                print(f"🏷️ Text ausgewählt: '{ann['text']}'")
+                self._redraw()
+                return
+            else:
+                # Neue Annotation an dieser Stelle
+                self.selected_annotation = None
+                self._add_text_annotation(x, y)
+                return
         
         # === NORM-HEXAGON MODUS ===
         if self.current_tool == "draw_hex":
@@ -1256,6 +1622,38 @@ class HexagonMapEditor(tk.Toplevel):
                     "• Weitere Punkte für komplexere Formen\n"
                     "• Rechtsklick auf Punkt zum Löschen\n"
                     "• '🔲 Interpolieren' erstellt Grid im Polygon")
+            return
+        
+        # === MOVE/SCALE MODUS ===
+        if self.current_tool == "move_scale":
+            tile = self.hex_map.get_tile_at_pixel(x, y)
+            if tile:
+                coord = (tile.q, tile.r)
+                # Berechne Distanz zum Zentrum
+                dist = math.sqrt((x - tile.center_x)**2 + (y - tile.center_y)**2)
+                tile_size = self.individual_tile_sizes.get(coord, self.hex_map.hex_size)
+                
+                # Klick auf Rand (±25%) -> Skalieren
+                if abs(dist - tile_size) < tile_size * 0.3:
+                    self.scaling_tile = coord
+                    self.tile_scale_start_dist = dist
+                    self.drag_start = (event.x, event.y)
+                    print(f"📐 Skaliere Hexagon ({tile.q}, {tile.r}) - aktuelle Größe: {tile_size:.0f}px")
+                    return
+                
+                # Klick in Mitte -> Verschieben
+                if dist < tile_size * 0.7:
+                    self.moving_tile = coord
+                    self.tile_original_center = (tile.center_x, tile.center_y)
+                    self.drag_start = (event.x, event.y)
+                    # Wähle Tile auch aus
+                    self.selected_tile = coord
+                    self.selected_tiles.clear()
+                    print(f"✋ Verschiebe Hexagon ({tile.q}, {tile.r})")
+                    self._redraw()
+                    return
+            # Kein Tile getroffen - Pan starten
+            self.drag_start = (event.x, event.y)
             return
         
         # === INTERPOLIEREN ===
@@ -1328,12 +1726,34 @@ class HexagonMapEditor(tk.Toplevel):
                     else:
                         tile.events.append(dialog.result)
             
+            elif self.current_tool == "boss":
+                # Toggle Boss-Hexagon Markierung
+                if self.selected_tiles:
+                    for sel_coord in self.selected_tiles:
+                        if sel_coord in self.hex_map.tiles:
+                            current = getattr(self.hex_map.tiles[sel_coord], 'is_boss_hex', False)
+                            self.hex_map.tiles[sel_coord].is_boss_hex = not current
+                else:
+                    current = getattr(tile, 'is_boss_hex', False)
+                    tile.is_boss_hex = not current
+                print(f"🐉 Boss-Hexagon: {'Markiert' if not current else 'Entfernt'}")
+            
             self._redraw()
         else:
             # Pan starten
             self.drag_start = (event.x, event.y)
     
     def _on_drag(self, event):
+        # === TEXT ANNOTATION VERSCHIEBEN ===
+        if self.dragging_annotation is not None and self.dragging_annotation < len(self.text_annotations):
+            dx = (event.x - self.drag_start[0]) / self.zoom
+            dy = (event.y - self.drag_start[1]) / self.zoom
+            self.text_annotations[self.dragging_annotation]['x'] += dx
+            self.text_annotations[self.dragging_annotation]['y'] += dy
+            self.drag_start = (event.x, event.y)
+            self._redraw()
+            return
+        
         # === NORM-HEX GRÖßE ÄNDERN ===
         if self.resizing_norm_hex and self.norm_hex_center:
             x, y = self._canvas_to_map(event.x, event.y)
@@ -1359,6 +1779,28 @@ class HexagonMapEditor(tk.Toplevel):
         if self.dragging_extent is not None and self.dragging_extent < len(self.extent_hexagons):
             x, y = self._canvas_to_map(event.x, event.y)
             self.extent_hexagons[self.dragging_extent] = (x, y)
+            self._redraw()
+            return
+        
+        # === EINZELNES TILE VERSCHIEBEN ===
+        if self.moving_tile and self.moving_tile in self.hex_map.tiles:
+            dx = (event.x - self.drag_start[0]) / self.zoom
+            dy = (event.y - self.drag_start[1]) / self.zoom
+            tile = self.hex_map.tiles[self.moving_tile]
+            tile.center_x += dx
+            tile.center_y += dy
+            self.drag_start = (event.x, event.y)
+            self._redraw()
+            return
+        
+        # === EINZELNES TILE SKALIEREN ===
+        if self.scaling_tile and self.scaling_tile in self.hex_map.tiles:
+            x, y = self._canvas_to_map(event.x, event.y)
+            tile = self.hex_map.tiles[self.scaling_tile]
+            # Neue Größe = Abstand zum Tile-Zentrum
+            new_size = math.sqrt((x - tile.center_x)**2 + (y - tile.center_y)**2)
+            if new_size > 10:  # Mindestgröße
+                self.individual_tile_sizes[self.scaling_tile] = new_size
             self._redraw()
             return
         
@@ -1399,6 +1841,14 @@ class HexagonMapEditor(tk.Toplevel):
                     self._redraw()
     
     def _on_release(self, event):
+        # === TEXT ANNOTATION VERSCHIEBEN BEENDEN ===
+        if self.dragging_annotation is not None:
+            ann = self.text_annotations[self.dragging_annotation]
+            print(f"🏷️ Text verschoben: '{ann['text']}' zu ({ann['x']:.0f}, {ann['y']:.0f})")
+            self.dragging_annotation = None
+            self.drag_start = None
+            return
+        
         # === NORM-HEX GRÖßE ÄNDERN BEENDEN ===
         if self.resizing_norm_hex:
             self.resizing_norm_hex = False
@@ -1418,6 +1868,27 @@ class HexagonMapEditor(tk.Toplevel):
             print(f"📍 Extent E{self.dragging_extent+1} verschoben")
             self.dragging_extent = None
             self.drag_start = None
+            return
+        
+        # === EINZELNES TILE VERSCHIEBEN BEENDEN ===
+        if self.moving_tile:
+            tile = self.hex_map.tiles.get(self.moving_tile)
+            if tile:
+                print(f"✋ Hexagon ({tile.q}, {tile.r}) verschoben zu ({tile.center_x:.0f}, {tile.center_y:.0f})")
+            self.moving_tile = None
+            self.tile_original_center = None
+            self.drag_start = None
+            self._redraw()
+            return
+        
+        # === EINZELNES TILE SKALIEREN BEENDEN ===
+        if self.scaling_tile:
+            new_size = self.individual_tile_sizes.get(self.scaling_tile, self.hex_map.hex_size)
+            print(f"📐 Hexagon {self.scaling_tile} skaliert auf {new_size:.0f}px")
+            self.scaling_tile = None
+            self.tile_scale_start_dist = 0.0
+            self.drag_start = None
+            self._redraw()
             return
         
         # Hex-Zeichenmodus: Speichere als Norm-Hex
@@ -1441,6 +1912,16 @@ class HexagonMapEditor(tk.Toplevel):
         self.preview_hex = None
         self._redraw()
     
+    def _scroll_toolbar(self, delta: int):
+        """Scrollt die Toolbar horizontal"""
+        self.toolbar_canvas.xview_scroll(delta // 20, "units")
+    
+    def _on_toolbar_mousewheel(self, event):
+        """Mausrad-Scrolling für Toolbar"""
+        # Horizontal scrollen bei Shift+Mausrad oder normalem Mausrad
+        delta = -1 if event.delta > 0 else 1
+        self.toolbar_canvas.xview_scroll(delta * 3, "units")
+    
     def _set_tool(self, tool: str):
         self.current_tool = tool
         
@@ -1449,6 +1930,10 @@ class HexagonMapEditor(tk.Toplevel):
             self._interpolate_grid()
             self._set_tool("select")  # Zurück zu Auswahl
             return
+        
+        # Hinweis für Move/Scale Tool
+        if tool == "move_scale":
+            print("✋ Move/Scale-Modus: Klicke in die Mitte eines Hexagons zum Verschieben, am Rand zum Skalieren")
         
         for t, btn in self.tool_buttons.items():
             if t == tool:
@@ -1873,6 +2358,182 @@ class HexagonMapEditor(tk.Toplevel):
         print(f"🖼️ Hintergrund: {status}")
         self._redraw()
     
+    def _toggle_hex_outline_only(self):
+        """Toggle Hexagon-Darstellung: Nur Umriss oder gefüllt"""
+        self.hex_outline_only = self.hex_outline_only_var.get()
+        status = "nur Umriss" if self.hex_outline_only else "gefüllt"
+        print(f"🔷 Hexagone: {status}")
+        self._invalidate_edge_blur_cache()
+        self._redraw()
+    
+    def _on_edge_blur_change(self, value):
+        """Edge-Blur-Stärke geändert"""
+        self.hex_edge_blur = int(value)
+        self._invalidate_edge_blur_cache()
+        self._redraw()
+    
+    def _on_outline_opacity_change(self, value):
+        """Outline-Opacity geändert"""
+        self.hex_outline_opacity = float(value)
+        self._redraw()
+    
+    def _on_outline_width_change(self, value):
+        """Outline-Breite geändert"""
+        self.hex_outline_width = int(value)
+        self._invalidate_edge_blur_cache()
+        self._redraw()
+    
+    def _choose_outline_color(self):
+        """Farbauswahl-Dialog für Outline"""
+        color = colorchooser.askcolor(initialcolor=self.hex_outline_color, title="Linienfarbe wählen")
+        if color[1]:
+            self._set_outline_color(color[1])
+    
+    def _set_outline_color(self, color: str):
+        """Setze Outline-Farbe"""
+        self.hex_outline_color = color
+        self.outline_color_btn.configure(bg=color)
+        self._redraw()
+    
+    # === TEXT ANNOTATION FUNKTIONEN ===
+    
+    def _on_text_size_change(self, value):
+        """Textgröße geändert"""
+        self.current_text_size = int(value)
+        # Update ausgewählte Annotation wenn vorhanden
+        if self.selected_annotation is not None and self.selected_annotation < len(self.text_annotations):
+            self.text_annotations[self.selected_annotation]['size'] = self.current_text_size
+            self._redraw()
+    
+    def _on_font_change(self, event=None):
+        """Schriftart geändert"""
+        self.current_font_family = self.font_var.get()
+        if self.selected_annotation is not None and self.selected_annotation < len(self.text_annotations):
+            self.text_annotations[self.selected_annotation]['font'] = self.current_font_family
+            self._redraw()
+    
+    def _on_text_style_change(self):
+        """Text-Stil geändert (Fett/Kursiv)"""
+        self.current_text_bold = self.bold_var.get()
+        self.current_text_italic = self.italic_var.get()
+        if self.selected_annotation is not None and self.selected_annotation < len(self.text_annotations):
+            self.text_annotations[self.selected_annotation]['bold'] = self.current_text_bold
+            self.text_annotations[self.selected_annotation]['italic'] = self.current_text_italic
+            self._redraw()
+    
+    def _choose_text_color(self):
+        """Farbauswahl-Dialog für Text"""
+        color = colorchooser.askcolor(initialcolor=self.current_text_color, title="Textfarbe wählen")
+        if color[1]:
+            self._set_text_color(color[1])
+    
+    def _set_text_color(self, color: str):
+        """Setze Text-Farbe"""
+        self.current_text_color = color
+        self.text_color_btn.configure(bg=color)
+        if self.selected_annotation is not None and self.selected_annotation < len(self.text_annotations):
+            self.text_annotations[self.selected_annotation]['color'] = self.current_text_color
+            self._redraw()
+    
+    def _add_text_annotation(self, x: float, y: float):
+        """Füge neue Text-Annotation an Position hinzu"""
+        # Dialog für Text-Eingabe
+        dialog = TextInputDialog(self, self.current_font_family, self.current_text_size, 
+                                 self.current_text_color, self.current_text_bold, self.current_text_italic)
+        self.wait_window(dialog)
+        
+        if dialog.result:
+            annotation = {
+                'text': dialog.result['text'],
+                'x': x,
+                'y': y,
+                'color': dialog.result.get('color', self.current_text_color),
+                'size': dialog.result.get('size', self.current_text_size),
+                'font': dialog.result.get('font', self.current_font_family),
+                'bold': dialog.result.get('bold', self.current_text_bold),
+                'italic': dialog.result.get('italic', self.current_text_italic),
+                'rotation': dialog.result.get('rotation', 0)
+            }
+            self.text_annotations.append(annotation)
+            self.selected_annotation = len(self.text_annotations) - 1
+            print(f"🏷️ Text hinzugefügt: '{annotation['text']}' bei ({x:.0f}, {y:.0f})")
+            self._redraw()
+    
+    def _delete_selected_annotation(self):
+        """Lösche ausgewählte Text-Annotation"""
+        if self.selected_annotation is not None and self.selected_annotation < len(self.text_annotations):
+            deleted = self.text_annotations.pop(self.selected_annotation)
+            print(f"🗑️ Text gelöscht: '{deleted['text']}'")
+            self.selected_annotation = None
+            self._redraw()
+        else:
+            messagebox.showinfo("Kein Text ausgewählt", "Bitte zuerst einen Text auf der Karte auswählen.")
+    
+    def _find_annotation_at(self, x: float, y: float) -> Optional[int]:
+        """Finde Annotation an Position"""
+        for i, ann in enumerate(self.text_annotations):
+            # Ungefähre Hitbox basierend auf Textgröße
+            size = ann.get('size', 16)
+            text_len = len(ann.get('text', '')) * size * 0.6  # Geschätzte Breite
+            ax, ay = ann['x'], ann['y']
+            if ax - 10 <= x <= ax + text_len and ay - size <= y <= ay + size // 2:
+                return i
+        return None
+    
+    def _invalidate_edge_blur_cache(self):
+        """Cache für Edge-Blur invalidieren"""
+        self.bg_with_hex_edges = None
+    
+    def _create_edge_blurred_background(self):
+        """Erstelle Hintergrundbild mit verschwommenen Hexagon-Kanten"""
+        if not self.bg_image or self.hex_edge_blur <= 0:
+            return None
+        
+        from PIL import ImageFilter, ImageDraw as PILImageDraw
+        
+        # Erstelle Maske für die Hexagon-Kanten
+        mask = Image.new('L', (self.bg_image.width, self.bg_image.height), 0)
+        mask_draw = PILImageDraw.Draw(mask)
+        
+        # Zeichne alle Hexagon-Kanten in die Maske
+        edge_width = max(self.hex_edge_blur * 2, self.hex_outline_width * 3)
+        for (q, r), tile in self.hex_map.tiles.items():
+            vertices = self._get_tile_vertices_for_image(tile)
+            # Zeichne Umriss in die Maske
+            if len(vertices) >= 6:
+                points = [(int(v[0]), int(v[1])) for v in vertices]
+                mask_draw.polygon(points, outline=255, width=edge_width)
+        
+        # Verschwimme das gesamte Originalbild
+        blurred = self.bg_image.filter(ImageFilter.GaussianBlur(radius=self.hex_edge_blur))
+        
+        # Verschwimme auch die Maske für weichere Übergänge
+        mask = mask.filter(ImageFilter.GaussianBlur(radius=self.hex_edge_blur // 2 + 1))
+        
+        # Kombiniere: Original wo keine Kanten, Verschwommen wo Kanten
+        result = Image.composite(blurred, self.bg_image, mask)
+        
+        return result
+    
+    def _get_tile_vertices_for_image(self, tile) -> list:
+        """Berechne Tile-Vertices in Bild-Koordinaten (ohne Zoom/Offset)"""
+        coord = (tile.q, tile.r)
+        tile_size = self.individual_tile_sizes.get(coord, self.hex_map.hex_size)
+        
+        vertices = []
+        for i in range(6):
+            if self.hex_map.orientation == "pointy-top":
+                angle_deg = 60 * i - 30
+            else:
+                angle_deg = 60 * i
+            
+            angle_rad = math.radians(angle_deg)
+            x = tile.center_x + tile_size * math.cos(angle_rad)
+            y = tile.center_y + tile_size * math.sin(angle_rad)
+            vertices.append((x, y))
+        
+        return vertices
+    
     def _toggle_background(self):
         """Schalte Hintergrund-Sichtbarkeit um"""
         self.bg_visible = not self.bg_visible
@@ -2090,11 +2751,16 @@ class HexagonMapEditor(tk.Toplevel):
     def _update_info(self, tile: HexTile):
         """Update Info-Panel"""
         terrain = tile.terrain_type
+        coord = (tile.q, tile.r)
         info = f"Position: ({tile.q}, {tile.r})\n"
         info += f"Terrain: {terrain.display_name}\n"
         if tile.terrain_name:
             info += f"Name: {tile.terrain_name}\n"
         info += f"Schwierigkeit: {tile.total_difficulty}\n"
+        
+        # Zeige individuelle Größe falls vorhanden
+        if coord in self.individual_tile_sizes:
+            info += f"Größe: {self.individual_tile_sizes[coord]:.0f}px (individuell)\n"
         
         if tile.local_weather:
             weather = WeatherType[tile.local_weather]
@@ -2114,10 +2780,21 @@ class HexagonMapEditor(tk.Toplevel):
         """Zeichne Hintergrundbild"""
         if not self.bg_image:
             return
+        
+        # Wähle Bild: Mit Edge-Blur oder Original
+        if self.hex_edge_blur > 0 and self.hex_map.tiles:
+            # Erstelle Edge-Blur-Bild falls nötig (gecacht)
+            if self.bg_with_hex_edges is None:
+                print(f"🔄 Erstelle Edge-Blur-Bild (Stärke: {self.hex_edge_blur})...")
+                self.bg_with_hex_edges = self._create_edge_blurred_background()
+            source_image = self.bg_with_hex_edges if self.bg_with_hex_edges else self.bg_image
+        else:
+            source_image = self.bg_image
+        
         # Skaliere und positioniere Bild
-        w = int(self.bg_image.width * self.zoom)
-        h = int(self.bg_image.height * self.zoom)
-        scaled = self.bg_image.resize((w, h), Image.LANCZOS)
+        w = int(source_image.width * self.zoom)
+        h = int(source_image.height * self.zoom)
+        scaled = source_image.resize((w, h), Image.LANCZOS)
         self.bg_photo = ImageTk.PhotoImage(scaled)
         self.canvas.create_image(self.offset_x, self.offset_y, 
                                 image=self.bg_photo, anchor=tk.NW, tags="background")
@@ -2148,6 +2825,9 @@ class HexagonMapEditor(tk.Toplevel):
             if coord in self.hex_map.tiles:
                 tile = self.hex_map.tiles[coord]
                 self._draw_hexagon_outline(tile, "#00ffff", 2)
+        
+        # === TEXT ANNOTATIONS ZEICHNEN ===
+        self._draw_text_annotations()
         
         # === TAG/NACHT OVERLAY ===
         darkness = self.darkness_var.get()
@@ -2259,16 +2939,80 @@ class HexagonMapEditor(tk.Toplevel):
                                    font=("Arial", 10, "bold"), fill="#ffffff",
                                    tags="extent_point")
     
+    def _get_tile_vertices(self, tile: HexTile) -> List[Tuple[float, float]]:
+        """Berechne die Vertices eines Tiles mit individueller Größe"""
+        coord = (tile.q, tile.r)
+        tile_size = self.individual_tile_sizes.get(coord, self.hex_map.hex_size)
+        
+        vertices = []
+        for i in range(6):
+            if self.hex_map.orientation == "pointy-top":
+                angle_deg = 60 * i - 30
+            else:
+                angle_deg = 60 * i
+            
+            angle_rad = math.radians(angle_deg)
+            x = tile.center_x + tile_size * math.cos(angle_rad)
+            y = tile.center_y + tile_size * math.sin(angle_rad)
+            vertices.append((x, y))
+        
+        return vertices
+    
     def _draw_hexagon(self, tile: HexTile):
         """Zeichne ein einzelnes Hexagon"""
-        vertices = self.hex_map._get_hex_vertices(tile.center_x, tile.center_y)
+        coord = (tile.q, tile.r)
+        # Verwende individuelle Größe falls vorhanden
+        vertices = self._get_tile_vertices(tile)
         canvas_vertices = [self._map_to_canvas(x, y) for x, y in vertices]
         
         # Farbe
         color = tile.display_color
         
+        # Highlight wenn dieses Tile gerade verschoben/skaliert wird
+        is_moving = self.moving_tile == coord
+        is_scaling = self.scaling_tile == coord
+        
+        # Berechne Outline-Farbe mit simulierter Opacity (Mischung mit Weiß)
+        def blend_color_with_alpha(hex_color: str, alpha: float) -> str:
+            """Simuliere Alpha durch Mischung mit Weiß (für helle Hintergründe)"""
+            if alpha >= 1.0:
+                return hex_color
+            if alpha <= 0.0:
+                return ""  # Keine Outline
+            # Parse hex color
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            # Blend mit Weiß (255, 255, 255) basierend auf Alpha
+            # Für dunklere Hintergründe wäre Schwarz besser
+            bg = 200  # Mittlerer Grauton als Misch-Basis
+            r = int(r * alpha + bg * (1 - alpha))
+            g = int(g * alpha + bg * (1 - alpha))
+            b = int(b * alpha + bg * (1 - alpha))
+            return f"#{r:02x}{g:02x}{b:02x}"
+        
+        # Nur Umriss-Modus
+        if self.hex_outline_only:
+            if is_moving or is_scaling:
+                outline_color = "#ff00ff"
+                outline_width = self.hex_outline_width + 1
+            else:
+                # Wende Opacity an wenn < 1.0
+                if self.hex_outline_opacity <= 0:
+                    return  # Keine Outline, nichts zeichnen
+                outline_color = blend_color_with_alpha(self.hex_outline_color, self.hex_outline_opacity)
+                outline_width = self.hex_outline_width
+            
+            # Zeichne Outline (oder verwende stipple für transparenten Effekt)
+            if self.hex_outline_opacity < 0.5 and self.hex_outline_opacity > 0:
+                # Sehr transparent: nutze stipple für gepunkteten Look
+                self.canvas.create_polygon(canvas_vertices, outline=self.hex_outline_color, 
+                                          width=outline_width, fill="", dash=(2, 2))
+            else:
+                self.canvas.create_polygon(canvas_vertices, outline=outline_color, 
+                                          width=outline_width, fill="")
         # Zeichne gefülltes Hexagon (halbtransparent wenn Hintergrundbild)
-        if self.bg_image:
+        elif self.bg_image:
             # Mit Hintergrundbild: Zeige fill_color als halbtransparenten Fill
             if tile.fill_color:
                 # Zeichne gefülltes Hex mit extrahierter Farbe (leicht transparent wirkt durch stipple)
@@ -2279,6 +3023,14 @@ class HexagonMapEditor(tk.Toplevel):
                 self.canvas.create_polygon(canvas_vertices, outline=color, width=2, fill="")
         else:
             self.canvas.create_polygon(canvas_vertices, fill=color, outline="#333333", width=1)
+        
+        # Move/Scale Indikator
+        if self.current_tool == "move_scale" and (is_moving or is_scaling):
+            cx, cy = self._map_to_canvas(tile.center_x, tile.center_y)
+            tile_size = self.individual_tile_sizes.get(coord, self.hex_map.hex_size)
+            r = int(tile_size * self.zoom * 0.3)
+            # Zentrum-Indikator
+            self.canvas.create_oval(cx-r, cy-r, cx+r, cy+r, outline="#ff00ff", width=2, fill="", dash=(5, 3))
         
         # Event-Marker
         if tile.events:
@@ -2292,12 +3044,59 @@ class HexagonMapEditor(tk.Toplevel):
             cx, cy = self._map_to_canvas(tile.center_x, tile.center_y - self.hex_map.hex_size * 0.4)
             weather = WeatherType[tile.local_weather]
             self.canvas.create_text(cx, cy, text=weather.icon, font=("Arial", 12))
+        
+        # Boss-Hexagon-Marker (halbtransparentes oranges Overlay)
+        if getattr(tile, 'is_boss_hex', False):
+            # Zeichne halbtransparentes oranges Overlay
+            self.canvas.create_polygon(canvas_vertices, fill="#ff8c00", 
+                                       outline="#ff4500", width=3, stipple="gray50")
+            # Boss-Icon im Zentrum
+            cx, cy = self._map_to_canvas(tile.center_x, tile.center_y)
+            self.canvas.create_text(cx, cy, text="🐉", font=("Arial", int(14 * self.zoom)))
     
     def _draw_hexagon_outline(self, tile: HexTile, color: str, width: int):
         """Zeichne Hexagon-Umriss (für Auswahl)"""
-        vertices = self.hex_map._get_hex_vertices(tile.center_x, tile.center_y)
+        vertices = self._get_tile_vertices(tile)
         canvas_vertices = [self._map_to_canvas(x, y) for x, y in vertices]
         self.canvas.create_polygon(canvas_vertices, outline=color, width=width, fill="")
+    
+    def _draw_text_annotations(self):
+        """Zeichne alle Text-Annotations"""
+        for i, ann in enumerate(self.text_annotations):
+            x, y = ann['x'], ann['y']
+            cx, cy = self._map_to_canvas(x, y)
+            
+            text = ann.get('text', '')
+            color = ann.get('color', '#000000')
+            size = int(ann.get('size', 16) * self.zoom)
+            font_family = ann.get('font', 'Arial')
+            bold = ann.get('bold', False)
+            italic = ann.get('italic', False)
+            rotation = ann.get('rotation', 0)
+            
+            # Erstelle Font-String
+            style = ""
+            if bold:
+                style += "bold "
+            if italic:
+                style += "italic"
+            style = style.strip() if style else "normal"
+            
+            font = (font_family, max(8, size), style)
+            
+            # Zeichne Text (tkinter unterstützt keine Rotation direkt)
+            # Für Rotation müssten wir PIL nutzen, aber einfacher Text geht so:
+            text_id = self.canvas.create_text(cx, cy, text=text, font=font, fill=color,
+                                              anchor=tk.W, tags=f"annotation_{i}")
+            
+            # Highlight wenn ausgewählt
+            if i == self.selected_annotation:
+                # Zeichne Rahmen um den Text
+                bbox = self.canvas.bbox(text_id)
+                if bbox:
+                    self.canvas.create_rectangle(bbox[0]-3, bbox[1]-3, bbox[2]+3, bbox[3]+3,
+                                                outline="#e94560", width=2, dash=(3, 3),
+                                                tags=f"annotation_select_{i}")
 
 
 def open_hexagon_editor(parent=None, hex_map: Optional[HexagonMap] = None):

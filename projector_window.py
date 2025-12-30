@@ -5,7 +5,7 @@ Unterstützt JSON-Maps (Tile-basiert) und SVG-Maps (Vektor-basiert)
 """
 import tkinter as tk
 from tkinter import Canvas
-from PIL import Image, ImageTk, ImageDraw, ImageFilter
+from PIL import Image, ImageTk, ImageDraw, ImageFilter, ImageFont
 import json
 import random
 import os
@@ -16,6 +16,7 @@ from lighting_system import LightingEngine
 from PIL import Image
 import numpy as np
 from lighting_system import GPUAcceleratedLightingEngine, GPU_AVAILABLE
+from boss_system import BossManager, BossDefinition
 
 # Mapping von Hexagon-Terrain-Typen zu Material-Namen des Texture-Managers
 HEXAGON_TERRAIN_TO_MATERIAL = {
@@ -144,6 +145,22 @@ class ProjectorWindow(tk.Toplevel):
         # Kamera-Controller für Auto-Zoom
         from camera_controller import CameraController
         self.camera = CameraController(map_width, map_height)
+        
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-SYSTEM: Boss-Manager initialisieren und Bosse verteilen
+        # ═══════════════════════════════════════════════════════════
+        self.boss_manager = BossManager()
+        self.boss_overlays = {}  # (q, r) -> PhotoImage für Boss-Overlays
+        self.revealed_bosses = {}  # (q, r) -> BossDefinition für enthüllte Bosse
+        self.revealed_boss_hexes = {}  # (q, r) -> has_boss (bool) für GM-Panel
+        
+        # Lade Boss-Daten aus map_data falls vorhanden
+        if map_data and "boss_data" in self.map_data:
+            self.boss_manager = BossManager.from_dict(self.map_data["boss_data"])
+            print(f"🐉 Boss-Daten geladen: {len(self.boss_manager.boss_definitions)} Bosse")
+        
+        # Sammle Boss-Hexagone aus der Map und verteile Bosse zufällig
+        self._distribute_bosses_on_hexagons()
         
         # GPU-basierte Rendering-Engine (wird an lighting_engine gebunden, siehe weiter unten)
         # Set to None for now — we'll reuse lighting_engine.gpu_renderer after lighting_engine is created
@@ -352,6 +369,385 @@ class ProjectorWindow(tk.Toplevel):
             self.start_animation()  # Nur starten wenn nötig
         else:
             pass
+    
+    def _distribute_bosses_on_hexagons(self):
+        """
+        Sammelt alle Boss-Hexagone aus der Map und verteilt Bosse zufällig.
+        Wird bei jedem Neustart des Projektors aufgerufen = neue Runde.
+        """
+        tiles = self.map_data.get("tiles", {})
+        
+        print(f"   Tiles vorhanden: {type(tiles).__name__}")
+        
+        if not isinstance(tiles, dict):
+            print(f"   ⚠️ Tiles ist kein Dict, sondern {type(tiles)}")
+            return
+        
+        # DEBUG: Zeige ein paar Tile-Beispiele
+        if tiles:
+            sample_keys = list(tiles.keys())[:3]
+            for key in sample_keys:
+                tile = tiles[key]
+                if isinstance(tile, dict):
+                    is_boss = tile.get('is_boss_hex', 'NOT_FOUND')
+                    print(f"   Tile '{key}': is_boss_hex={is_boss}")
+                else:
+                    print(f"   Tile '{key}': type={type(tile).__name__}")
+        
+        # Sammle alle Boss-Hexagone
+        boss_hexagons = []
+        for coord_key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                if tile_data.get('is_boss_hex', False):
+                    try:
+                        parts = coord_key.split(',')
+                        q, r = int(parts[0]), int(parts[1])
+                        boss_hexagons.append((q, r))
+                    except:
+                        pass
+        
+        if boss_hexagons:
+            print(f"🐉 {len(boss_hexagons)} Boss-Hexagone gefunden")
+            
+            # Verteile Bosse zufällig (neue Runde!)
+            self.boss_manager.distribute_bosses_randomly(boss_hexagons)
+        else:
+            print("ℹ️ Keine Boss-Hexagone in der Map markiert")
+    
+    def reveal_boss_at_position(self, x: int, y: int) -> bool:
+        """
+        Prüft ob an der Tile-Position ein Boss ist und enthüllt ihn.
+        Gibt True zurück wenn ein Boss enthüllt wurde.
+        """
+        # Finde Hexagon bei dieser Position
+        tiles = self.map_data.get("tiles", {})
+        
+        for placement in self.boss_manager.placements:
+            if placement.hex_q == x and placement.hex_r == y and not placement.revealed:
+                boss = self.boss_manager.reveal_boss_at_hex(x, y)
+                if boss:
+                    self.revealed_bosses[(x, y)] = boss
+                    print(f"🐉 Boss enthüllt bei ({x}, {y}): {boss.name}")
+                    return True
+        return False
+    
+    def render_boss_hex_highlights(self, map_image: Image.Image, tile_size: int) -> Image.Image:
+        """
+        Rendert Highlights für Boss-Hexagone im Projektor.
+        - Nicht enthüllte Boss-Hex: Oranges Glühen (mysteriös)
+        - Enthüllt mit Boss: Rotes Glühen
+        - Enthüllt ohne Boss: Kein Highlight mehr
+        """
+        from PIL import ImageDraw
+        import math
+        
+        tiles = self.map_data.get("tiles", {})
+        if not tiles:
+            return map_image
+        
+        # Konvertiere zu RGBA falls nötig
+        if map_image.mode != 'RGBA':
+            map_image = map_image.convert('RGBA')
+        
+        # Erstelle transparentes Overlay für Highlights
+        highlight_layer = Image.new('RGBA', map_image.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(highlight_layer)
+        
+        hex_size = self.map_data.get("hex_size", 40)
+        orientation = self.map_data.get("orientation", "pointy")
+        scale = tile_size / 32 if tile_size else 1  # Skalierungsfaktor
+        
+        # Track welche Hexe enthüllt wurden (um leere zu markieren)
+        if not hasattr(self, 'revealed_boss_hexes'):
+            self.revealed_boss_hexes = {}  # {(q,r): has_boss}
+        
+        for coord_key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+            
+            if not tile_data.get('is_boss_hex', False):
+                continue
+            
+            try:
+                parts = coord_key.split(',')
+                q, r = int(parts[0]), int(parts[1])
+            except:
+                continue
+            
+            # Prüfe Status dieses Boss-Hexagons
+            hex_coord = (q, r)
+            
+            # Wurde dieses Hex bereits enthüllt?
+            if hex_coord in self.revealed_boss_hexes:
+                has_boss = self.revealed_boss_hexes[hex_coord]
+                if not has_boss:
+                    # Kein Boss hier - kein Highlight mehr anzeigen
+                    continue
+                else:
+                    # Boss vorhanden - rotes Highlight
+                    highlight_color = (255, 50, 50, 60)  # Rot, transparent
+            else:
+                # Noch nicht enthüllt - oranges mysteriöses Glühen
+                highlight_color = (255, 140, 0, 80)  # Orange, transparent
+            
+            # Berechne Hexagon-Position
+            cx = tile_data.get("center_x", 0) * scale
+            cy = tile_data.get("center_y", 0) * scale
+            scaled_hex_size = hex_size * scale * 0.9
+            
+            # Hexagon-Punkte berechnen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = cx + scaled_hex_size * math.cos(angle)
+                py = cy + scaled_hex_size * math.sin(angle)
+                points.append((px, py))
+            
+            # Zeichne Hexagon-Highlight
+            draw.polygon(points, fill=highlight_color, outline=None)
+            
+            # Zeichne Rahmen
+            outline_color = (255, 100, 0, 180) if hex_coord not in self.revealed_boss_hexes else (255, 0, 0, 180)
+            draw.polygon(points, fill=None, outline=outline_color)
+        
+        # Composite
+        result = Image.alpha_composite(map_image, highlight_layer)
+        return result
+    
+    def mark_boss_hex_revealed(self, q: int, r: int, has_boss: bool):
+        """Markiert ein Boss-Hexagon als enthüllt."""
+        if not hasattr(self, 'revealed_boss_hexes'):
+            self.revealed_boss_hexes = {}
+        self.revealed_boss_hexes[(q, r)] = has_boss
+
+    def render_boss_hex_highlights_svg(self, viewport_img: Image.Image, scale: float, 
+                                        view_x: int, view_y: int,
+                                        canvas_width: int, canvas_height: int) -> Image.Image:
+        """
+        Rendert Boss-Hexagon-Highlights für SVG-Maps.
+        Zeigt oranges Glühen für nicht-enthüllte Boss-Hexagone.
+        """
+        from PIL import ImageDraw
+        import math
+        
+        tiles = self.map_data.get("tiles", {})
+        if not tiles:
+            return viewport_img
+        
+        # Konvertiere zu RGBA falls nötig
+        if viewport_img.mode != 'RGBA':
+            viewport_img = viewport_img.convert('RGBA')
+        
+        # Erstelle transparentes Overlay für Highlights
+        highlight_layer = Image.new('RGBA', viewport_img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(highlight_layer)
+        
+        hex_size = self.map_data.get("hex_size", 40)
+        orientation = self.map_data.get("orientation", "pointy")
+        
+        # Track welche Hexe enthüllt wurden
+        if not hasattr(self, 'revealed_boss_hexes'):
+            self.revealed_boss_hexes = {}
+        
+        boss_count = 0
+        for coord_key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+            
+            if not tile_data.get('is_boss_hex', False):
+                continue
+            
+            try:
+                parts = coord_key.split(',')
+                q, r = int(parts[0]), int(parts[1])
+            except:
+                continue
+            
+            # Prüfe Status dieses Boss-Hexagons
+            hex_coord = (q, r)
+            
+            # Wurde dieses Hex bereits enthüllt?
+            if hex_coord in self.revealed_boss_hexes:
+                has_boss = self.revealed_boss_hexes[hex_coord]
+                if not has_boss:
+                    # Kein Boss hier - kein Highlight mehr
+                    continue
+                else:
+                    # Boss vorhanden - rotes Highlight
+                    highlight_color = (255, 50, 50, 80)
+            else:
+                # Noch nicht enthüllt - oranges mysteriöses Glühen
+                highlight_color = (255, 140, 0, 100)
+            
+            # Berechne Hexagon-Position (aus center_x/center_y der Tile-Daten)
+            cx = tile_data.get("center_x", 0) * scale - view_x
+            cy = tile_data.get("center_y", 0) * scale - view_y
+            
+            # Prüfe ob im Viewport
+            if cx < -hex_size * scale or cx > canvas_width + hex_size * scale:
+                continue
+            if cy < -hex_size * scale or cy > canvas_height + hex_size * scale:
+                continue
+            
+            scaled_hex_size = hex_size * scale * 0.85
+            
+            # Hexagon-Punkte berechnen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = cx + scaled_hex_size * math.cos(angle)
+                py = cy + scaled_hex_size * math.sin(angle)
+                points.append((px, py))
+            
+            # Zeichne Hexagon-Highlight
+            draw.polygon(points, fill=highlight_color)
+            
+            # Zeichne Rahmen
+            outline_color = (255, 100, 0, 200) if hex_coord not in self.revealed_boss_hexes else (255, 0, 0, 200)
+            draw.polygon(points, fill=None, outline=outline_color)
+            
+            boss_count += 1
+        
+        if boss_count > 0:
+            # Composite
+            result = Image.alpha_composite(viewport_img, highlight_layer)
+            return result
+        
+        return viewport_img
+    
+    def render_boss_overlays_svg(self, viewport_img: Image.Image, scale: float,
+                                  view_x: int, view_y: int,
+                                  canvas_width: int, canvas_height: int) -> Image.Image:
+        """
+        Rendert enthüllte Boss-Overlays für SVG-Maps.
+        """
+        if not self.revealed_bosses:
+            return viewport_img
+        
+        # Konvertiere zu RGBA falls nötig
+        if viewport_img.mode != 'RGBA':
+            viewport_img = viewport_img.convert('RGBA')
+        
+        tiles = self.map_data.get("tiles", {})
+        hex_size = self.map_data.get("hex_size", 40)
+        
+        for (q, r), boss in self.revealed_bosses.items():
+            placement = self.boss_manager.get_placement_at_hex(q, r)
+            if not placement or not placement.revealed:
+                continue
+            
+            # Finde das Tile um center_x/center_y zu bekommen
+            coord_key = f"{q},{r}"
+            tile_data = tiles.get(coord_key, {})
+            
+            if isinstance(tile_data, dict):
+                cx = tile_data.get("center_x", q * hex_size * 1.5) * scale - view_x
+                cy = tile_data.get("center_y", r * hex_size * 1.73) * scale - view_y
+            else:
+                # Fallback-Berechnung
+                cx = q * hex_size * 1.5 * scale - view_x
+                cy = r * hex_size * 1.73 * scale - view_y
+            
+            # Prüfe ob im Viewport
+            if cx < -100 or cx > canvas_width + 100:
+                continue
+            if cy < -100 or cy > canvas_height + 100:
+                continue
+            
+            # Render Boss-Overlay
+            overlay_size = max(120, int(hex_size * scale * 2))
+            boss_overlay = self.boss_manager.render_boss_overlay(
+                boss, 
+                width=overlay_size, 
+                height=overlay_size + 60
+            )
+            
+            # Position über dem Hexagon
+            overlay_x = int(cx - overlay_size // 2)
+            overlay_y = int(cy - overlay_size - 30)
+            
+            # Begrenzen auf Viewport
+            if overlay_x < 0:
+                overlay_x = 0
+            if overlay_y < 0:
+                overlay_y = int(cy + hex_size * scale)  # Unter dem Hex
+            if overlay_x + boss_overlay.width > canvas_width:
+                overlay_x = canvas_width - boss_overlay.width
+            
+            # Paste mit Alpha-Maske
+            try:
+                viewport_img.paste(boss_overlay, (overlay_x, overlay_y), boss_overlay)
+            except Exception as e:
+                print(f"⚠️ Boss-Overlay-Fehler: {e}")
+        
+        return viewport_img
+
+    def render_boss_overlays(self, map_image: Image.Image, tile_size: int) -> Image.Image:
+        """
+        Rendert alle enthüllten Bosse als Overlays auf das Map-Bild.
+        """
+        if not self.revealed_bosses:
+            return map_image
+        
+        # Konvertiere zu RGBA falls nötig
+        if map_image.mode != 'RGBA':
+            map_image = map_image.convert('RGBA')
+        
+        for (q, r), boss in self.revealed_bosses.items():
+            # Berechne Pixel-Position des Hexagons
+            # Für Hexagon-Maps brauchen wir die Zentrum-Position
+            placement = self.boss_manager.get_placement_at_hex(q, r)
+            if not placement or not placement.revealed:
+                continue
+            
+            # Berechne Position (q, r -> pixel)
+            # Einfache Näherung für offset-Koordinaten
+            px = int(q * tile_size + tile_size // 2)
+            py = int(r * tile_size + tile_size // 2)
+            
+            # Render Boss-Overlay
+            overlay_size = max(120, tile_size * 2)
+            boss_overlay = self.boss_manager.render_boss_overlay(
+                boss, 
+                width=overlay_size, 
+                height=overlay_size + 60
+            )
+            
+            # Zentriere über dem Hexagon
+            overlay_x = px - overlay_size // 2
+            overlay_y = py - overlay_size - 30  # Etwas über dem Hex
+            
+            # Sicherstellen, dass das Overlay im Bild-Bereich liegt
+            if overlay_x < 0:
+                overlay_x = 0
+            if overlay_y < 0:
+                overlay_y = 0
+            if overlay_x + boss_overlay.width > map_image.width:
+                overlay_x = map_image.width - boss_overlay.width
+            if overlay_y + boss_overlay.height > map_image.height:
+                overlay_y = py + tile_size  # Unter dem Hex platzieren
+            
+            # Paste mit Alpha-Maske
+            map_image.paste(boss_overlay, (overlay_x, overlay_y), boss_overlay)
+        
+        return map_image
+    
+    def damage_boss(self, q: int, r: int, damage: int) -> bool:
+        """Fügt dem Boss an Position (q, r) Schaden zu. Gibt True zurück wenn Boss noch lebt."""
+        result = self.boss_manager.damage_boss_at_hex(q, r, damage)
+        if result:
+            boss, remaining_hp = result
+            # Aktualisiere die Referenz
+            self.revealed_bosses[(q, r)] = boss
+            return remaining_hp > 0
+        return False
+
     def gpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None, mode='alpha'):
         """GPU-basiertes Compositing aller Rendering-Layer"""
         # Prefer shared GPU renderer (lighting_engine.gpu_renderer) if available
@@ -779,6 +1175,18 @@ class ProjectorWindow(tk.Toplevel):
                             map_image.paste(fog_texture, (paste_x, paste_y), fog_texture)
                         else:
                             map_image.paste(fog_texture, (paste_x, paste_y))
+        
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-HEXAGON-HIGHLIGHTS: Oranges Glühen für mysteriöse Orte
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(self, 'boss_manager') and self.boss_manager:
+            map_image = self.render_boss_hex_highlights(map_image, current_tile_size)
+        
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-OVERLAYS: Zeichne enthüllte Bosse über die Karte
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(self, 'revealed_bosses') and self.revealed_bosses:
+            map_image = self.render_boss_overlays(map_image, current_tile_size)
         
         # JETZT erst: Konvertiere das EINE große Bild zu PhotoImage
         # Offset für Zentrierung + Pan-Offset
@@ -2220,6 +2628,25 @@ class ProjectorWindow(tk.Toplevel):
             
             viewport_img = Image.alpha_composite(viewport_img, fog_layer)
             viewport_img = viewport_img.convert('RGB')
+        
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-HEXAGON-HIGHLIGHTS: Oranges Glühen für mysteriöse Orte (SVG-Modus)
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(self, 'boss_manager') and self.boss_manager:
+            # Berechne Tile-Größe für SVG
+            avg_tile_size = int((svg_width * current_scale) / max(1, self.fog.width))
+            viewport_img = self.render_boss_hex_highlights_svg(
+                viewport_img, current_scale, view_x, view_y, canvas_width, canvas_height
+            )
+        
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-OVERLAYS: Zeichne enthüllte Bosse über die Karte (SVG-Modus)
+        # ═══════════════════════════════════════════════════════════
+        if hasattr(self, 'revealed_bosses') and self.revealed_bosses:
+            avg_tile_size = int((svg_width * current_scale) / max(1, self.fog.width))
+            viewport_img = self.render_boss_overlays_svg(
+                viewport_img, current_scale, view_x, view_y, canvas_width, canvas_height
+            )
         
         # Auf Canvas anzeigen
         photo = ImageTk.PhotoImage(viewport_img)

@@ -423,6 +423,9 @@ class Storyboard:
     videos_path: str = "videos/"
     audio_path: str = "audio/"
     
+    # Boss-Definitionen (für Boss-Hexagon-System)
+    boss_data: Dict = field(default_factory=dict)
+    
     # Metadaten
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     modified_at: str = field(default_factory=lambda: datetime.now().isoformat())
@@ -439,6 +442,7 @@ class Storyboard:
             "assets_path": self.assets_path,
             "videos_path": self.videos_path,
             "audio_path": self.audio_path,
+            "boss_data": self.boss_data,
             "created_at": self.created_at,
             "modified_at": self.modified_at
         }
@@ -455,6 +459,7 @@ class Storyboard:
             assets_path=data.get("assets_path", "assets/"),
             videos_path=data.get("videos_path", "videos/"),
             audio_path=data.get("audio_path", "audio/"),
+            boss_data=data.get("boss_data", {}),
             created_at=data.get("created_at", datetime.now().isoformat()),
             modified_at=data.get("modified_at", datetime.now().isoformat())
         )

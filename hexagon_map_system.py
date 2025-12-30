@@ -112,6 +112,9 @@ class HexTile:
     explored: bool = False
     visible: bool = True
     
+    # Boss-System: Markiert Hexagon als möglichen Boss-Spawn
+    is_boss_hex: bool = False
+    
     # Zusätzliche Daten
     notes: str = ""
     tags: List[str] = field(default_factory=list)
@@ -157,6 +160,7 @@ class HexTile:
             "weather_intensity": self.weather_intensity,
             "explored": self.explored,
             "visible": self.visible,
+            "is_boss_hex": self.is_boss_hex,
             "notes": self.notes,
             "tags": self.tags
         }
