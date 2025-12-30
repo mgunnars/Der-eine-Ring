@@ -748,6 +748,121 @@ class ProjectorWindow(tk.Toplevel):
             return remaining_hp > 0
         return False
 
+    def show_victory_screen(self, boss):
+        """
+        Zeigt einen Sieges-Bildschirm wenn ein Boss besiegt wurde.
+        Überlagert die Karte mit goldenem Sieges-Overlay.
+        """
+        try:
+            # Hole Canvas-Größe
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            if canvas_width < 100 or canvas_height < 100:
+                canvas_width = 800
+                canvas_height = 600
+            
+            # Erstelle Sieges-Overlay
+            victory_img = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(victory_img)
+            
+            # Halbtransparenter dunkler Hintergrund
+            draw.rectangle((0, 0, canvas_width, canvas_height), fill=(0, 0, 0, 180))
+            
+            # Goldener Rahmen in der Mitte
+            box_width = min(600, canvas_width - 100)
+            box_height = min(400, canvas_height - 100)
+            box_x = (canvas_width - box_width) // 2
+            box_y = (canvas_height - box_height) // 2
+            
+            # Goldener Hintergrund mit Rahmen
+            draw.rounded_rectangle(
+                (box_x, box_y, box_x + box_width, box_y + box_height),
+                radius=20, fill=(40, 40, 20, 230), outline=(255, 215, 0, 255), width=5
+            )
+            
+            # Lade Schriften
+            try:
+                font_crown = ImageFont.truetype("arial.ttf", 80)
+                font_title = ImageFont.truetype("arial.ttf", 48)
+                font_name = ImageFont.truetype("arial.ttf", 32)
+                font_small = ImageFont.truetype("arial.ttf", 18)
+            except:
+                font_crown = ImageFont.load_default()
+                font_title = font_crown
+                font_name = font_crown
+                font_small = font_crown
+            
+            # Krone-Symbol
+            crown = "👑"
+            crown_y = box_y + 30
+            crown_bbox = draw.textbbox((0, 0), crown, font=font_crown)
+            crown_width = crown_bbox[2] - crown_bbox[0]
+            crown_x = (canvas_width - crown_width) // 2
+            draw.text((crown_x, crown_y), crown, font=font_crown)
+            
+            # "SIEG!" Text
+            victory_text = "SIEG!"
+            victory_bbox = draw.textbbox((0, 0), victory_text, font=font_title)
+            victory_width = victory_bbox[2] - victory_bbox[0]
+            victory_x = (canvas_width - victory_width) // 2
+            draw.text((victory_x, crown_y + 100), victory_text, fill=(255, 215, 0), font=font_title)
+            
+            # Boss-Name
+            boss_text = f"{boss.name} wurde besiegt!"
+            boss_bbox = draw.textbbox((0, 0), boss_text, font=font_name)
+            boss_width = boss_bbox[2] - boss_bbox[0]
+            boss_x = (canvas_width - boss_width) // 2
+            draw.text((boss_x, crown_y + 170), boss_text, fill=(200, 200, 200), font=font_name)
+            
+            # Loot-Hinweis falls vorhanden
+            if hasattr(boss, 'loot') and boss.loot:
+                loot_text = "Beute: " + ", ".join(boss.loot[:3])
+                if len(boss.loot) > 3:
+                    loot_text += f" (+{len(boss.loot)-3} mehr)"
+                loot_bbox = draw.textbbox((0, 0), loot_text, font=font_small)
+                loot_width = loot_bbox[2] - loot_bbox[0]
+                loot_x = (canvas_width - loot_width) // 2
+                draw.text((loot_x, crown_y + 230), loot_text, fill=(170, 255, 170), font=font_small)
+            
+            # Anweisung
+            hint_text = "Klicken zum Fortfahren..."
+            hint_bbox = draw.textbbox((0, 0), hint_text, font=font_small)
+            hint_width = hint_bbox[2] - hint_bbox[0]
+            hint_x = (canvas_width - hint_width) // 2
+            draw.text((hint_x, box_y + box_height - 50), hint_text, fill=(150, 150, 150), font=font_small)
+            
+            # Konvertiere zu PhotoImage und zeige an
+            from PIL import ImageTk
+            self.victory_photo = ImageTk.PhotoImage(victory_img)
+            
+            # Lösche vorherige Victory-Overlay falls vorhanden
+            self.canvas.delete("victory_overlay")
+            
+            # Zeige Victory-Overlay
+            self.canvas.create_image(
+                0, 0, 
+                anchor='nw', 
+                image=self.victory_photo, 
+                tags="victory_overlay"
+            )
+            
+            # Bind Click zum Schließen
+            def dismiss_victory(event=None):
+                self.canvas.delete("victory_overlay")
+                self.canvas.unbind("<Button-1>")
+                # Aktualisiere die Karte
+                self.render_map()
+            
+            self.canvas.bind("<Button-1>", dismiss_victory)
+            
+            print(f"👑 Sieges-Bildschirm für '{boss.name}' angezeigt!")
+            
+        except Exception as e:
+            print(f"⚠️ Fehler beim Anzeigen des Sieges-Bildschirms: {e}")
+            import traceback
+            traceback.print_exc()
+
     def gpu_composite_rendering(self, map_image, lighting_overlay, fog_enabled=False, fog_data=None, mode='alpha'):
         """GPU-basiertes Compositing aller Rendering-Layer"""
         # Prefer shared GPU renderer (lighting_engine.gpu_renderer) if available

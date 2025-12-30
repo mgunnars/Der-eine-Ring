@@ -285,6 +285,7 @@ class BossManager:
                            show_image: bool = True) -> Image.Image:
         """
         Rendert ein Boss-Overlay mit Bild, Name und Lebensleiste.
+        Bei besiegtem Boss wird ein Sieges-Symbol angezeigt.
         
         Returns:
             PIL Image mit dem kompletten Boss-Overlay
@@ -293,6 +294,47 @@ class BossManager:
         overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
         
+        # Bei besiegtem Boss: Sieges-Overlay
+        if boss.is_defeated or boss.current_health <= 0:
+            # Goldener Hintergrund
+            bg_rect = (0, 0, width, height)
+            draw.rounded_rectangle(bg_rect, radius=10, fill=(40, 40, 20, 200))
+            draw.rounded_rectangle(bg_rect, radius=10, outline="#FFD700", width=4)
+            
+            try:
+                font_crown = ImageFont.truetype("arial.ttf", 60)
+                font_name = ImageFont.truetype("arial.ttf", 16)
+                font_small = ImageFont.truetype("arial.ttf", 14)
+            except:
+                font_crown = ImageFont.load_default()
+                font_name = font_crown
+                font_small = font_crown
+            
+            # Krone-Symbol zentriert
+            crown = "👑"
+            crown_bbox = draw.textbbox((0, 0), crown, font=font_crown)
+            crown_width = crown_bbox[2] - crown_bbox[0]
+            crown_x = (width - crown_width) // 2
+            draw.text((crown_x, 20), crown, font=font_crown)
+            
+            # "BESIEGT" Text
+            defeated_text = "BESIEGT!"
+            defeated_bbox = draw.textbbox((0, 0), defeated_text, font=font_name)
+            defeated_width = defeated_bbox[2] - defeated_bbox[0]
+            defeated_x = (width - defeated_width) // 2
+            draw.text((defeated_x, 90), defeated_text, fill="#FFD700", font=font_name)
+            
+            # Boss-Name (durchgestrichen)
+            name_bbox = draw.textbbox((0, 0), boss.name, font=font_small)
+            name_width = name_bbox[2] - name_bbox[0]
+            name_x = (width - name_width) // 2
+            draw.text((name_x, 120), boss.name, fill="#888888", font=font_small)
+            # Durchstreichung
+            draw.line((name_x, 128, name_x + name_width, 128), fill="#888888", width=2)
+            
+            return overlay
+        
+        # Normales Boss-Overlay
         # Hintergrund (halbtransparent dunkel)
         bg_rect = (0, 0, width, height)
         draw.rounded_rectangle(bg_rect, radius=10, fill=(20, 20, 30, 200))
@@ -620,6 +662,32 @@ class BossControlPanel(tk.Frame):
     
     def _create_boss_panel(self, boss: BossDefinition, placement: BossPlacement):
         """Erstellt ein Panel für einen einzelnen Boss."""
+        # Besiegter Boss: Sieges-Panel
+        if boss.is_defeated or boss.current_health <= 0:
+            frame = tk.Frame(self.scrollable_frame, bg="#2d3a1a", relief=tk.RAISED, bd=2)
+            frame.pack(fill=tk.X, padx=5, pady=5)
+            
+            header = tk.Frame(frame, bg="#2d3a1a")
+            header.pack(fill=tk.X, padx=10, pady=5)
+            
+            tk.Label(header, text=f"👑 {boss.name} - BESIEGT!", 
+                    font=("Arial", 11, "bold"),
+                    bg="#2d3a1a", fg="#FFD700").pack(side=tk.LEFT)
+            
+            tk.Label(header, text=f"({placement.hex_q}, {placement.hex_r})",
+                    font=("Arial", 9), bg="#2d3a1a", fg="#888888").pack(side=tk.RIGHT)
+            
+            # Loot-Hinweis
+            if boss.loot:
+                loot_text = "Loot: " + ", ".join(boss.loot[:3])
+                if len(boss.loot) > 3:
+                    loot_text += f" (+{len(boss.loot)-3} mehr)"
+                tk.Label(frame, text=f"🎁 {loot_text}", 
+                        font=("Arial", 9), bg="#2d3a1a", fg="#aaffaa").pack(padx=10, pady=2)
+            
+            return
+        
+        # Normaler Boss
         frame = tk.Frame(self.scrollable_frame, bg="#16213e", relief=tk.RAISED, bd=2)
         frame.pack(fill=tk.X, padx=5, pady=5)
         

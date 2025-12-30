@@ -827,16 +827,24 @@ class GamemasterControlPanel(tk.Toplevel):
             def on_boss_damage(boss, placement):
                 """Callback wenn ein Boss Schaden erhält"""
                 if self.projector_window:
-                    self.projector_window.render_boss_overlays()
+                    # Prüfe ob Boss besiegt wurde
+                    if boss.is_defeated:
+                        self._set_status(f"👑 Boss '{boss.name}' BESIEGT!")
+                        print(f"👑 Boss '{boss.name}' wurde besiegt!")
+                        # Zeige Sieges-Karte im Projektor
+                        self.projector_window.show_victory_screen(boss)
+                    else:
+                        self._set_status(f"⚔️ Boss '{boss.name}' HP: {boss.current_health}/{boss.max_health}")
+                    
+                    # Karte neu rendern (zeigt Boss-Overlays automatisch)
                     self.projector_window.render_map()
-                    self._set_status(f"Boss '{boss.name}' HP: {boss.current_health}/{boss.max_health}")
+                    self.update_fog_map()
             
             def on_boss_reveal(boss, placement):
                 """Callback wenn ein Boss enthüllt wird"""
                 if self.projector_window:
-                    self.projector_window.render_boss_overlays()
                     self.projector_window.render_map()
-                    self._set_status(f"Boss '{boss.name}' enthüllt!")
+                    self._set_status(f"🐉 Boss '{boss.name}' enthüllt!")
             
             self.boss_control_panel = BossControlPanel(
                 parent, 
