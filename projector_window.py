@@ -2543,18 +2543,24 @@ class ProjectorWindow(tk.Toplevel):
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
         
-        # Berechne Basis-Scale um ganze Map zu zeigen (nur einmal beim Start)
-        if self.svg_base_scale == 1.0:
-            scale_w = canvas_width / svg_width
-            scale_h = canvas_height / svg_height
-            self.svg_base_scale = min(scale_w, scale_h)
+        # IMMER in Original-Auflösung oder größer rendern (nie kleiner!)
+        # Berechne Basis-Scale um ganze Map zu zeigen
+        scale_w = canvas_width / svg_width
+        scale_h = canvas_height / svg_height
+        fit_scale = min(scale_w, scale_h)
         
-        # Aktuelle Skalierung = Basis * Zoom
-        current_scale = self.svg_base_scale * self.zoom_level
+        # Aktuelle Skalierung = fit_scale * Zoom, aber MINDESTENS 1.0 (Original-Größe)
+        current_scale = max(fit_scale * self.zoom_level, 1.0)
         
-        # FULL SVG rendern mit aktueller Skalierung
+        # SVG in Original-Größe oder größer rendern
         full_width = int(svg_width * current_scale)
         full_height = int(svg_height * current_scale)
+        
+        # Mindestens Original-Größe
+        full_width = max(full_width, svg_width)
+        full_height = max(full_height, svg_height)
+        
+        print(f"🗺️ Projektor SVG: Original={svg_width}x{svg_height}, Canvas={canvas_width}x{canvas_height}, Scale={current_scale:.2f}, Render={full_width}x{full_height}")
         
         # Cache-Key
         cache_key = (full_width, full_height)

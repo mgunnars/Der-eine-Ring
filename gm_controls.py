@@ -1311,11 +1311,23 @@ class GamemasterControlPanel(tk.Toplevel):
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
-            # Berechne Mini-Größe (dynamisch nach Fenstergröße) - VERGRÖSSERT
+            # Berechne verfügbare Größe - WARTE auf korrektes Layout
             self.fog_map_canvas.update_idletasks()
-            available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
-            available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
-            base_scale = min(available_width / svg_width, available_height / svg_height, 2.5)
+            self.update_idletasks()
+            
+            # Hole ECHTE Canvas-Größe
+            canvas_actual_width = self.fog_map_canvas.winfo_width()
+            canvas_actual_height = self.fog_map_canvas.winfo_height()
+            
+            # Fallback wenn Canvas noch nicht initialisiert
+            if canvas_actual_width < 100 or canvas_actual_height < 100:
+                canvas_actual_width = 1200
+                canvas_actual_height = 800
+            
+            # Skaliere so, dass die Karte den verfügbaren Platz ausfüllt
+            scale_x = canvas_actual_width / svg_width
+            scale_y = canvas_actual_height / svg_height
+            base_scale = min(scale_x, scale_y)
             
             # User-Zoom anwenden
             user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
@@ -1407,11 +1419,24 @@ class GamemasterControlPanel(tk.Toplevel):
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
-            # Berechne Mini-Größe (VERGRÖSSERT für bessere Sichtbarkeit)
+            # Berechne verfügbare Größe - WARTE auf korrektes Layout
             self.fog_map_canvas.update_idletasks()
-            available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
-            available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
-            base_scale = min(available_width / svg_width, available_height / svg_height, 2.5)
+            self.update_idletasks()  # Warte auf Fenster-Layout
+            
+            # Hole ECHTE Canvas-Größe (nach Layout)
+            canvas_actual_width = self.fog_map_canvas.winfo_width()
+            canvas_actual_height = self.fog_map_canvas.winfo_height()
+            
+            # Fallback wenn Canvas noch nicht initialisiert
+            if canvas_actual_width < 100 or canvas_actual_height < 100:
+                canvas_actual_width = 1200
+                canvas_actual_height = 800
+            
+            # KEINE künstliche Begrenzung - nutze vollen verfügbaren Platz!
+            # Skaliere so, dass die Karte den verfügbaren Platz ausfüllt
+            scale_x = canvas_actual_width / svg_width
+            scale_y = canvas_actual_height / svg_height
+            base_scale = min(scale_x, scale_y)  # Aspect Ratio beibehalten
             
             # User-Zoom anwenden
             user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
@@ -1419,6 +1444,8 @@ class GamemasterControlPanel(tk.Toplevel):
             
             mini_width = int(svg_width * scale)
             mini_height = int(svg_height * scale)
+            
+            print(f"🗺️ GM-Panel SVG Hexagon: Original={svg_width}x{svg_height}, Canvas={canvas_actual_width}x{canvas_actual_height}, Scale={scale:.2f}, Render={mini_width}x{mini_height}")
             
             # Rendere SVG-Hintergrund
             mini_img = self.projector_window.svg_renderer.render_to_size(mini_width, mini_height, cache=False)
@@ -1655,15 +1682,22 @@ class GamemasterControlPanel(tk.Toplevel):
         map_width = max_x - min_x + hex_size * 2
         map_height = max_y - min_y + hex_size * 2
         
-        # Hole aktuelle Canvas-Größe (dynamisch nach Fenstergröße) - VERGRÖSSERT
+        # Hole ECHTE Canvas-Größe - warte auf Layout
         self.fog_map_canvas.update_idletasks()
-        available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
-        available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
+        self.update_idletasks()
         
-        # Skaliere passend zur verfügbaren Fläche - HÖHERER MAX-SCALE
-        scale_x = available_width / map_width if map_width > 0 else 1.0
-        scale_y = available_height / map_height if map_height > 0 else 1.0
-        base_scale = min(scale_x, scale_y, 2.5)  # Maximal 250% Vergrößerung (erhöht von 150%)
+        canvas_actual_width = self.fog_map_canvas.winfo_width()
+        canvas_actual_height = self.fog_map_canvas.winfo_height()
+        
+        # Fallback wenn Canvas noch nicht initialisiert
+        if canvas_actual_width < 100 or canvas_actual_height < 100:
+            canvas_actual_width = 1200
+            canvas_actual_height = 800
+        
+        # Skaliere so, dass die Karte den verfügbaren Platz ausfüllt
+        scale_x = canvas_actual_width / map_width if map_width > 0 else 1.0
+        scale_y = canvas_actual_height / map_height if map_height > 0 else 1.0
+        base_scale = min(scale_x, scale_y)  # Keine künstliche Begrenzung!
         
         # User-Zoom anwenden
         user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
