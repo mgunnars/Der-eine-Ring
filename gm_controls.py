@@ -887,11 +887,17 @@ class GamemasterControlPanel(tk.Toplevel):
                     self.projector_window.render_map()
                     self._set_status(f"🐉 Boss '{boss.name}' enthüllt!")
             
+            # Hole auch player_manager für Bounty-System
+            player_manager = None
+            if hasattr(self.projector_window, 'player_manager'):
+                player_manager = self.projector_window.player_manager
+            
             self.boss_control_panel = BossControlPanel(
                 parent, 
                 boss_manager,
                 on_damage_callback=on_boss_damage,
-                on_reveal_callback=on_boss_reveal
+                on_reveal_callback=on_boss_reveal,
+                player_manager=player_manager
             )
             self.boss_control_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         else:
@@ -1594,8 +1600,35 @@ class GamemasterControlPanel(tk.Toplevel):
             tiles = map_data.get("tiles", {})
             orientation = map_data.get("orientation", "pointy")
             
+            # === SVG-DATEN HOLEN (mit Fallback für Split View) ===
+            svg_data = None
+            svg_renderer = None
+            
+            # Option 1: svg_renderer vom Projector
+            if hasattr(self.projector_window, 'svg_renderer') and self.projector_window.svg_renderer:
+                svg_renderer = self.projector_window.svg_renderer
+                svg_data = svg_renderer.svg_data
+            # Option 2: Split View - lade SVG direkt aus svg_path
+            elif hasattr(self.projector_window, 'svg_path') and self.projector_window.svg_path:
+                svg_path = self.projector_window.svg_path
+                if os.path.exists(svg_path):
+                    with open(svg_path, 'r', encoding='utf-8') as f:
+                        svg_data = f.read()
+            # Option 3: background_path aus map_data
+            elif map_data.get("background_path"):
+                bg_path = map_data.get("background_path")
+                if bg_path.lower().endswith('.svg') and os.path.exists(bg_path):
+                    with open(bg_path, 'r', encoding='utf-8') as f:
+                        svg_data = f.read()
+            
+            if not svg_data:
+                print("⚠️ Keine SVG-Daten für GM-Panel verfügbar")
+                # Fallback: Nutze Hexagon-Standalone-Methode
+                self.update_fog_map_hexagon_standalone(map_data)
+                return
+            
             # Parse SVG für Hintergrund
-            root = ET.fromstring(self.projector_window.svg_renderer.svg_data)
+            root = ET.fromstring(svg_data)
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
@@ -1627,8 +1660,28 @@ class GamemasterControlPanel(tk.Toplevel):
             
             print(f"🗺️ GM-Panel SVG Hexagon: Original={svg_width}x{svg_height}, Canvas={canvas_actual_width}x{canvas_actual_height}, Scale={scale:.2f}, Render={mini_width}x{mini_height}")
             
-            # Rendere SVG-Hintergrund
-            mini_img = self.projector_window.svg_renderer.render_to_size(mini_width, mini_height, cache=False)
+            # Rendere SVG-Hintergrund (mit Fallback für Split View)
+            mini_img = None
+            if svg_renderer:
+                # Nutze svg_renderer wenn verfügbar
+                mini_img = svg_renderer.render_to_size(mini_width, mini_height, cache=False)
+            else:
+                # Fallback: cairosvg direkt nutzen
+                try:
+                    import cairosvg
+                    import io
+                    png_data = cairosvg.svg2png(
+                        bytestring=svg_data.encode('utf-8'),
+                        output_width=mini_width,
+                        output_height=mini_height
+                    )
+                    mini_img = Image.open(io.BytesIO(png_data))
+                except Exception as e:
+                    print(f"⚠️ SVG-Render-Fehler: {e}")
+                    # Letzter Fallback: background_image vom Projector
+                    if hasattr(self.projector_window, 'background_image') and self.projector_window.background_image:
+                        mini_img = self.projector_window.background_image.copy()
+                        mini_img = mini_img.resize((mini_width, mini_height), Image.Resampling.LANCZOS)
             
             if not mini_img:
                 return
@@ -2313,12 +2366,16 @@ class GamemasterControlPanel(tk.Toplevel):
                 # Prüfe revealed_boss_hexes (Mittelklick-Enthüllung)
                 if hasattr(self.projector_window, 'revealed_boss_hexes'):
                     is_revealed = (q, r) in self.projector_window.revealed_boss_hexes
+                    if is_revealed:
+                        # Hole den has_boss Wert
+                        boss_placed = self.projector_window.revealed_boss_hexes.get((q, r), False)
                 
-                # Prüfe ob ein Boss hier platziert ist
+                # Prüfe ob ein Boss hier platziert ist (überschreibt nur wenn nicht schon revealed)
                 if hasattr(self.projector_window, 'boss_manager'):
                     for placement in self.projector_window.boss_manager.placements:
                         if placement.hex_q == q and placement.hex_r == r:
-                            boss_placed = True
+                            if not is_revealed:
+                                boss_placed = True
                             has_boss_definition = True
                             is_revealed = is_revealed or placement.revealed
                             break
@@ -2330,18 +2387,27 @@ class GamemasterControlPanel(tk.Toplevel):
                     outline_color = "#ff0000"  # Rot = Enthüllt MIT Boss
                     fill_color = "#ff4444"  # Roter Hintergrund
                     use_stipple = True
+                    should_draw = True
                 else:
-                    outline_color = "#00ff00"  # Grün = Enthüllt, KEIN Boss
+                    # Kein Boss hier - GRÜNE Markierung mit Haken (Feedback für GM!)
+                    outline_color = "#00ff00"  # Grün = Sicher, kein Boss
                     fill_color = "#44ff44"  # Grüner Hintergrund
                     use_stipple = True
+                    should_draw = True
             elif boss_placed:
                 outline_color = "#ff8800"  # Orange = Boss vorhanden, nicht enthüllt
                 fill_color = ""
                 use_stipple = False
+                should_draw = True
             else:
                 outline_color = "#ffaa00"  # Gelb-Orange = Boss-Hex, unbekannt
                 fill_color = ""
                 use_stipple = False
+                should_draw = True
+            
+            # Überspringe Zeichnung wenn enthüllt und leer
+            if not should_draw:
+                continue
             
             # Hexagon-Punkte für Rahmen
             points = []
@@ -2468,6 +2534,13 @@ class GamemasterControlPanel(tk.Toplevel):
             # Markiere das Hex als enthüllt (mit oder ohne Boss)
             if hasattr(self.projector_window, 'mark_boss_hex_revealed'):
                 self.projector_window.mark_boss_hex_revealed(q, r, has_boss)
+                print(f"✅ GM: Boss-Hex ({q},{r}) enthüllt, has_boss={has_boss}")
+            else:
+                # Fallback: Direkt in revealed_boss_hexes eintragen
+                if not hasattr(self.projector_window, 'revealed_boss_hexes'):
+                    self.projector_window.revealed_boss_hexes = {}
+                self.projector_window.revealed_boss_hexes[(q, r)] = has_boss
+                print(f"✅ GM: Boss-Hex ({q},{r}) direkt markiert, has_boss={has_boss}")
             
             # Status-Meldung mit Boss-Details
             if boss:
@@ -2489,7 +2562,9 @@ class GamemasterControlPanel(tk.Toplevel):
             self.projector_window.render_map()
             if hasattr(self, 'boss_control_panel'):
                 self.boss_control_panel.refresh()
-            self.update_fog_map()  # Verwendet SVG wenn verfügbar
+            
+            # GM-Panel Fog-Map SOFORT aktualisieren (zeigt geänderte Boss-Hex-Farben)
+            self.after(100, self.update_fog_map)  # Kurze Verzögerung für Render-Abschluss
     
     def _check_all_bosses_revealed(self):
         """

@@ -17,7 +17,7 @@ import os
 import random
 import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 import tkinter as tk
 
@@ -134,6 +134,13 @@ class BossManager:
         self.boss_images: Dict[str, Image.Image] = {}  # id -> geladenes Bild
         self.boss_photo_cache: Dict[str, ImageTk.PhotoImage] = {}  # Cache für Tk
         
+        # === BOUNTY-SYSTEM ===
+        # Tracking welcher Boss besiegt wurde und wer die Bounties hat
+        # Format: {boss_id: [player_id_1, player_id_2]} - Max 2 Bounties pro Boss
+        self.bounties: Dict[str, List[str]] = {}
+        # Set der besiegten Bosse (für Anzeige auf allen Minimaps)
+        self.defeated_bosses: Set[str] = set()
+        
     def add_boss(self, boss: BossDefinition):
         """Fügt eine Boss-Definition hinzu."""
         self.boss_definitions[boss.id] = boss
@@ -227,8 +234,89 @@ class BossManager:
             if boss:
                 remaining_hp = boss.take_damage(damage)
                 print(f"⚔️ Boss '{boss.name}' nimmt {damage} Schaden! HP: {remaining_hp}/{boss.max_health}")
+                
+                # Prüfe ob Boss besiegt wurde
+                if boss.is_defeated and boss.id not in self.defeated_bosses:
+                    self.defeated_bosses.add(boss.id)
+                    print(f"☠️ Boss '{boss.name}' wurde BESIEGT!")
+                
                 return (boss, remaining_hp)
         return None
+    
+    # =====================================================
+    # BOUNTY-SYSTEM
+    # =====================================================
+    
+    def assign_bounty(self, boss_id: str, player_id: str) -> bool:
+        """
+        Weist einem Spieler ein Bounty für einen besiegten Boss zu.
+        Max. 2 Bounties pro Boss.
+        
+        Returns: True wenn erfolgreich, False wenn bereits 2 Bounties vergeben
+        """
+        boss = self.get_boss(boss_id)
+        if not boss:
+            print(f"⚠️ Boss {boss_id} nicht gefunden")
+            return False
+        
+        # Initialisiere Bounty-Liste für diesen Boss
+        if boss_id not in self.bounties:
+            self.bounties[boss_id] = []
+        
+        # Prüfe ob schon 2 Bounties vergeben
+        if len(self.bounties[boss_id]) >= 2:
+            print(f"⚠️ Boss '{boss.name}' hat bereits 2 Bounties vergeben")
+            return False
+        
+        # Prüfe ob Spieler bereits dieses Bounty hat
+        if player_id in self.bounties[boss_id]:
+            print(f"ℹ️ Spieler hat bereits Bounty für '{boss.name}'")
+            return False
+        
+        self.bounties[boss_id].append(player_id)
+        self.defeated_bosses.add(boss_id)  # Boss als besiegt markieren
+        print(f"💰 Bounty für '{boss.name}' an Spieler {player_id} vergeben!")
+        return True
+    
+    def remove_bounty(self, boss_id: str, player_id: str) -> bool:
+        """Entfernt ein Bounty von einem Spieler."""
+        if boss_id not in self.bounties:
+            return False
+        
+        if player_id in self.bounties[boss_id]:
+            self.bounties[boss_id].remove(player_id)
+            print(f"💸 Bounty für Boss {boss_id} von Spieler {player_id} entfernt")
+            return True
+        return False
+    
+    def transfer_bounty(self, boss_id: str, from_player_id: str, to_player_id: str) -> bool:
+        """Überträgt ein Bounty von einem Spieler zu einem anderen."""
+        if self.remove_bounty(boss_id, from_player_id):
+            return self.assign_bounty(boss_id, to_player_id)
+        return False
+    
+    def get_bounty_carriers(self, boss_id: str) -> List[str]:
+        """Gibt die Spieler-IDs zurück, die das Bounty für diesen Boss haben."""
+        return self.bounties.get(boss_id, [])
+    
+    def get_all_bounty_carriers(self) -> Set[str]:
+        """Gibt alle Spieler-IDs zurück, die irgendein Bounty tragen."""
+        carriers = set()
+        for player_ids in self.bounties.values():
+            carriers.update(player_ids)
+        return carriers
+    
+    def has_bounty(self, player_id: str) -> bool:
+        """Prüft ob ein Spieler irgendein Bounty trägt."""
+        return player_id in self.get_all_bounty_carriers()
+    
+    def get_defeated_bosses(self) -> List[BossDefinition]:
+        """Gibt alle besiegten Bosse zurück."""
+        return [self.get_boss(bid) for bid in self.defeated_bosses if self.get_boss(bid)]
+    
+    def is_boss_defeated(self, boss_id: str) -> bool:
+        """Prüft ob ein Boss besiegt wurde."""
+        return boss_id in self.defeated_bosses
     
     def load_boss_image(self, boss_id: str, target_size: int = 150) -> Optional[Image.Image]:
         """Lädt und cached das Boss-Bild."""
@@ -420,7 +508,9 @@ class BossManager:
         """Exportiert den BossManager als Dictionary."""
         return {
             "boss_definitions": [b.to_dict() for b in self.boss_definitions.values()],
-            "placements": [p.to_dict() for p in self.placements]
+            "placements": [p.to_dict() for p in self.placements],
+            "bounties": self.bounties,  # {boss_id: [player_ids]}
+            "defeated_bosses": list(self.defeated_bosses)
         }
     
     @classmethod
@@ -435,6 +525,10 @@ class BossManager:
         for placement_data in data.get("placements", []):
             placement = BossPlacement.from_dict(placement_data)
             manager.placements.append(placement)
+        
+        # Bounty-Daten laden
+        manager.bounties = data.get("bounties", {})
+        manager.defeated_bosses = set(data.get("defeated_bosses", []))
         
         return manager
     
@@ -610,11 +704,13 @@ class BossControlPanel(tk.Frame):
     """Panel zur Kontrolle aktiver Bosse (für GM)"""
     
     def __init__(self, parent, boss_manager: BossManager, 
-                 on_damage_callback=None, on_reveal_callback=None):
+                 on_damage_callback=None, on_reveal_callback=None,
+                 player_manager=None):
         super().__init__(parent, bg="#1a1a2e")
         self.boss_manager = boss_manager
         self.on_damage_callback = on_damage_callback
         self.on_reveal_callback = on_reveal_callback
+        self.player_manager = player_manager  # Für Bounty-Zuweisung
         
         # Speichere Schadenswerte pro Boss (bleibt über Refreshes erhalten)
         self.damage_values = {}  # boss_id -> IntVar
@@ -665,7 +761,7 @@ class BossControlPanel(tk.Frame):
     
     def _create_boss_panel(self, boss: BossDefinition, placement: BossPlacement):
         """Erstellt ein Panel für einen einzelnen Boss."""
-        # Besiegter Boss: Sieges-Panel
+        # Besiegter Boss: Sieges-Panel mit Bounty-Verwaltung
         if boss.is_defeated or boss.current_health <= 0:
             frame = tk.Frame(self.scrollable_frame, bg="#2d3a1a", relief=tk.RAISED, bd=2)
             frame.pack(fill=tk.X, padx=5, pady=5)
@@ -687,6 +783,77 @@ class BossControlPanel(tk.Frame):
                     loot_text += f" (+{len(boss.loot)-3} mehr)"
                 tk.Label(frame, text=f"🎁 {loot_text}", 
                         font=("Arial", 9), bg="#2d3a1a", fg="#aaffaa").pack(padx=10, pady=2)
+            
+            # === BOUNTY-VERWALTUNG ===
+            bounty_frame = tk.LabelFrame(frame, text="💰 Bounty-Träger (max. 2)", 
+                                         bg="#2d3a1a", fg="#FFD700", font=("Arial", 9))
+            bounty_frame.pack(fill=tk.X, padx=10, pady=5)
+            
+            # Aktuelle Bounty-Träger anzeigen
+            current_carriers = self.boss_manager.get_bounty_carriers(boss.id)
+            
+            if current_carriers:
+                carriers_frame = tk.Frame(bounty_frame, bg="#2d3a1a")
+                carriers_frame.pack(fill=tk.X, padx=5, pady=2)
+                
+                for i, player_id in enumerate(current_carriers):
+                    player_name = self._get_player_name(player_id)
+                    
+                    carrier_row = tk.Frame(carriers_frame, bg="#2d3a1a")
+                    carrier_row.pack(fill=tk.X, pady=1)
+                    
+                    tk.Label(carrier_row, text=f"💰 {i+1}: {player_name}", 
+                            font=("Arial", 9), bg="#2d3a1a", fg="#FFD700").pack(side=tk.LEFT)
+                    
+                    # Remove-Button
+                    tk.Button(carrier_row, text="❌", 
+                             command=lambda bid=boss.id, pid=player_id: self._remove_bounty(bid, pid),
+                             bg="#dc3545", fg="white", width=2, font=("Arial", 8)).pack(side=tk.RIGHT, padx=2)
+            else:
+                tk.Label(bounty_frame, text="Keine Bounty-Träger zugewiesen", 
+                        font=("Arial", 8, "italic"), bg="#2d3a1a", fg="#888888").pack(pady=2)
+            
+            # Bounty zuweisen (wenn weniger als 2)
+            if len(current_carriers) < 2 and self.player_manager:
+                assign_frame = tk.Frame(bounty_frame, bg="#2d3a1a")
+                assign_frame.pack(fill=tk.X, padx=5, pady=5)
+                
+                # Dropdown mit allen Spielern (die noch kein Bounty für diesen Boss haben)
+                available_players = []
+                for player in self.player_manager.players.values():
+                    if player.id not in current_carriers:
+                        available_players.append((player.id, player.name))
+                
+                if available_players:
+                    player_var = tk.StringVar()
+                    player_names = [f"{name} ({pid[:6]})" for pid, name in available_players]
+                    
+                    tk.Label(assign_frame, text="Bounty vergeben an:", 
+                            font=("Arial", 8), bg="#2d3a1a", fg="white").pack(side=tk.LEFT)
+                    
+                    dropdown = tk.OptionMenu(assign_frame, player_var, *player_names)
+                    dropdown.config(bg="#0f3460", fg="white", width=15, font=("Arial", 8))
+                    dropdown.pack(side=tk.LEFT, padx=5)
+                    
+                    def assign_bounty():
+                        selected = player_var.get()
+                        for pid, name in available_players:
+                            if f"{name} ({pid[:6]})" == selected:
+                                if self.boss_manager.assign_bounty(boss.id, pid):
+                                    # Spieler-Status aktualisieren
+                                    if self.player_manager:
+                                        player = self.player_manager.get_player(pid)
+                                        if player:
+                                            player.has_bounty = True
+                                    self.refresh()
+                                break
+                    
+                    tk.Button(assign_frame, text="💰 Vergeben", 
+                             command=assign_bounty,
+                             bg="#28a745", fg="white", font=("Arial", 8)).pack(side=tk.LEFT, padx=2)
+                else:
+                    tk.Label(assign_frame, text="Keine weiteren Spieler verfügbar", 
+                            font=("Arial", 8, "italic"), bg="#2d3a1a", fg="#666666").pack()
             
             return
         
@@ -764,6 +931,24 @@ class BossControlPanel(tk.Frame):
         self.refresh()
         if boss and self.on_reveal_callback:
             self.on_reveal_callback(boss, placement)
+    
+    def _get_player_name(self, player_id: str) -> str:
+        """Holt den Spielernamen für eine ID."""
+        if self.player_manager:
+            player = self.player_manager.get_player(player_id)
+            if player:
+                return player.name
+        return f"Spieler {player_id[:6]}"
+    
+    def _remove_bounty(self, boss_id: str, player_id: str):
+        """Entfernt ein Bounty von einem Spieler."""
+        if self.boss_manager.remove_bounty(boss_id, player_id):
+            # Prüfe ob Spieler noch andere Bounties hat
+            if self.player_manager:
+                player = self.player_manager.get_player(player_id)
+                if player:
+                    player.has_bounty = self.boss_manager.has_bounty(player_id)
+            self.refresh()
 
 
 # Test

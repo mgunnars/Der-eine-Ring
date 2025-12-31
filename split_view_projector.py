@@ -125,6 +125,11 @@ class SplitViewProjector(tk.Toplevel):
         # Enthüllte Bosse
         self.discovered_bosses: Set[Tuple[int, int]] = set()
         
+        # === GM-PANEL KOMPATIBILITÄT ===
+        # Boss-Hexagon-Enthüllung (für Mittelklick im GM-Panel)
+        self.revealed_boss_hexes: Dict[Tuple[int, int], bool] = {}  # {(q,r): has_boss}
+        self.revealed_bosses: Dict[Tuple[int, int], Any] = {}  # {(q,r): BossDefinition}
+        
         # Canvas und Rendering
         self.main_canvas = None
         self.map_photo = None  # PhotoImage Referenz
@@ -163,6 +168,8 @@ class SplitViewProjector(tk.Toplevel):
         self.dragging_player = None  # Aktuell gezogener Spieler
         self.drag_start_pos = None   # Start-Position für Drag
         self.drag_viewport = None    # Viewport in dem gedraggt wird
+        self.drag_current_pos = None # Aktuelle Drag-Position für Live-Vorschau
+        self.drag_target_hex = None  # Ziel-Hex für Hervorhebung
         
         # UI Setup
         self._setup_ui()
@@ -919,13 +926,22 @@ class SplitViewProjector(tk.Toplevel):
                 break
     
     def _on_drag(self, event):
-        """Mouse-Drag Handler - bewegt Spieler-Token"""
+        """Mouse-Drag Handler - zeigt Live-Vorschau des gedraggten Spielers"""
         if not self.dragging_player or not self.drag_viewport:
             return
         
-        # Zeige temporären Drag-Indikator (optional: Re-Render mit Ghost-Token)
-        # Für Performance einfach nur die Position tracken
-        pass
+        viewport = self.drag_viewport
+        
+        # Prüfe ob noch im Viewport
+        if not (viewport.x_offset <= event.x < viewport.x_offset + viewport.width):
+            return
+        
+        # Speichere aktuelle Drag-Position für Rendering
+        self.drag_current_pos = (event.x, event.y)
+        self.drag_target_hex = self._screen_to_hex(event.x, event.y, viewport)
+        
+        # Re-Render mit Ghost-Token und Ziel-Hex-Hervorhebung
+        self.render_all()
     
     def _on_drag_end(self, event):
         """Mouse-Drag Ende - setzt Spieler auf neue Position"""
@@ -933,6 +949,8 @@ class SplitViewProjector(tk.Toplevel):
             self.dragging_player = None
             self.drag_start_pos = None
             self.drag_viewport = None
+            self.drag_current_pos = None
+            self.drag_target_hex = None
             return
         
         viewport = self.drag_viewport
@@ -944,6 +962,9 @@ class SplitViewProjector(tk.Toplevel):
             self.dragging_player = None
             self.drag_start_pos = None
             self.drag_viewport = None
+            self.drag_current_pos = None
+            self.drag_target_hex = None
+            self.render_all()
             return
         
         # Berechne neue Hex-Position
@@ -957,6 +978,9 @@ class SplitViewProjector(tk.Toplevel):
             self.dragging_player = None
             self.drag_start_pos = None
             self.drag_viewport = None
+            self.drag_current_pos = None
+            self.drag_target_hex = None
+            self.render_all()
             return
         
         # Prüfe ob Hex bereits von anderem Spieler belegt ist
@@ -967,6 +991,9 @@ class SplitViewProjector(tk.Toplevel):
                     self.dragging_player = None
                     self.drag_start_pos = None
                     self.drag_viewport = None
+                    self.drag_current_pos = None
+                    self.drag_target_hex = None
+                    self.render_all()
                     return
         
         # Bewegung durchführen
@@ -988,6 +1015,8 @@ class SplitViewProjector(tk.Toplevel):
         self.dragging_player = None
         self.drag_start_pos = None
         self.drag_viewport = None
+        self.drag_current_pos = None
+        self.drag_target_hex = None
         
         # Neu rendern
         self.render_all()
@@ -1204,9 +1233,125 @@ class SplitViewProjector(tk.Toplevel):
                 self.render_all()
                 print(f"🐉 BOSS ENTDECKT: {boss.name} bei ({q}, {r})!")
     
+    def mark_boss_hex_revealed(self, q: int, r: int, has_boss: bool):
+        """
+        Markiert ein Boss-Hexagon als enthüllt (Kompatibilität mit GM-Panel).
+        Wird vom Mittelklick im GM-Panel aufgerufen.
+        """
+        self.revealed_boss_hexes[(q, r)] = has_boss
+        
+        # Boss tatsächlich enthüllen
+        if has_boss:
+            placement = self.boss_manager.get_placement_at_hex(q, r)
+            if placement and not placement.revealed:
+                boss = self.boss_manager.reveal_boss_at_hex(q, r)
+                if boss:
+                    self.discovered_bosses.add((q, r))
+                    self.revealed_bosses[(q, r)] = boss
+                    print(f"🐉 BOSS VOM GM ENTHÜLLT: {boss.name} bei ({q}, {r})!")
+        
+        # Ansicht aktualisieren
+        self.render_all()
+    
+    def show_victory_screen(self, boss):
+        """
+        Zeigt einen Sieges-Bildschirm wenn ein Boss besiegt wurde.
+        Für Split View: Zeigt Overlay auf allen Viewports.
+        """
+        if not self.main_canvas:
+            return
+        
+        try:
+            canvas_width = self.main_canvas.winfo_width()
+            canvas_height = self.main_canvas.winfo_height()
+            
+            if canvas_width < 100 or canvas_height < 100:
+                return
+            
+            # Erstelle Sieges-Overlay
+            victory_img = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 180))
+            draw = ImageDraw.Draw(victory_img)
+            
+            # Goldener Rahmen in der Mitte
+            box_width = min(600, canvas_width - 100)
+            box_height = min(300, canvas_height - 100)
+            box_x = (canvas_width - box_width) // 2
+            box_y = (canvas_height - box_height) // 2
+            
+            # Goldener Hintergrund
+            draw.rounded_rectangle(
+                (box_x, box_y, box_x + box_width, box_y + box_height),
+                radius=20, fill=(40, 40, 20, 230), outline=(255, 215, 0, 255), width=5
+            )
+            
+            # Schriften
+            try:
+                font_crown = ImageFont.truetype("arial.ttf", 60)
+                font_title = ImageFont.truetype("arial.ttf", 36)
+                font_name = ImageFont.truetype("arial.ttf", 24)
+                font_hint = ImageFont.truetype("arial.ttf", 14)
+            except:
+                font_crown = ImageFont.load_default()
+                font_title = font_crown
+                font_name = font_crown
+                font_hint = font_crown
+            
+            # Krone und SIEG!
+            draw.text((canvas_width // 2 - 30, box_y + 20), "👑", font=font_crown)
+            draw.text((canvas_width // 2 - 60, box_y + 90), "SIEG!", fill=(255, 215, 0), font=font_title)
+            
+            # Boss-Name
+            boss_text = f"{boss.name} wurde besiegt!"
+            bbox = draw.textbbox((0, 0), boss_text, font=font_name)
+            text_width = bbox[2] - bbox[0]
+            draw.text(((canvas_width - text_width) // 2, box_y + 150), boss_text, 
+                     fill=(200, 200, 200), font=font_name)
+            
+            # Bounty-Hinweis
+            bounty_hint = "💰 Bounty vergeben im Boss-Tab!"
+            hint_bbox = draw.textbbox((0, 0), bounty_hint, font=font_hint)
+            hint_width = hint_bbox[2] - hint_bbox[0]
+            draw.text(((canvas_width - hint_width) // 2, box_y + 200), bounty_hint, 
+                     fill=(255, 215, 0), font=font_hint)
+            
+            # Klicken-Hinweis
+            click_text = "Klicken zum Fortfahren..."
+            click_bbox = draw.textbbox((0, 0), click_text, font=font_hint)
+            click_width = click_bbox[2] - click_bbox[0]
+            draw.text(((canvas_width - click_width) // 2, box_y + box_height - 30), click_text, 
+                     fill=(150, 150, 150), font=font_hint)
+            
+            # Overlay anzeigen
+            self.victory_photo = ImageTk.PhotoImage(victory_img)
+            self.victory_overlay_id = self.main_canvas.create_image(
+                0, 0, image=self.victory_photo, anchor=tk.NW, tags="victory_overlay"
+            )
+            
+            # Klick-Event zum Schließen
+            def close_victory(event=None):
+                self.main_canvas.delete("victory_overlay")
+                if hasattr(self, 'victory_overlay_id'):
+                    del self.victory_overlay_id
+                self.render_all()
+            
+            self.main_canvas.bind("<Button-1>", close_victory, add="+")
+            
+            # Auto-Close nach 5 Sekunden
+            self.after(5000, close_victory)
+            
+        except Exception as e:
+            print(f"⚠️ Victory-Screen-Fehler: {e}")
+    
     # =========================================================
     # RENDERING
     # =========================================================
+    
+    def render_map(self):
+        """
+        Kompatibilitätsmethode für GM-Panel.
+        Ruft render_all() auf für konsistentes Verhalten.
+        """
+        self.render_all()
     
     def render_all(self):
         """Rendert die gesamte Ansicht"""
@@ -1310,8 +1455,18 @@ class SplitViewProjector(tk.Toplevel):
             # Zeichne Hexagon (mit Fog-Status)
             self._draw_hexagon(draw, vx, vy, viewport.zoom, tile_data, viewport, is_revealed, q, r)
         
+        # === DRAG-ZIEL-HERVORHEBUNG ===
+        if (self.dragging_player and self.drag_viewport == viewport and 
+            self.drag_target_hex and self.drag_current_pos):
+            self._draw_drag_highlight(img, draw, viewport)
+        
         # Spieler-Tokens zeichnen
         self._draw_players_in_viewport(img, viewport)
+        
+        # === GHOST-TOKEN FÜR GEDRAGGTEN SPIELER ===
+        if (self.dragging_player and self.drag_viewport == viewport and 
+            self.drag_current_pos):
+            self._draw_ghost_token(img, viewport)
         
         # Boss-Overlays zeichnen
         self._draw_bosses_in_viewport(img, viewport)
@@ -1375,8 +1530,18 @@ class SplitViewProjector(tk.Toplevel):
         
         # Spezielle Markierungen
         if tile_data.get("is_boss_hex", False):
-            # Boss-Hexagon: Orange Overlay
-            draw.polygon(points, fill=(255, 140, 0, 100), outline=(255, 100, 0, 255))
+            # Prüfe ob dieses Boss-Hex bereits enthüllt wurde
+            is_boss_hex_revealed = (q, r) in self.revealed_boss_hexes
+            has_boss_here = self.revealed_boss_hexes.get((q, r), False) if is_boss_hex_revealed else None
+            
+            if is_boss_hex_revealed:
+                if has_boss_here:
+                    # Boss gefunden: Rotes Overlay mit Warnung
+                    draw.polygon(points, fill=(255, 0, 0, 80), outline=(255, 0, 0, 255))
+                # else: Kein Boss hier - KEINE Markierung, normale Textur sichtbar
+            else:
+                # Noch nicht enthüllt: Orange Overlay (Gefahr/unbekannt)
+                draw.polygon(points, fill=(255, 140, 0, 100), outline=(255, 100, 0, 255))
         
         if tile_data.get("is_spawn_hex", False):
             # Spawn-Hexagon: Grünes Overlay
@@ -1395,6 +1560,10 @@ class SplitViewProjector(tk.Toplevel):
         
         # Sammel alle sichtbaren Spieler mit gleichem Hex für Offset-Berechnung
         visible_players = []
+        
+        # Viewport-Center für Sichtbarkeits-Check
+        center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
+        
         for player in self.player_manager.players.values():
             if not player.is_active:
                 continue
@@ -1404,9 +1573,18 @@ class SplitViewProjector(tk.Toplevel):
             
             # Prüfe Sichtbarkeit für dieses Team
             if viewport.team_id and not is_own_team:
-                # Andere Teams nur sichtbar wenn nah genug
-                if not self.player_manager.can_team_see_position(
-                    viewport.team_id, player.hex_q, player.hex_r):
+                # OPTION 1: Andere Teams sichtbar wenn nah genug (basierend auf Sichtradius)
+                can_see_by_radius = self.player_manager.can_team_see_position(
+                    viewport.team_id, player.hex_q, player.hex_r)
+                
+                # OPTION 2: Andere Teams sichtbar wenn im Viewport-Extent
+                player_px, player_py = self._hex_to_pixel(player.hex_q, player.hex_r)
+                vx = viewport.width / 2 + (player_px - center_px) * viewport.zoom
+                vy = viewport.height / 2 + (player_py - center_py) * viewport.zoom
+                in_viewport_extent = (0 <= vx <= viewport.width and 0 <= vy <= viewport.height)
+                
+                # Zeige Spieler wenn EINER der Checks zutrifft
+                if not (can_see_by_radius or in_viewport_extent):
                     continue
             
             visible_players.append(player)
@@ -1498,6 +1676,86 @@ class SplitViewProjector(tk.Toplevel):
                 img.paste(overlay, (paste_x, paste_y), overlay)
             except:
                 pass
+    
+    def _draw_drag_highlight(self, img: Image.Image, draw: ImageDraw.ImageDraw, viewport: ViewportConfig):
+        """Zeichnet Highlight auf dem Ziel-Hexagon während des Dragging"""
+        if not self.drag_target_hex or not self.map_data:
+            return
+        
+        target_q, target_r = self.drag_target_hex
+        
+        # Suche Tile-Daten für Ziel-Hex
+        target_tile = None
+        for tile_key, tile_data in self.map_data.get("tiles", {}).items():
+            if tile_data.get("q") == target_q and tile_data.get("r") == target_r:
+                target_tile = tile_data
+                break
+        
+        if not target_tile:
+            return
+        
+        # Pixel-Position des Ziel-Hex
+        target_px = target_tile.get("center_x", 0)
+        target_py = target_tile.get("center_y", 0)
+        
+        # Viewport-Transformation
+        center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
+        vx = viewport.width / 2 + (target_px - center_px) * viewport.zoom
+        vy = viewport.height / 2 + (target_py - center_py) * viewport.zoom
+        
+        # Hexagon-Punkte berechnen (für Highlight)
+        hex_size = 40 * viewport.zoom
+        points = []
+        for i in range(6):
+            import math
+            angle = math.radians(60 * i - 30)
+            px = vx + hex_size * math.cos(angle)
+            py = vy + hex_size * math.sin(angle)
+            points.append((px, py))
+        
+        # Cyan-Highlight zeichnen (leuchtendes Ziel)
+        draw.polygon(points, fill=(0, 255, 255, 100), outline=(0, 255, 255, 255))
+        
+        # Zusätzlicher Leuchteffekt
+        for i in range(6):
+            next_i = (i + 1) % 6
+            draw.line([points[i], points[next_i]], fill=(0, 255, 255, 255), width=3)
+    
+    def _draw_ghost_token(self, img: Image.Image, viewport: ViewportConfig):
+        """Zeichnet semi-transparentes Ghost-Token an aktueller Drag-Position"""
+        if not self.dragging_player or not self.drag_current_pos:
+            return
+        
+        # dragging_player ist bereits das PlayerDefinition-Objekt
+        player = self.dragging_player
+        if not player:
+            return
+        
+        # Drag-Position ist in Viewport-Koordinaten
+        drag_x, drag_y = self.drag_current_pos
+        
+        # Token rendern
+        token_size = int(player.token_size * viewport.zoom * 0.8)
+        token = self.player_manager.render_player_token(player, size=token_size)
+        
+        # Token semi-transparent machen
+        if token.mode == 'RGBA':
+            # Alpha reduzieren für Ghost-Effekt
+            r, g, b, a = token.split()
+            from PIL import ImageEnhance
+            # Alpha auf 50% setzen
+            a = a.point(lambda x: int(x * 0.5))
+            token = Image.merge('RGBA', (r, g, b, a))
+        
+        # Position für Paste (zentriert auf Maus)
+        paste_x = int(drag_x - token_size // 2)
+        paste_y = int(drag_y - token_size // 2)
+        
+        # Paste mit Alpha
+        try:
+            img.paste(token, (paste_x, paste_y), token)
+        except Exception as e:
+            print(f"Ghost-Token-Paste-Fehler: {e}")
     
     def _draw_viewport_header(self, img: Image.Image, viewport: ViewportConfig):
         """Zeichnet Header für Viewport ohne Team-Zuordnung"""
@@ -1624,8 +1882,19 @@ class SplitViewProjector(tk.Toplevel):
         offset_x = (size - map_width * scale) / 2 - min_x * scale
         offset_y = (size - map_height * scale) / 2 - min_y * scale
         
-        # Boss-Hexagone zeichnen (Bosse sind für alle sichtbar)
+        # Boss-Hexagone zeichnen
+        # Besiegte Bosse sind für ALLE sichtbar, andere nur wenn vom eigenen Team enthüllt
+        own_team_id = for_viewport.team_id if for_viewport else None
+        
         for placement in self.boss_manager.placements:
+            boss = self.boss_manager.get_boss(placement.boss_id)
+            is_defeated = boss and boss.is_defeated
+            
+            # Besiegte Bosse: Für ALLE auf der Minimap sichtbar!
+            # Nicht-besiegte Bosse: Nur wenn enthüllt
+            if not is_defeated and not placement.revealed:
+                continue  # Versteckte Bosse nicht auf Minimap zeigen
+            
             cx, cy = self._hex_to_pixel(placement.hex_q, placement.hex_r)
             
             mx = cx * scale + offset_x
@@ -1633,24 +1902,38 @@ class SplitViewProjector(tk.Toplevel):
             
             # Boss-Marker
             marker_size = 6
-            if placement.revealed:
+            if is_defeated:
+                # Besiegter Boss: Grünes X mit Schädel-Symbol - FÜR ALLE SICHTBAR
+                marker_size = 8  # Größer für Wichtigkeit
+                draw.ellipse([(mx - marker_size, my - marker_size),
+                              (mx + marker_size, my + marker_size)],
+                             fill=(50, 200, 50), outline=(255, 255, 255), width=2)
+                # Schädel-Symbol
+                draw.text((mx - 5, my - 5), "☠", fill=(255, 255, 255))
+            elif placement.revealed:
+                # Enthüllter, aktiver Boss: Rot mit Pulsieren
                 draw.ellipse([(mx - marker_size, my - marker_size),
                               (mx + marker_size, my + marker_size)],
                              fill=(255, 0, 0), outline=(255, 255, 255))
-            else:
-                draw.ellipse([(mx - marker_size, my - marker_size),
-                              (mx + marker_size, my + marker_size)],
-                             fill=(255, 140, 0), outline=(255, 200, 0))
         
-        # NUR Spieler des EIGENEN Teams zeichnen (nicht andere Teams!)
+        # Hole alle Bounty-Träger (diese sind für ALLE sichtbar)
+        bounty_carriers = self.boss_manager.get_all_bounty_carriers()
+        
+        # NUR Spieler des EIGENEN Teams zeichnen PLUS Bounty-Träger!
         if for_viewport and for_viewport.team_id:
             own_team_id = for_viewport.team_id
             
             for player in self.player_manager.players.values():
                 if not player.is_active:
                     continue
-                # NUR eigenes Team zeigen!
-                if player.team_id != own_team_id:
+                
+                # Prüfe ob Spieler gezeigt werden soll:
+                # 1. Eigenes Team: IMMER zeigen
+                # 2. Bounty-Träger: FÜR ALLE zeigen!
+                is_own_team = player.team_id == own_team_id
+                has_bounty = player.id in bounty_carriers
+                
+                if not is_own_team and not has_bounty:
                     continue
                 
                 cx, cy = self._hex_to_pixel(player.hex_q, player.hex_r)
@@ -1659,6 +1942,11 @@ class SplitViewProjector(tk.Toplevel):
                 
                 # Spieler-Marker (kleiner Kreis)
                 marker_size = 4
+                
+                # Bounty-Träger bekommen größeren goldenen Marker
+                if has_bounty:
+                    marker_size = 6
+                
                 # Spieler-Farbe
                 try:
                     color = player.color
@@ -1671,9 +1959,21 @@ class SplitViewProjector(tk.Toplevel):
                 except:
                     r, g, b = 100, 200, 255
                 
+                # Bounty-Träger: Goldener Rand + Pulsieren
+                outline_color = (255, 215, 0) if has_bounty else (255, 255, 255)
+                outline_width = 2 if has_bounty else 1
+                
                 draw.ellipse([(mx - marker_size, my - marker_size),
                               (mx + marker_size, my + marker_size)],
-                             fill=(r, g, b), outline=(255, 255, 255))
+                             fill=(r, g, b), outline=outline_color, width=outline_width)
+                
+                # Bounty-Symbol (💰) über dem Marker
+                if has_bounty:
+                    try:
+                        tiny_font = ImageFont.truetype("arial.ttf", 8)
+                    except:
+                        tiny_font = ImageFont.load_default()
+                    draw.text((mx - 5, my - marker_size - 10), "💰", fill=(255, 215, 0), font=tiny_font)
         
         # Legende
         try:
@@ -1681,8 +1981,9 @@ class SplitViewProjector(tk.Toplevel):
         except:
             legend_font = ImageFont.load_default()
         
-        draw.text((5, size - 25), "🐉 Boss", fill=(255, 140, 0), font=legend_font)
-        draw.text((5, size - 12), "● Spieler", fill=(100, 200, 255), font=legend_font)
+        draw.text((5, size - 38), "🐉 Boss", fill=(255, 140, 0), font=legend_font)
+        draw.text((5, size - 25), "☠️ Besiegt", fill=(50, 200, 50), font=legend_font)
+        draw.text((5, size - 12), "💰 Bounty", fill=(255, 215, 0), font=legend_font)
         
         return minimap
     

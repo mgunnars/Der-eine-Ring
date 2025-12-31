@@ -62,6 +62,9 @@ class PlayerDefinition:
     is_active: bool = True  # Spieler aktiv im Spiel?
     notes: str = ""
     
+    # Bounty-System: Spieler mit Bounty sind für alle Teams sichtbar
+    has_bounty: bool = False  # Hat dieser Spieler ein Bounty?
+    
     def to_dict(self) -> Dict:
         return {
             "id": self.id,
@@ -74,7 +77,8 @@ class PlayerDefinition:
             "hex_q": self.hex_q,
             "hex_r": self.hex_r,
             "is_active": self.is_active,
-            "notes": self.notes
+            "notes": self.notes,
+            "has_bounty": self.has_bounty
         }
     
     @classmethod
@@ -90,7 +94,8 @@ class PlayerDefinition:
             hex_q=data.get("hex_q", 0),
             hex_r=data.get("hex_r", 0),
             is_active=data.get("is_active", True),
-            notes=data.get("notes", "")
+            notes=data.get("notes", ""),
+            has_bounty=data.get("has_bounty", False)
         )
 
 
