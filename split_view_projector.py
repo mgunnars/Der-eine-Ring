@@ -171,6 +171,11 @@ class SplitViewProjector(tk.Toplevel):
         self.drag_current_pos = None # Aktuelle Drag-Position für Live-Vorschau
         self.drag_target_hex = None  # Ziel-Hex für Hervorhebung
         
+        # === EXIT-PUNKTE SYSTEM ===
+        # Zufällig ausgewählte Exit-Punkte aus Spawn-Hexagonen (2-4 Stück)
+        self.exit_hexagons: List[Tuple[int, int]] = []
+        self._generate_exit_points()
+        
         # UI Setup
         self._setup_ui()
     
@@ -578,6 +583,35 @@ class SplitViewProjector(tk.Toplevel):
                     pass
         
         return spawn_hexes
+    
+    def _generate_exit_points(self):
+        """
+        Generiert zufällige Exit-Punkte aus den Spawn-Hexagonen.
+        Wählt 2-4 Spawn-Hexagone als Exit-Punkte aus.
+        """
+        spawn_hexes = self._get_spawn_hexagons()
+        
+        if not spawn_hexes:
+            print("⚠️ Keine Spawn-Hexagone für Exit-Punkte vorhanden")
+            self.exit_hexagons = []
+            return
+        
+        # Bestimme Anzahl der Exit-Punkte (2-4, aber max. Anzahl der Spawn-Hexagone)
+        num_exits = min(random.randint(2, 4), len(spawn_hexes))
+        
+        # Zufällige Auswahl
+        self.exit_hexagons = random.sample(spawn_hexes, num_exits)
+        
+        print(f"🚪 {len(self.exit_hexagons)} Exit-Punkte generiert: {self.exit_hexagons}")
+    
+    def regenerate_exit_points(self):
+        """Generiert neue Exit-Punkte (kann vom GM aufgerufen werden)"""
+        self._generate_exit_points()
+        self.render_all()
+    
+    def is_exit_hex(self, q: int, r: int) -> bool:
+        """Prüft ob ein Hexagon ein Exit-Punkt ist"""
+        return (q, r) in self.exit_hexagons
     
     def _get_map_center(self) -> Tuple[int, int]:
         """Berechnet das Zentrum der Karte"""
@@ -1543,6 +1577,42 @@ class SplitViewProjector(tk.Toplevel):
         if tile_data.get("is_spawn_hex", False):
             # Spawn-Hexagon: Grünes Overlay
             draw.polygon(points, fill=(0, 255, 0, 80), outline=(0, 200, 0, 255))
+        
+        # === EXIT-PUNKTE MARKIERUNG ===
+        if self.is_exit_hex(q, r):
+            # Exit-Punkt: Auffälliges Cyan/Türkis mit Ausrufezeichen-Symbol
+            draw.polygon(points, fill=(0, 255, 255, 120), outline=(0, 200, 255, 255))
+            
+            # Dickerer Rand für bessere Sichtbarkeit
+            for i in range(6):
+                next_i = (i + 1) % 6
+                draw.line([points[i], points[next_i]], fill=(255, 255, 0, 255), width=3)
+            
+            # "EXIT" oder Tür-Symbol im Zentrum
+            try:
+                font_size = max(10, int(scaled_size * 0.35))
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
+                
+                # Text "EXIT" zentriert
+                text = "🚪"
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                text_x = cx - text_width // 2
+                text_y = cy - text_height // 2
+                
+                # Hintergrund für bessere Lesbarkeit
+                draw.ellipse([cx - scaled_size * 0.4, cy - scaled_size * 0.4, 
+                             cx + scaled_size * 0.4, cy + scaled_size * 0.4], 
+                            fill=(0, 100, 100, 200), outline=(255, 255, 0, 255))
+                
+                # Text zeichnen
+                draw.text((text_x, text_y), text, fill=(255, 255, 255, 255), font=font)
+            except Exception as e:
+                pass  # Bei Fehlern still ignorieren
     
     def _draw_players_in_viewport(self, img: Image.Image, viewport: ViewportConfig):
         """Zeichnet Spieler-Tokens im Viewport - mit Offset für überlappende Spieler"""
@@ -1675,54 +1745,38 @@ class SplitViewProjector(tk.Toplevel):
                 pass
     
     def _draw_drag_highlight(self, img: Image.Image, draw: ImageDraw.ImageDraw, viewport: ViewportConfig):
-        """Zeichnet Highlight auf dem Ziel-Hexagon während des Dragging"""
-        if not self.drag_target_hex or not self.map_data:
+        """Zeichnet den Spieler-Token an der aktuellen Mausposition während des Dragging"""
+        if not self.dragging_player or not self.drag_current_pos:
             return
         
-        target_q, target_r = self.drag_target_hex
-        
-        # Suche Tile-Daten für Ziel-Hex
-        target_tile = None
-        for tile_key, tile_data in self.map_data.get("tiles", {}).items():
-            if tile_data.get("q") == target_q and tile_data.get("r") == target_r:
-                target_tile = tile_data
-                break
-        
-        if not target_tile:
+        player = self.dragging_player
+        if not player:
             return
         
-        # Pixel-Position des Ziel-Hex
-        target_px = target_tile.get("center_x", 0)
-        target_py = target_tile.get("center_y", 0)
+        # Drag-Position - viewport.x_offset abziehen für korrekte Position im Viewport-Bild
+        drag_x = self.drag_current_pos[0] - viewport.x_offset
+        drag_y = self.drag_current_pos[1]
         
-        # Viewport-Transformation
-        center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
-        vx = viewport.width / 2 + (target_px - center_px) * viewport.zoom
-        vy = viewport.height / 2 + (target_py - center_py) * viewport.zoom
+        # Token rendern
+        token_size = int(player.token_size * viewport.zoom * 0.8)
+        token = self.player_manager.render_player_token(player, size=token_size)
         
-        # Hexagon-Punkte berechnen - Größe aus Map-Daten (NICHT hardcodiert!)
-        import math
-        hex_size = self.hex_size * viewport.zoom * 0.9  # 90% für leichten Rand-Effekt
-        orientation = self.map_data.get("orientation", "pointy")
+        # Token semi-transparent machen für Drag-Effekt
+        if token.mode == 'RGBA':
+            r, g, b, a = token.split()
+            # Alpha auf 70% setzen für sichtbaren aber erkennbaren Drag-Effekt
+            a = a.point(lambda x: int(x * 0.7))
+            token = Image.merge('RGBA', (r, g, b, a))
         
-        points = []
-        for i in range(6):
-            # Winkel basierend auf Orientierung (pointy vs flat)
-            if orientation == "pointy":
-                angle = math.pi / 3 * i - math.pi / 6  # Pointy-top
-            else:
-                angle = math.pi / 3 * i  # Flat-top
-            px = vx + hex_size * math.cos(angle)
-            py = vy + hex_size * math.sin(angle)
-            points.append((px, py))
+        # Position für Paste (zentriert auf Maus)
+        paste_x = int(drag_x - token_size // 2)
+        paste_y = int(drag_y - token_size // 2)
         
-        # Grünes Highlight für Ziel (weniger aufdringlich als Cyan)
-        draw.polygon(points, fill=(0, 200, 100, 80), outline=(0, 255, 100, 200))
-        
-        # Dezenter Rand-Effekt (dünnere Linie)
-        for i in range(6):
-            next_i = (i + 1) % 6
-            draw.line([points[i], points[next_i]], fill=(0, 255, 100, 200), width=2)
+        # Paste mit Alpha
+        try:
+            img.paste(token, (paste_x, paste_y), token)
+        except Exception as e:
+            pass  # Fehler still ignorieren
     
     def _draw_ghost_token(self, img: Image.Image, viewport: ViewportConfig):
         """Zeichnet semi-transparentes Ghost-Token an aktueller Drag-Position"""
@@ -1919,6 +1973,29 @@ class SplitViewProjector(tk.Toplevel):
                               (mx + marker_size, my + marker_size)],
                              fill=(255, 0, 0), outline=(255, 255, 255))
         
+        # === EXIT-PUNKTE IN MINIMAP ZEICHNEN ===
+        for exit_q, exit_r in self.exit_hexagons:
+            cx, cy = self._hex_to_pixel(exit_q, exit_r)
+            mx = cx * scale + offset_x
+            my = cy * scale + offset_y
+            
+            # Exit-Marker: Cyan Diamant mit gelbem Rand
+            marker_size = 7
+            exit_points = [
+                (mx, my - marker_size),  # Oben
+                (mx + marker_size, my),  # Rechts
+                (mx, my + marker_size),  # Unten
+                (mx - marker_size, my)   # Links
+            ]
+            draw.polygon(exit_points, fill=(0, 255, 255), outline=(255, 255, 0), width=2)
+            
+            # Tür-Symbol
+            try:
+                tiny_font = ImageFont.truetype("arial.ttf", 8)
+            except:
+                tiny_font = ImageFont.load_default()
+            draw.text((mx - 4, my - 4), "🚪", fill=(255, 255, 255), font=tiny_font)
+        
         # Hole alle Bounty-Träger (diese sind für ALLE sichtbar)
         bounty_carriers = self.boss_manager.get_all_bounty_carriers()
         
@@ -1984,6 +2061,7 @@ class SplitViewProjector(tk.Toplevel):
         except:
             legend_font = ImageFont.load_default()
         
+        draw.text((5, size - 50), "🚪 Exit", fill=(0, 255, 255), font=legend_font)
         draw.text((5, size - 38), "🐉 Boss", fill=(255, 140, 0), font=legend_font)
         draw.text((5, size - 25), "☠️ Besiegt", fill=(50, 200, 50), font=legend_font)
         draw.text((5, size - 12), "💰 Bounty", fill=(255, 215, 0), font=legend_font)
@@ -2441,6 +2519,29 @@ class GMOverviewWindow(tk.Toplevel):
             outline_color = (0, 200, 0, 255)
         
         draw.polygon(points, fill=fill, outline=outline_color)
+        
+        # === EXIT-PUNKTE MARKIERUNG ===
+        if self.split_view_projector and self.split_view_projector.is_exit_hex(q, r):
+            # Exit-Punkt: Auffälliges Cyan/Türkis Overlay
+            draw.polygon(points, fill=(0, 255, 255, 100), outline=(0, 200, 255, 255))
+            
+            # Dickerer Rand für bessere Sichtbarkeit (gelb)
+            for i in range(6):
+                next_i = (i + 1) % 6
+                draw.line([points[i], points[next_i]], fill=(255, 255, 0, 255), width=2)
+            
+            # "EXIT" Symbol im Zentrum
+            try:
+                font_size = max(8, int(scaled_size * 0.5))
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
+                
+                text = "🚪"
+                draw.text((cx - font_size // 2, cy - font_size // 2), text, fill=(255, 255, 255, 255), font=font)
+            except:
+                pass
     
     def _draw_players(self, img):
         """Zeichnet Spieler-Positionen"""
@@ -2516,17 +2617,21 @@ class GMOverviewWindow(tk.Toplevel):
         except:
             font = ImageFont.load_default()
         
-        y = height - 60
+        y = height - 80
         x = 10
         
-        # Hintergrund
-        draw.rectangle([(x, y), (x + 180, height - 10)], fill=(0, 0, 0, 180))
+        # Hintergrund (größer für Exit-Punkte)
+        draw.rectangle([(x, y), (x + 200, height - 10)], fill=(0, 0, 0, 180))
         
         draw.ellipse([(x + 5, y + 8), (x + 15, y + 18)], fill=(255, 140, 0))
         draw.text((x + 20, y + 5), "? = Versteckter Boss", fill=(255, 200, 100), font=font)
         
         draw.ellipse([(x + 5, y + 28), (x + 15, y + 38)], fill=(255, 50, 50))
         draw.text((x + 20, y + 25), "🐉 = Enthüllter Boss", fill=(255, 100, 100), font=font)
+        
+        # Exit-Punkte in Legende
+        draw.ellipse([(x + 5, y + 48), (x + 15, y + 58)], fill=(0, 255, 255), outline=(255, 255, 0))
+        draw.text((x + 20, y + 45), "🚪 = Exit-Punkt", fill=(0, 255, 255), font=font)
 
 
 # =========================================================
