@@ -215,6 +215,7 @@ class DerEineRingProApp(tk.Tk):
             ("🎨", "Editor", self.start_editor, "Karten bearbeiten (Ctrl+E)"),
             ("🔷", "Hex-Map", self.start_hexagon_editor, "Hexagon-Karten Editor"),
             ("📺", "Projektor", self.start_projector, "Kartenprojektion (Ctrl+P)"),
+            ("🔲", "Split-View", self.start_split_view_projector, "Split-View Projektor für Teams"),
             ("🎮", "GM Panel", self.start_gm_panel, "Spielleiter-Kontrolle (Ctrl+G)"),
             ("🎬", "Story", self.start_story_editor, "Story/Szenen Editor"),
         ]
@@ -722,6 +723,76 @@ class DerEineRingProApp(tk.Tk):
             
         except Exception as e:
             self._show_message("error", "Fehler", f"Projektor konnte nicht gestartet werden:\n{e}")
+    
+    def start_split_view_projector(self):
+        """Split-View Projektor für Teams öffnen - zeigt separate Ansichten pro Team"""
+        try:
+            from split_view_projector import SplitViewProjector, PlayerEditorDialog
+            from player_system import PlayerManager
+            from boss_system import BossManager
+            
+            # Hole Map-Daten
+            map_data = self.current_map_data
+            if self.current_editor:
+                map_data = self.current_editor.get_map_data()
+            
+            if not map_data:
+                from map_system import MapSystem
+                ms = MapSystem()
+                map_data = ms.create_default_map()
+                self._show_message("info", "Info", "Keine Karte geladen - Zeige Beispielkarte")
+            
+            # Player-Manager aus Story-Editor holen falls vorhanden
+            player_manager = None
+            boss_manager = None
+            
+            if hasattr(self, 'story_editor') and self.story_editor:
+                if hasattr(self.story_editor, 'player_panel'):
+                    player_manager = self.story_editor.player_panel.get_player_manager()
+                if hasattr(self.story_editor, 'boss_panel'):
+                    boss_manager = self.story_editor.boss_panel.get_boss_manager()
+            
+            # Fallback: Neuer Player-Manager
+            if not player_manager:
+                player_manager = PlayerManager()
+                # Frage ob Spieler definiert werden sollen
+                if messagebox.askyesno("Spieler definieren?", 
+                    "Es sind noch keine Spieler definiert.\n\n"
+                    "Möchten Sie jetzt Spieler und Teams anlegen?"):
+                    dialog = PlayerEditorDialog(self, player_manager)
+                    self.wait_window(dialog)
+                    if dialog.result:
+                        player_manager = dialog.result
+            
+            if not boss_manager:
+                boss_manager = BossManager()
+            
+            # SVG-Path prüfen
+            svg_path = None
+            if hasattr(self, 'loaded_svg_path') and self.loaded_svg_path:
+                svg_path = self.loaded_svg_path
+            elif map_data and map_data.get("svg_path"):
+                svg_path = map_data.get("svg_path")
+            
+            # Split-View Projektor öffnen
+            self.split_view_projector = SplitViewProjector(
+                self,
+                map_data=map_data,
+                player_manager=player_manager,
+                boss_manager=boss_manager,
+                num_screens=2,  # Standard: 2 Screens
+                svg_path=svg_path
+            )
+            
+            # Spieler verteilen wenn Spawn-Hexagone vorhanden
+            self.split_view_projector.distribute_players()
+            
+            self._update_status("Split-View Projektor geöffnet | 2 Screens")
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._show_message("error", "Fehler", f"Split-View Projektor konnte nicht gestartet werden:\n{e}")
     
     def start_gm_panel(self):
         """Gamemaster-Kontrollpanel öffnen - mit WindowManager"""

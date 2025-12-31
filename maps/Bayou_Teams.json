@@ -1,0 +1,85 @@
+{
+  "players": {
+    "a517d040": {
+      "id": "a517d040",
+      "name": "Annabella",
+      "team_id": null,
+      "team_name": "",
+      "color": "#44FFFF",
+      "image_path": null,
+      "token_size": 40,
+      "hex_q": 0,
+      "hex_r": 0,
+      "is_active": true,
+      "notes": ""
+    },
+    "6d2e165c": {
+      "id": "6d2e165c",
+      "name": "Matthias",
+      "team_id": null,
+      "team_name": "",
+      "color": "#44FF44",
+      "image_path": null,
+      "token_size": 40,
+      "hex_q": 0,
+      "hex_r": 0,
+      "is_active": true,
+      "notes": ""
+    },
+    "215485d8": {
+      "id": "215485d8",
+      "name": "Christian",
+      "team_id": null,
+      "team_name": "",
+      "color": "#AA44FF",
+      "image_path": null,
+      "token_size": 40,
+      "hex_q": 0,
+      "hex_r": 0,
+      "is_active": true,
+      "notes": ""
+    },
+    "42770dc0": {
+      "id": "42770dc0",
+      "name": "Max",
+      "team_id": null,
+      "team_name": "",
+      "color": "#FF8844",
+      "image_path": null,
+      "token_size": 40,
+      "hex_q": 0,
+      "hex_r": 0,
+      "is_active": true,
+      "notes": ""
+    }
+  },
+  "teams": {
+    "10ff41b1": {
+      "id": "10ff41b1",
+      "name": "Team 1",
+      "color": "#4488FF",
+      "member_ids": [
+        "6d2e165c",
+        "a517d040"
+      ],
+      "hex_q": 0,
+      "hex_r": 0,
+      "shared_vision": true
+    },
+    "3ded7472": {
+      "id": "3ded7472",
+      "name": "Team 2",
+      "color": "#FFFF44",
+      "member_ids": [
+        "42770dc0",
+        "215485d8"
+      ],
+      "hex_q": 0,
+      "hex_r": 0,
+      "shared_vision": true
+    }
+  },
+  "placements": [],
+  "visibility_radius": 3,
+  "teams_can_see_each_other": false
+}

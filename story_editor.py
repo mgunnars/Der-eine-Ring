@@ -30,7 +30,9 @@ from story_editor_scenes import ScenesPanel, SceneTypeSelector, ChapterDialog
 from story_editor_graph import FlowGraphPanel
 from story_editor_properties import PropertiesPanel
 from story_editor_bosses import BossPanel
+from story_editor_players import PlayerPanel
 from boss_system import BossManager
+from player_system import PlayerManager
 
 
 class StoryEditor(tk.Toplevel):
@@ -174,6 +176,7 @@ class StoryEditor(tk.Toplevel):
         
         self._toolbar_btn(right, "▶️", "Vorschau", self._preview_scene)
         self._toolbar_btn(right, "🎮", "Test-Modus", self._test_mode)
+        self._toolbar_btn(right, "🔲", "Split-View", self._start_split_view)
         
         # Ganz rechts: Storyboard-Name
         info = tk.Frame(self.toolbar, bg="#16213e")
@@ -229,6 +232,12 @@ class StoryEditor(tk.Toplevel):
         self.left_notebook.add(boss_tab, text="🐉 Bosse")
         self.boss_panel = BossPanel(boss_tab, on_change=self._mark_changed)
         self.boss_panel.pack(fill=tk.BOTH, expand=True)
+        
+        # Tab 3: Player-Panel (Spieler & Teams)
+        player_tab = tk.Frame(self.left_notebook, bg="#16213e")
+        self.left_notebook.add(player_tab, text="🎮 Spieler")
+        self.player_panel = PlayerPanel(player_tab, on_change=self._mark_changed)
+        self.player_panel.pack(fill=tk.BOTH, expand=True)
         
         # Mitte: Flow-Graph
         self.center_frame = tk.Frame(self.main_paned, bg="#0f3460")
@@ -290,6 +299,9 @@ class StoryEditor(tk.Toplevel):
         # Boss-Panel zurücksetzen
         self.boss_panel.set_boss_manager(BossManager())
         
+        # Player-Panel zurücksetzen
+        self.player_panel.set_player_manager(PlayerManager())
+        
         self._refresh_all()
         self._set_status("Neues Storyboard erstellt")
     
@@ -317,6 +329,12 @@ class StoryEditor(tk.Toplevel):
                 else:
                     self.boss_panel.set_boss_manager(BossManager())
                 
+                # Player-Daten laden falls vorhanden
+                if hasattr(self.storyboard, 'player_data') and self.storyboard.player_data:
+                    self.player_panel.from_dict(self.storyboard.player_data)
+                else:
+                    self.player_panel.set_player_manager(PlayerManager())
+                
                 self._refresh_all()
                 self._set_status(f"Geladen: {os.path.basename(path)}")
             except Exception as e:
@@ -328,6 +346,8 @@ class StoryEditor(tk.Toplevel):
             try:
                 # Boss-Daten synchronisieren
                 self.storyboard.boss_data = self.boss_panel.to_dict()
+                # Player-Daten synchronisieren
+                self.storyboard.player_data = self.player_panel.to_dict()
                 self.storyboard.save(self._current_file_path)
                 self.has_unsaved_changes = False
                 self._update_title()
@@ -451,6 +471,68 @@ class StoryEditor(tk.Toplevel):
         
         # Hier könnte man einen Test-Modus starten
         self._set_status("Test-Modus: Noch nicht implementiert")
+    
+    def _start_split_view(self):
+        """Split-View Projektor mit Story-Daten starten"""
+        try:
+            from split_view_projector import SplitViewProjector
+            from player_system import PlayerManager
+            from boss_system import BossManager
+            
+            # Player-Manager aus Player-Panel holen
+            player_manager = None
+            boss_manager = None
+            
+            if hasattr(self, 'player_panel') and self.player_panel:
+                player_manager = self.player_panel.get_player_manager()
+            
+            if hasattr(self, 'boss_panel') and self.boss_panel:
+                boss_manager = self.boss_panel.get_boss_manager()
+            
+            # Fallback
+            if not player_manager:
+                player_manager = PlayerManager()
+            if not boss_manager:
+                boss_manager = BossManager()
+            
+            # Aktuelle Szene für Map-Daten
+            map_data = None
+            svg_path = None
+            
+            if self.current_scene:
+                # Szene hat map_path oder map_data
+                if hasattr(self.current_scene, 'map_path') and self.current_scene.map_path:
+                    svg_path = self.current_scene.map_path
+                if hasattr(self.current_scene, 'map_data') and self.current_scene.map_data:
+                    map_data = self.current_scene.map_data
+            
+            # Fallback: Leere Map-Daten
+            if not map_data:
+                map_data = {
+                    "width": 30, "height": 30,
+                    "hex_size": 40, "orientation": "pointy",
+                    "tiles": {}
+                }
+            
+            # Split-View Projektor öffnen
+            projector = SplitViewProjector(
+                self,
+                map_data=map_data,
+                player_manager=player_manager,
+                boss_manager=boss_manager,
+                num_screens=2,
+                svg_path=svg_path
+            )
+            
+            # Spieler verteilen
+            projector.distribute_players()
+            
+            self._set_status("Split-View Projektor geöffnet")
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Fehler", f"Split-View konnte nicht gestartet werden:\n{e}")
     
     # ============================================================
     # ANSICHT

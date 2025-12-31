@@ -115,6 +115,10 @@ class HexTile:
     # Boss-System: Markiert Hexagon als möglichen Boss-Spawn
     is_boss_hex: bool = False
     
+    # Spieler-System: Markiert Hexagon als Spieler-Startpunkt
+    is_spawn_hex: bool = False
+    spawn_team_id: Optional[str] = None  # Optionale Team-Zuordnung für diesen Spawn
+    
     # Zusätzliche Daten
     notes: str = ""
     tags: List[str] = field(default_factory=list)
@@ -161,6 +165,8 @@ class HexTile:
             "explored": self.explored,
             "visible": self.visible,
             "is_boss_hex": self.is_boss_hex,
+            "is_spawn_hex": self.is_spawn_hex,
+            "spawn_team_id": self.spawn_team_id,
             "notes": self.notes,
             "tags": self.tags
         }

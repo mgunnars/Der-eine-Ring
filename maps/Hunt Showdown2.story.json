@@ -1,0 +1,75 @@
+{
+  "id": "0a4c86ea",
+  "name": "Neues Abenteuer",
+  "description": "",
+  "author": "",
+  "version": "1.0.0",
+  "chapters": [
+    {
+      "id": "688bd64d",
+      "name": "Hunt Showdown2",
+      "description": "",
+      "order": 0,
+      "locked": false,
+      "scenes": [
+        {
+          "id": "626511b7",
+          "name": "Stillwater Bayou",
+          "description": "",
+          "scene_type": "map_json",
+          "content_path": "",
+          "background_source": "C:/Users/PC/Desktop/Programmieren/Der-eine-Ring-main/Der-eine-Ring-main/maps/bayou_test2.json",
+          "map_data": null,
+          "ambient_audio": null,
+          "ambient_volume": 0.7,
+          "overlays": [],
+          "triggers": [],
+          "connections": {},
+          "ambient_sound": "",
+          "music_track": "",
+          "default_weather": "clear",
+          "time_of_day": "auto",
+          "loop_background": true,
+          "interactive": true,
+          "spawn_point": [
+            0,
+            0
+          ],
+          "region_id": "",
+          "created_at": "2025-12-31T12:01:06.602533",
+          "modified_at": "2025-12-31T12:01:06.602543",
+          "tags": []
+        }
+      ],
+      "start_scene_id": "626511b7",
+      "required_flags": [],
+      "icon": "📖",
+      "color": "#4a90d9"
+    }
+  ],
+  "start_chapter_id": "",
+  "assets_path": "assets/",
+  "videos_path": "videos/",
+  "audio_path": "audio/",
+  "boss_data": {
+    "boss_definitions": [
+      {
+        "id": "4f048794",
+        "name": "Spinne",
+        "max_health": 100,
+        "current_health": 100,
+        "image_path": null,
+        "description": "",
+        "name_color": "#ff4444",
+        "health_bar_color": "#00ff00",
+        "health_bar_damage_color": "#ff0000",
+        "abilities": [],
+        "loot": []
+      }
+    ],
+    "placements": []
+  },
+  "player_data": {},
+  "created_at": "2025-12-31T12:00:42.974253",
+  "modified_at": "2025-12-31T12:09:30.324276"
+}

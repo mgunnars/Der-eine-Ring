@@ -549,6 +549,7 @@ class HexagonMapEditor(tk.Toplevel):
             ("🗺️ Terrain", "terrain"),
             ("⚔️ Events", "event"),
             ("🐉 Boss", "boss"),
+            ("🎮 Spawn", "spawn"),
         ]
         
         self.tool_buttons = {}
@@ -1746,6 +1747,18 @@ class HexagonMapEditor(tk.Toplevel):
                     current = getattr(tile, 'is_boss_hex', False)
                     tile.is_boss_hex = not current
                 print(f"🐉 Boss-Hexagon: {'Markiert' if not current else 'Entfernt'}")
+            
+            elif self.current_tool == "spawn":
+                # Toggle Spawn-Hexagon Markierung (für Spieler-Startpunkte)
+                if self.selected_tiles:
+                    for sel_coord in self.selected_tiles:
+                        if sel_coord in self.hex_map.tiles:
+                            current = getattr(self.hex_map.tiles[sel_coord], 'is_spawn_hex', False)
+                            self.hex_map.tiles[sel_coord].is_spawn_hex = not current
+                else:
+                    current = getattr(tile, 'is_spawn_hex', False)
+                    tile.is_spawn_hex = not current
+                print(f"🎮 Spawn-Hexagon: {'Markiert' if not current else 'Entfernt'}")
             
             self._redraw()
         else:
@@ -3062,6 +3075,15 @@ class HexagonMapEditor(tk.Toplevel):
             # Boss-Icon im Zentrum
             cx, cy = self._map_to_canvas(tile.center_x, tile.center_y)
             self.canvas.create_text(cx, cy, text="🐉", font=("Arial", int(14 * self.zoom)))
+        
+        # Spawn-Hexagon-Marker (halbtransparentes grünes Overlay für Spieler-Startpunkte)
+        if getattr(tile, 'is_spawn_hex', False):
+            # Zeichne halbtransparentes grünes Overlay
+            self.canvas.create_polygon(canvas_vertices, fill="#00ff00", 
+                                       outline="#00aa00", width=3, stipple="gray50")
+            # Spawn-Icon im Zentrum
+            cx, cy = self._map_to_canvas(tile.center_x, tile.center_y)
+            self.canvas.create_text(cx, cy, text="🎮", font=("Arial", int(14 * self.zoom)))
     
     def _draw_hexagon_outline(self, tile: HexTile, color: str, width: int):
         """Zeichne Hexagon-Umriss (für Auswahl)"""
