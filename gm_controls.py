@@ -50,18 +50,18 @@ class GamemasterControlPanel(tk.Toplevel):
         self.configure(bg=bg_color)
         
         # WICHTIG: Mindestgröße setzen BEVOR Fenster positioniert wird!
-        self.minsize(900, 700)  # Breiter als vorher
+        self.minsize(1200, 900)  # GROSS für Karten-Fokus
         
         # Position auf primären Monitor (links oben, nicht zoomed sofort)
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         
-        # 80% der Bildschirmhöhe, 50% Breite
-        win_width = max(900, int(screen_width * 0.5))
-        win_height = max(700, int(screen_height * 0.8))
+        # GROSSES FENSTER: 75% Breite, 90% Höhe - Karte ist das Hauptelement!
+        win_width = max(1200, int(screen_width * 0.75))
+        win_height = max(900, int(screen_height * 0.9))
         
         # Links positionieren (Projektor ist rechts/auf zweitem Monitor)
-        self.geometry(f"{win_width}x{win_height}+50+50")
+        self.geometry(f"{win_width}x{win_height}+20+20")
         
         self.projector_window = projector_window
         self.webcam_tracker = webcam_tracker
@@ -224,89 +224,104 @@ class GamemasterControlPanel(tk.Toplevel):
         info_label.pack(padx=10, pady=5)
     
     def setup_fog_tab(self, parent):
-        """Fog-of-War Tab"""
-        title = tk.Label(parent, text="Fog-of-War Steuerung", font=("Arial", 16, "bold"),
-                        bg="#1e1e1e", fg="white")
-        title.pack(pady=10)
+        """Fog-of-War Tab - Kompaktes Layout für maximale Kartengröße"""
+        # Kompakte Header-Zeile: Titel + Fog Toggle + Sichtweite alles in einer Reihe
+        header_frame = tk.Frame(parent, bg="#1e1e1e")
+        header_frame.pack(fill=tk.X, padx=10, pady=3)
         
-        # Fog aktivieren/deaktivieren
-        toggle_frame = tk.Frame(parent, bg="#1e1e1e")
-        toggle_frame.pack(fill=tk.X, padx=10, pady=5)
+        tk.Label(header_frame, text="🌫️ Fog-of-War", font=("Arial", 12, "bold"),
+                bg="#1e1e1e", fg="white").pack(side=tk.LEFT, padx=5)
         
         self.fog_enabled_var = tk.BooleanVar(value=True)
-        fog_checkbox = tk.Checkbutton(toggle_frame, text="Fog-of-War aktiviert",
+        fog_checkbox = tk.Checkbutton(header_frame, text="Aktiviert",
                                      variable=self.fog_enabled_var,
                                      command=self.toggle_fog,
                                      bg="#1e1e1e", fg="white", selectcolor="#2d2d2d",
-                                     font=("Arial", 11, "bold"))
-        fog_checkbox.pack(side=tk.LEFT, padx=5)
+                                     font=("Arial", 10))
+        fog_checkbox.pack(side=tk.LEFT, padx=10)
         
-        # Sichtweite
-        sight_frame = tk.LabelFrame(parent, text="Sichtweite", bg="#2d2d2d", fg="white")
-        sight_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        sight_label = tk.Label(sight_frame, text="Aufdeckungs-Radius:", bg="#2d2d2d", fg="white")
-        sight_label.pack(side=tk.LEFT, padx=5)
+        # Sichtweite kompakt in Header-Zeile
+        tk.Label(header_frame, text="Radius:", bg="#1e1e1e", fg="white",
+                font=("Arial", 9)).pack(side=tk.LEFT, padx=(20, 5))
         
         self.sight_range_var = tk.IntVar(value=3)
-        sight_slider = tk.Scale(sight_frame, from_=1, to=10, orient=tk.HORIZONTAL,
+        sight_slider = tk.Scale(header_frame, from_=1, to=10, orient=tk.HORIZONTAL,
                                variable=self.sight_range_var,
                                command=self.update_sight_range,
-                               bg="#2d2d2d", fg="white", highlightthickness=0)
-        sight_slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+                               bg="#2d2d2d", fg="white", highlightthickness=0,
+                               length=120, sliderlength=15)
+        sight_slider.pack(side=tk.LEFT, padx=2)
         
-        self.sight_value_label = tk.Label(sight_frame, text="3 Tiles", bg="#2d2d2d", fg="white")
-        self.sight_value_label.pack(side=tk.LEFT, padx=5)
+        self.sight_value_label = tk.Label(header_frame, text="3", bg="#1e1e1e", fg="white",
+                                         font=("Arial", 9))
+        self.sight_value_label.pack(side=tk.LEFT, padx=2)
         
-        # SCHNELL-PRESETS
+        # SCHNELL-PRESETS - Kompakter in einer Zeile
         preset_frame = tk.LabelFrame(parent, text="⚡ Schnell-Presets", bg="#2d2d2d", fg="white")
-        preset_frame.pack(fill=tk.X, padx=10, pady=5)
+        preset_frame.pack(fill=tk.X, padx=10, pady=2)
         
-        preset_row1 = tk.Frame(preset_frame, bg="#2d2d2d")
-        preset_row1.pack(fill=tk.X, padx=5, pady=3)
+        preset_row = tk.Frame(preset_frame, bg="#2d2d2d")
+        preset_row.pack(fill=tk.X, padx=3, pady=2)
         
-        presets_top = [
-            ("🏠 Nur Mitte (5x5)", self.preset_center_only, "#4CAF50"),
+        presets = [
+            ("🏠 Mitte", self.preset_center_only, "#4CAF50"),
             ("🚪 Eingang", self.preset_entrance, "#2196F3"),
-            ("⚔️ Kampfbereich (15x15)", self.preset_combat_area, "#FF9800")
+            ("⚔️ Kampf", self.preset_combat_area, "#FF9800"),
+            ("🗺️ Ränder", self.preset_except_borders, "#9C27B0"),
+            ("🔦 V-Korr", self.preset_corridor_v, "#607D8B"),
+            ("↔️ H-Korr", self.preset_corridor_h, "#607D8B")
         ]
         
-        for text, command, color in presets_top:
-            btn = tk.Button(preset_row1, text=text, command=command,
-                           bg=color, fg="white", font=("Arial", 9, "bold"),
-                           padx=8, pady=4)
-            btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
+        for text, command, color in presets:
+            btn = tk.Button(preset_row, text=text, command=command,
+                           bg=color, fg="white", font=("Arial", 8, "bold"),
+                           padx=4, pady=2)
+            btn.pack(side=tk.LEFT, padx=1, expand=True, fill=tk.X)
         
-        preset_row2 = tk.Frame(preset_frame, bg="#2d2d2d")
-        preset_row2.pack(fill=tk.X, padx=5, pady=3)
-        
-        presets_bottom = [
-            ("🗺️ Ohne Ränder", self.preset_except_borders, "#9C27B0"),
-            ("🔦 Korridor (vertikal)", self.preset_corridor_v, "#607D8B"),
-            ("↔️ Korridor (horizontal)", self.preset_corridor_h, "#607D8B")
-        ]
-        
-        for text, command, color in presets_bottom:
-            btn = tk.Button(preset_row2, text=text, command=command,
-                           bg=color, fg="white", font=("Arial", 9, "bold"),
-                           padx=8, pady=4)
-            btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        
-        # NEUE INTERAKTIVE KARTENANSICHT
+        # NEUE INTERAKTIVE KARTENANSICHT - HAUPTELEMENT!
         map_frame = tk.LabelFrame(parent, text="🗺️ Interaktive Kartenansicht (Klick zum Enthüllen/Verbergen)", 
                                  bg="#2d2d2d", fg="white")
-        map_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        map_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=3)
         
-        # Info-Text mit verbesserter Legende
-        info_text = ("Linksklick: Fog enthüllen | Rechtsklick: Fog verbergen | Mittelklick: Boss-Hex enthüllen\n"
-                    "🟠 Orange = Unbekannt (❓) | 🔴 Rot = Boss enthüllt (🐉) | 🟢 Grün = Kein Boss (✓)")
-        info_label = tk.Label(map_frame, text=info_text, bg="#2d2d2d", fg="#aaaaaa",
-                            font=("Arial", 8), justify=tk.LEFT)
-        info_label.pack(padx=5, pady=2)
+        # Kompakte Info-Leiste oben
+        info_bar = tk.Frame(map_frame, bg="#2d2d2d")
+        info_bar.pack(fill=tk.X, padx=3, pady=1)
         
-        # Canvas für interaktive Karte
+        tk.Label(info_bar, text="LMB: Enthüllen | RMB: Verbergen | MMB: Boss", 
+                bg="#2d2d2d", fg="#888888", font=("Arial", 7)).pack(side=tk.LEFT, padx=3)
+        
+        # Pinsel und Zoom in Info-Leiste
+        tk.Label(info_bar, text="Pinsel:", bg="#2d2d2d", fg="white", 
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=(15, 2))
+        
+        self.fog_brush_size = tk.IntVar(value=3)
+        brush_slider = tk.Scale(info_bar, from_=1, to=10, orient=tk.HORIZONTAL,
+                               variable=self.fog_brush_size,
+                               bg="#2d2d2d", fg="white", highlightthickness=0,
+                               length=60, sliderlength=12)
+        brush_slider.pack(side=tk.LEFT, padx=2)
+        
+        tk.Label(info_bar, text="Zoom:", bg="#2d2d2d", fg="white",
+                font=("Arial", 8)).pack(side=tk.LEFT, padx=(10, 2))
+        
+        self.gm_map_zoom = tk.DoubleVar(value=1.0)
+        zoom_slider = tk.Scale(info_bar, from_=0.5, to=3.0, resolution=0.1,
+                              orient=tk.HORIZONTAL, variable=self.gm_map_zoom,
+                              bg="#2d2d2d", fg="white", highlightthickness=0,
+                              length=80, sliderlength=12, command=lambda v: self.update_fog_map())
+        zoom_slider.pack(side=tk.LEFT, padx=2)
+        
+        # Quick-Buttons kompakt rechts
+        tk.Button(info_bar, text="🌞", command=self.reveal_all_fog,
+                 bg="#4CAF50", fg="white", width=3, font=("Arial", 9)).pack(side=tk.RIGHT, padx=1)
+        tk.Button(info_bar, text="🌑", command=self.hide_all_fog,
+                 bg="#f44336", fg="white", width=3, font=("Arial", 9)).pack(side=tk.RIGHT, padx=1)
+        tk.Button(info_bar, text="🔄", command=self.update_fog_map,
+                 bg="#2196F3", fg="white", width=3, font=("Arial", 9)).pack(side=tk.RIGHT, padx=1)
+        
+        # Canvas für interaktive Karte - MAXIMALER PLATZ
         canvas_frame = tk.Frame(map_frame, bg="#1e1e1e")
-        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=3, pady=3)
         
         # Scrollbars
         h_scroll = tk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
@@ -324,71 +339,12 @@ class GamemasterControlPanel(tk.Toplevel):
         v_scroll.config(command=self.fog_map_canvas.yview)
         
         # Maus-Events
-        self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)   # Linksklick = Enthüllen
-        self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)  # Rechtsklick = Verbergen
-        self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)        # Ziehen = Mehrere enthüllen
-        
-        # Controls für Pinsel und Zoom
-        controls_frame = tk.Frame(map_frame, bg="#2d2d2d")
-        controls_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        # Pinsel-Größe
-        tk.Label(controls_frame, text="Pinsel:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
-        
-        self.fog_brush_size = tk.IntVar(value=3)
-        brush_slider = tk.Scale(controls_frame, from_=1, to=10, orient=tk.HORIZONTAL,
-                               variable=self.fog_brush_size,
-                               bg="#2d2d2d", fg="white", highlightthickness=0,
-                               length=100)
-        brush_slider.pack(side=tk.LEFT, padx=5)
-        
-        # Zoom-Slider für GM-Map
-        tk.Label(controls_frame, text="  |  Zoom:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
-        
-        self.gm_map_zoom = tk.DoubleVar(value=1.0)
-        zoom_slider = tk.Scale(controls_frame, from_=0.5, to=2.0, resolution=0.1,
-                              orient=tk.HORIZONTAL, variable=self.gm_map_zoom,
-                              bg="#2d2d2d", fg="white", highlightthickness=0,
-                              length=100, command=lambda v: self.update_fog_map())
-        zoom_slider.pack(side=tk.LEFT, padx=5)
-        
-        # Zoom-Buttons
-        zoom_out_btn = tk.Button(controls_frame, text="➖", command=lambda: self._adjust_gm_zoom(-0.1),
-                                bg="#555555", fg="white", width=2)
-        zoom_out_btn.pack(side=tk.LEFT, padx=2)
-        
-        zoom_in_btn = tk.Button(controls_frame, text="➕", command=lambda: self._adjust_gm_zoom(0.1),
-                               bg="#555555", fg="white", width=2)
-        zoom_in_btn.pack(side=tk.LEFT, padx=2)
-        
-        fit_btn = tk.Button(controls_frame, text="📐 Einpassen", command=self._fit_gm_map,
-                           bg="#555555", fg="white")
-        fit_btn.pack(side=tk.LEFT, padx=5)
+        self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
+        self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
+        self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
         
         # Karte initial zeichnen
         self.update_fog_map()
-        
-        # Schnell-Buttons
-        btn_frame = tk.Frame(map_frame, bg="#2d2d2d")
-        btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        reveal_all_btn = tk.Button(btn_frame, text="🌞 Alles aufdecken",
-                                   command=self.reveal_all_fog,
-                                   bg="#4CAF50", fg="white", font=("Arial", 9, "bold"),
-                                   padx=8, pady=3)
-        reveal_all_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        
-        hide_all_btn = tk.Button(btn_frame, text="🌑 Alles verbergen",
-                                command=self.hide_all_fog,
-                                bg="#f44336", fg="white", font=("Arial", 9, "bold"),
-                                padx=8, pady=3)
-        hide_all_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
-        
-        refresh_btn = tk.Button(btn_frame, text="🔄 Aktualisieren",
-                               command=self.update_fog_map,
-                               bg="#2196F3", fg="white", font=("Arial", 9, "bold"),
-                               padx=8, pady=3)
-        refresh_btn.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
     
     def setup_camera_tab(self, parent):
         """Kamera & Zoom Tab"""

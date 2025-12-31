@@ -806,10 +806,16 @@ class ProjectorWindow(tk.Toplevel):
                 py = scaled_cy + scaled_hex_size * 0.95 * math.sin(angle)
                 points.append((int(px), int(py)))
             
-            # Zeichne Hexagon-Outline
-            if points:
-                # Polygon als Outline zeichnen
-                draw.polygon(points, outline=outline_color, fill=None)
+            # Zeichne Hexagon-Outline mit Linien (unterstützt Alpha!)
+            if points and len(points) >= 6:
+                # Linienbreite basierend auf Hex-Größe
+                line_width = max(1, int(scaled_hex_size / 20))
+                
+                # Zeichne 6 Linien für das Hexagon
+                for i in range(6):
+                    start = points[i]
+                    end = points[(i + 1) % 6]
+                    draw.line([start, end], fill=outline_color, width=line_width)
         
         # Composite Hexagon-Overlay auf Viewport
         viewport_img = Image.alpha_composite(viewport_img, hex_overlay)
