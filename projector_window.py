@@ -688,6 +688,134 @@ class ProjectorWindow(tk.Toplevel):
         
         return viewport_img
 
+    def render_hexagon_grid_svg(self, viewport_img: Image.Image, scale: float,
+                                view_x: int, view_y: int,
+                                canvas_width: int, canvas_height: int) -> Image.Image:
+        """
+        Rendert das Hexagon-Grid mit konfigurierter Opacity für den Projektor.
+        Zeigt die Hexagon-Outlines wie sie im Editor angelegt wurden.
+        """
+        import math
+        
+        # Prüfe ob Hexagon-Map
+        if not self.map_data.get("hex_size"):
+            return viewport_img
+        
+        hex_size = self.map_data.get("hex_size", 40)
+        tiles = self.map_data.get("tiles", {})
+        orientation = self.map_data.get("orientation", "pointy")
+        
+        # Hole Outline-Einstellungen
+        hex_outline_color = self.map_data.get("hex_outline_color", "#000000")
+        hex_outline_opacity = self.map_data.get("hex_outline_opacity", 1.0)
+        hex_outline_only = self.map_data.get("hex_outline_only", False)
+        
+        # Wenn Opacity 0, nichts zeichnen
+        if hex_outline_opacity <= 0:
+            return viewport_img
+        
+        if not tiles:
+            return viewport_img
+        
+        # Konvertiere zu RGBA
+        if viewport_img.mode != 'RGBA':
+            viewport_img = viewport_img.convert('RGBA')
+        
+        # Erstelle transparentes Overlay für Hexagone
+        hex_overlay = Image.new('RGBA', viewport_img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(hex_overlay)
+        
+        # Parse Outline-Farbe
+        try:
+            if hex_outline_color.startswith('#'):
+                r = int(hex_outline_color[1:3], 16)
+                g = int(hex_outline_color[3:5], 16)
+                b = int(hex_outline_color[5:7], 16)
+            else:
+                r, g, b = 0, 0, 0
+        except:
+            r, g, b = 0, 0, 0
+        
+        # Alpha-Wert basierend auf Opacity
+        alpha = int(255 * hex_outline_opacity)
+        outline_color = (r, g, b, alpha)
+        
+        # Berechne Bounding-Box für Hexagone (um Scale-Faktor zu bestimmen)
+        min_x, min_y = float('inf'), float('inf')
+        max_x, max_y = float('-inf'), float('-inf')
+        
+        for key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                cx = tile_data.get("center_x", 0)
+                cy = tile_data.get("center_y", 0)
+            else:
+                parts = key.split(",")
+                if len(parts) == 2:
+                    q, r_coord = int(parts[0]), int(parts[1])
+                    if orientation == "pointy":
+                        cx = hex_size * 1.5 * q
+                        cy = hex_size * math.sqrt(3) * (r_coord + q / 2)
+                    else:
+                        cx = hex_size * math.sqrt(3) * (q + r_coord / 2)
+                        cy = hex_size * 1.5 * r_coord
+                else:
+                    continue
+            
+            min_x = min(min_x, cx)
+            min_y = min(min_y, cy)
+            max_x = max(max_x, cx)
+            max_y = max(max_y, cy)
+        
+        # Zeichne jedes Hexagon
+        for key, tile_data in tiles.items():
+            if isinstance(tile_data, dict):
+                cx = tile_data.get("center_x", 0)
+                cy = tile_data.get("center_y", 0)
+            else:
+                parts = key.split(",")
+                if len(parts) == 2:
+                    q, r_coord = int(parts[0]), int(parts[1])
+                    if orientation == "pointy":
+                        cx = hex_size * 1.5 * q
+                        cy = hex_size * math.sqrt(3) * (r_coord + q / 2)
+                    else:
+                        cx = hex_size * math.sqrt(3) * (q + r_coord / 2)
+                        cy = hex_size * 1.5 * r_coord
+                else:
+                    continue
+            
+            # Skalierte Koordinaten (relativ zum Viewport)
+            scaled_cx = cx * scale - view_x
+            scaled_cy = cy * scale - view_y
+            scaled_hex_size = hex_size * scale
+            
+            # Prüfe ob im Viewport sichtbar
+            if scaled_cx < -scaled_hex_size or scaled_cx > canvas_width + scaled_hex_size:
+                continue
+            if scaled_cy < -scaled_hex_size or scaled_cy > canvas_height + scaled_hex_size:
+                continue
+            
+            # Hexagon-Punkte berechnen
+            points = []
+            for i in range(6):
+                if orientation == "pointy":
+                    angle = math.pi / 3 * i - math.pi / 6
+                else:
+                    angle = math.pi / 3 * i
+                px = scaled_cx + scaled_hex_size * 0.95 * math.cos(angle)
+                py = scaled_cy + scaled_hex_size * 0.95 * math.sin(angle)
+                points.append((int(px), int(py)))
+            
+            # Zeichne Hexagon-Outline
+            if points:
+                # Polygon als Outline zeichnen
+                draw.polygon(points, outline=outline_color, fill=None)
+        
+        # Composite Hexagon-Overlay auf Viewport
+        viewport_img = Image.alpha_composite(viewport_img, hex_overlay)
+        
+        return viewport_img
+
     def render_boss_overlays(self, map_image: Image.Image, tile_size: int) -> Image.Image:
         """
         Rendert alle enthüllten Bosse als Overlays auf das Map-Bild.
@@ -2743,6 +2871,14 @@ class ProjectorWindow(tk.Toplevel):
             
             viewport_img = Image.alpha_composite(viewport_img, fog_layer)
             viewport_img = viewport_img.convert('RGB')
+        
+        # ═══════════════════════════════════════════════════════════
+        # HEXAGON-GRID: Zeichne Hexagon-Outlines mit konfigurierter Opacity
+        # ═══════════════════════════════════════════════════════════
+        if self.map_data.get("hex_size"):
+            viewport_img = self.render_hexagon_grid_svg(
+                viewport_img, current_scale, view_x, view_y, canvas_width, canvas_height
+            )
         
         # ═══════════════════════════════════════════════════════════
         # BOSS-HEXAGON-HIGHLIGHTS: Oranges Glühen für mysteriöse Orte (SVG-Modus)

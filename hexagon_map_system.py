@@ -757,6 +757,9 @@ class HexagonMap:
             "background_image_path": getattr(self, 'background_image_path', None),
             "background_visible": getattr(self, 'background_visible', True),
             "background_on_top": getattr(self, 'background_on_top', False),
+            "hex_outline_color": getattr(self, 'hex_outline_color', '#000000'),
+            "hex_outline_opacity": getattr(self, 'hex_outline_opacity', 1.0),
+            "hex_outline_only": getattr(self, 'hex_outline_only', False),
             "tiles": {f"{q},{r}": tile.to_dict() for (q, r), tile in self.tiles.items()},
             "random_event_tables": self.random_event_tables
         }
@@ -786,6 +789,11 @@ class HexagonMap:
         hex_map.background_image_path = data.get("background_image_path")
         hex_map.background_visible = data.get("background_visible", True)
         hex_map.background_on_top = data.get("background_on_top", False)
+        
+        # Hexagon-Outline-Einstellungen (für Projektor-Rendering)
+        hex_map.hex_outline_color = data.get("hex_outline_color", "#000000")
+        hex_map.hex_outline_opacity = data.get("hex_outline_opacity", 1.0)
+        hex_map.hex_outline_only = data.get("hex_outline_only", False)
         
         # Lade Tiles
         tiles_data = data.get("tiles", {})

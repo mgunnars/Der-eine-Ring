@@ -1081,7 +1081,11 @@ class DerEineRingProApp(tk.Tk):
                                 "name": map_data.get('name', 'Hexagon-Karte'),
                                 "is_hexagon_map": True,
                                 "hex_size": map_data.get('hex_size', 40),
-                                "orientation": map_data.get('orientation', 'pointy')
+                                "orientation": map_data.get('orientation', 'pointy'),
+                                # Hexagon-Outline-Einstellungen für Projektor-Rendering
+                                "hex_outline_color": map_data.get('hex_outline_color', '#000000'),
+                                "hex_outline_opacity": map_data.get('hex_outline_opacity', 1.0),
+                                "hex_outline_only": map_data.get('hex_outline_only', False)
                             }
                             print(f"      ✅ Hexagon-Map konvertiert: {img.width}x{img.height}px")
                             print(f"      📦 Tiles beibehalten: {len(original_tiles)} Einträge")

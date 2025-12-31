@@ -1272,8 +1272,8 @@ class GamemasterControlPanel(tk.Toplevel):
         height = map_data.get("height", 50)
         tiles = map_data.get("tiles", [])
         
-        # Größere Tile-Größe für bessere GM-Übersicht (war 8, jetzt 16)
-        tile_size = 16
+        # Größere Tile-Größe für bessere GM-Übersicht - DEUTLICH VERGRÖSSERT
+        tile_size = 24  # Erhöht von 16 für bessere Sichtbarkeit
         
         # Farben für Terrain-Typen (vereinfacht)
         terrain_colors = {
@@ -1341,18 +1341,25 @@ class GamemasterControlPanel(tk.Toplevel):
         """Rendert SVG-Miniatur mit Texturen für GM-Panel"""
         try:
             import xml.etree.ElementTree as ET
+            import math
             from PIL import Image, ImageTk, ImageDraw
+            
+            # Prüfe ob es eine Hexagon-Map ist - dann delegiere an Hexagon-Methode
+            map_data = self.projector_window.map_data
+            if map_data.get("hex_size"):
+                self.update_fog_map_svg_hexagon()
+                return
             
             # Parse SVG
             root = ET.fromstring(self.projector_window.svg_renderer.svg_data)
             svg_width = int(root.get('width', '1000').replace('px', ''))
             svg_height = int(root.get('height', '1000').replace('px', ''))
             
-            # Berechne Mini-Größe (dynamisch nach Fenstergröße)
+            # Berechne Mini-Größe (dynamisch nach Fenstergröße) - VERGRÖSSERT
             self.fog_map_canvas.update_idletasks()
-            available_width = max(800, self.fog_map_canvas.winfo_width() - 20)
-            available_height = max(600, self.fog_map_canvas.winfo_height() - 20)
-            base_scale = min(available_width / svg_width, available_height / svg_height, 1.5)
+            available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
+            available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
+            base_scale = min(available_width / svg_width, available_height / svg_height, 2.5)
             
             # User-Zoom anwenden
             user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
@@ -1414,12 +1421,6 @@ class GamemasterControlPanel(tk.Toplevel):
                 self.fog_map_canvas.tile_size = tile_width
                 self.fog_map_canvas.mini_scale = scale
                 
-                # === BOSS-HEXAGONE FÜR SVG-MAPS ZEICHNEN ===
-                # Prüfe ob es eine Hexagon-Map mit SVG-Hintergrund ist
-                map_data = self.projector_window.map_data
-                if map_data.get("hex_size"):
-                    self._draw_boss_hexagon_markers_svg(map_data, scale, mini_width, mini_height)
-                
                 # WICHTIG: Event-Bindings nach jedem Update neu setzen!
                 # (gehen nach Tab-Wechsel verloren)
                 self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
@@ -1431,6 +1432,207 @@ class GamemasterControlPanel(tk.Toplevel):
         except Exception as e:
             print(f"⚠️ Fehler beim Rendern der SVG-Miniatur: {e}")
             # Fallback: Einfache farbige Rechtecke (8px Tiles)
+            self.fog_map_canvas.tile_size = 8
+    
+    def update_fog_map_svg_hexagon(self):
+        """Rendert SVG-Miniatur MIT Hexagon-Grid für Hexagon-Maps im GM-Panel"""
+        try:
+            import xml.etree.ElementTree as ET
+            import math
+            from PIL import Image, ImageTk, ImageDraw
+            
+            map_data = self.projector_window.map_data
+            hex_size = map_data.get("hex_size", 40)
+            tiles = map_data.get("tiles", {})
+            orientation = map_data.get("orientation", "pointy")
+            
+            # Parse SVG für Hintergrund
+            root = ET.fromstring(self.projector_window.svg_renderer.svg_data)
+            svg_width = int(root.get('width', '1000').replace('px', ''))
+            svg_height = int(root.get('height', '1000').replace('px', ''))
+            
+            # Berechne Mini-Größe (VERGRÖSSERT für bessere Sichtbarkeit)
+            self.fog_map_canvas.update_idletasks()
+            available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
+            available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
+            base_scale = min(available_width / svg_width, available_height / svg_height, 2.5)
+            
+            # User-Zoom anwenden
+            user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0
+            scale = base_scale * user_zoom
+            
+            mini_width = int(svg_width * scale)
+            mini_height = int(svg_height * scale)
+            
+            # Rendere SVG-Hintergrund
+            mini_img = self.projector_window.svg_renderer.render_to_size(mini_width, mini_height, cache=False)
+            
+            if not mini_img:
+                return
+            
+            # Konvertiere zu RGBA
+            if mini_img.mode != 'RGBA':
+                mini_img = mini_img.convert('RGBA')
+            
+            # Berechne Hexagon-Bounding-Box
+            min_x, min_y = float('inf'), float('inf')
+            max_x, max_y = float('-inf'), float('-inf')
+            
+            for key, tile_data in tiles.items():
+                if isinstance(tile_data, dict):
+                    cx = tile_data.get("center_x", 0)
+                    cy = tile_data.get("center_y", 0)
+                else:
+                    parts = key.split(",")
+                    if len(parts) == 2:
+                        q, r = int(parts[0]), int(parts[1])
+                        if orientation == "pointy":
+                            cx = hex_size * 1.5 * q
+                            cy = hex_size * math.sqrt(3) * (r + q / 2)
+                        else:
+                            cx = hex_size * math.sqrt(3) * (q + r / 2)
+                            cy = hex_size * 1.5 * r
+                    else:
+                        continue
+                
+                min_x = min(min_x, cx)
+                min_y = min(min_y, cy)
+                max_x = max(max_x, cx)
+                max_y = max(max_y, cy)
+            
+            # Berechne Hex-Skalierung auf SVG-Größe
+            hex_map_width = max_x - min_x + hex_size * 2 if tiles else svg_width
+            hex_map_height = max_y - min_y + hex_size * 2 if tiles else svg_height
+            
+            hex_scale_x = svg_width / hex_map_width if hex_map_width > 0 else 1.0
+            hex_scale_y = svg_height / hex_map_height if hex_map_height > 0 else 1.0
+            hex_scale = min(hex_scale_x, hex_scale_y)
+            
+            # Finale Skalierung für Mini-Darstellung
+            final_scale = scale
+            mini_hex_size = hex_size * hex_scale * final_scale
+            
+            # Offset zum Zentrieren der Hexagone auf dem SVG
+            offset_x = (hex_size - min_x) * hex_scale * final_scale if tiles else 0
+            offset_y = (hex_size - min_y) * hex_scale * final_scale if tiles else 0
+            
+            # Speichere Hexagon-Daten für Klick-Handler
+            self.fog_map_canvas.hex_tiles = {}
+            self.fog_map_canvas.hex_size = mini_hex_size
+            self.fog_map_canvas.hex_scale = final_scale
+            self.fog_map_canvas.hex_offset_x = offset_x
+            self.fog_map_canvas.hex_offset_y = offset_y
+            self.fog_map_canvas.is_hexagon_mode = True
+            
+            # Auf Canvas anzeigen
+            photo = ImageTk.PhotoImage(mini_img.convert('RGB'))
+            self.fog_map_canvas.delete("all")
+            self.fog_map_canvas.create_image(0, 0, image=photo, anchor=tk.NW, tags="svg_preview")
+            self.fog_map_canvas.image = photo
+            
+            # Terrain-Farben
+            terrain_colors = {
+                "PLAINS": "#6ba868",
+                "DARK_FOREST": "#2d4a2d",
+                "FOREST": "#3d6b3d",
+                "MOUNTAINS": "#8a8a8a",
+                "WATER": "#4db8c4",
+                "SWAMP": "#5a7a5a",
+                "HILLS": "#9a9a6a",
+                "ROAD": "#8a7f6f",
+                "VILLAGE": "#b8956f",
+                "default": "#4a4a4a"
+            }
+            
+            # Zeichne jedes Hexagon als Canvas-Polygon
+            for key, tile_data in tiles.items():
+                if isinstance(tile_data, dict):
+                    terrain = tile_data.get("terrain", "PLAINS")
+                    cx = tile_data.get("center_x", 0)
+                    cy = tile_data.get("center_y", 0)
+                else:
+                    terrain = tile_data if isinstance(tile_data, str) else "PLAINS"
+                    parts = key.split(",")
+                    if len(parts) == 2:
+                        q, r = int(parts[0]), int(parts[1])
+                        if orientation == "pointy":
+                            cx = hex_size * 1.5 * q
+                            cy = hex_size * math.sqrt(3) * (r + q / 2)
+                        else:
+                            cx = hex_size * math.sqrt(3) * (q + r / 2)
+                            cy = hex_size * 1.5 * r
+                    else:
+                        continue
+                
+                # Skalierte Koordinaten
+                scaled_cx = cx * hex_scale * final_scale + offset_x
+                scaled_cy = cy * hex_scale * final_scale + offset_y
+                
+                # Hexagon-Punkte berechnen
+                points = []
+                for i in range(6):
+                    if orientation == "pointy":
+                        angle = math.pi / 3 * i - math.pi / 6
+                    else:
+                        angle = math.pi / 3 * i
+                    px = scaled_cx + mini_hex_size * 0.9 * math.cos(angle)
+                    py = scaled_cy + mini_hex_size * 0.9 * math.sin(angle)
+                    points.append((px, py))
+                
+                # Prüfe Fog-Status (basierend auf Hexagon-Position im Fog-Grid)
+                fog_x = int((scaled_cx / mini_width) * self.projector_window.fog.width) if mini_width > 0 else 0
+                fog_y = int((scaled_cy / mini_height) * self.projector_window.fog.height) if mini_height > 0 else 0
+                fog_x = max(0, min(fog_x, self.projector_window.fog.width - 1))
+                fog_y = max(0, min(fog_y, self.projector_window.fog.height - 1))
+                
+                is_revealed = self.projector_window.fog.is_revealed(fog_x, fog_y)
+                
+                # Farbe basierend auf Fog-Status
+                if is_revealed:
+                    fill_color = ""  # Transparent - zeigt Hintergrundbild
+                    outline_color = "#606060"  # Hellerer Rand für sichtbare Bereiche
+                else:
+                    fill_color = "#1a1a1a"  # Dunkel für verdeckte Bereiche
+                    outline_color = "#303030"
+                
+                # Zeichne Hexagon
+                hex_id = self.fog_map_canvas.create_polygon(
+                    points, fill=fill_color, outline=outline_color, width=2,
+                    tags=f"hex_{key}",
+                    stipple="gray50" if not is_revealed else ""
+                )
+                
+                # Speichere für Klick-Erkennung
+                self.fog_map_canvas.hex_tiles[key] = {
+                    "id": hex_id,
+                    "center": (scaled_cx, scaled_cy),
+                    "terrain": terrain,
+                    "fog_x": fog_x,
+                    "fog_y": fog_y
+                }
+            
+            # Boss-Markierungen zeichnen
+            self._draw_boss_hexagon_markers_svg(map_data, scale, mini_width, mini_height)
+            
+            # Scroll-Region
+            self.fog_map_canvas.config(scrollregion=(0, 0, mini_width, mini_height))
+            
+            # Tile-Größe für Fallback-Klick-Erkennung
+            self.fog_map_canvas.tile_size = mini_hex_size
+            self.fog_map_canvas.mini_scale = scale
+            
+            # Event-Bindings
+            self.fog_map_canvas.bind("<Button-1>", self.on_fog_map_left_click)
+            self.fog_map_canvas.bind("<Button-3>", self.on_fog_map_right_click)
+            self.fog_map_canvas.bind("<B1-Motion>", self.on_fog_map_drag)
+            self.fog_map_canvas.bind("<Button-2>", self.on_boss_hex_click)
+            
+            print(f"🗺️ GM-Panel: Hexagon-SVG-Map gerendert mit {len(tiles)} Hexagonen")
+        
+        except Exception as e:
+            import traceback
+            print(f"⚠️ Fehler beim Rendern der Hexagon-SVG-Miniatur: {e}")
+            traceback.print_exc()
             self.fog_map_canvas.tile_size = 8
     
     def update_fog_map_hexagon(self):
@@ -1497,15 +1699,15 @@ class GamemasterControlPanel(tk.Toplevel):
         map_width = max_x - min_x + hex_size * 2
         map_height = max_y - min_y + hex_size * 2
         
-        # Hole aktuelle Canvas-Größe (dynamisch nach Fenstergröße)
+        # Hole aktuelle Canvas-Größe (dynamisch nach Fenstergröße) - VERGRÖSSERT
         self.fog_map_canvas.update_idletasks()
-        available_width = max(800, self.fog_map_canvas.winfo_width() - 20)
-        available_height = max(600, self.fog_map_canvas.winfo_height() - 20)
+        available_width = max(1000, self.fog_map_canvas.winfo_width() - 20)
+        available_height = max(800, self.fog_map_canvas.winfo_height() - 20)
         
-        # Skaliere passend zur verfügbaren Fläche
+        # Skaliere passend zur verfügbaren Fläche - HÖHERER MAX-SCALE
         scale_x = available_width / map_width if map_width > 0 else 1.0
         scale_y = available_height / map_height if map_height > 0 else 1.0
-        base_scale = min(scale_x, scale_y, 1.5)  # Maximal 150% Vergrößerung
+        base_scale = min(scale_x, scale_y, 2.5)  # Maximal 250% Vergrößerung (erhöht von 150%)
         
         # User-Zoom anwenden
         user_zoom = self.gm_map_zoom.get() if hasattr(self, 'gm_map_zoom') else 1.0

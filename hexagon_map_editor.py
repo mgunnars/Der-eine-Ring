@@ -1462,6 +1462,9 @@ class HexagonMapEditor(tk.Toplevel):
             self.hex_map.background_visible = self.bg_visible
             self.hex_map.background_on_top = self.bg_on_top
             self.hex_map.hex_outline_only = self.hex_outline_only
+            # Speichere Hexagon-Outline-Einstellungen für Projektor-Rendering
+            self.hex_map.hex_outline_color = self.hex_outline_color
+            self.hex_map.hex_outline_opacity = self.hex_outline_opacity
             # Speichere individuelle Tile-Größen (als string-keys für JSON)
             self.hex_map.individual_tile_sizes = {f"{k[0]},{k[1]}": v for k, v in self.individual_tile_sizes.items()}
             # Speichere Text-Annotations
@@ -1489,6 +1492,12 @@ class HexagonMapEditor(tk.Toplevel):
             self.bg_visible_var.set(self.bg_visible)
             self.bg_on_top_var.set(self.bg_on_top)
             self.hex_outline_only_var.set(self.hex_outline_only)
+            
+            # Lade Hexagon-Outline-Einstellungen
+            self.hex_outline_color = getattr(self.hex_map, 'hex_outline_color', '#000000')
+            self.hex_outline_opacity = getattr(self.hex_map, 'hex_outline_opacity', 1.0)
+            if hasattr(self, 'outline_opacity_var'):
+                self.outline_opacity_var.set(self.hex_outline_opacity)
             
             # Lade individuelle Tile-Größen
             saved_sizes = getattr(self.hex_map, 'individual_tile_sizes', {})
