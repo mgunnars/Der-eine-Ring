@@ -40,7 +40,7 @@ class GamemasterControlPanel(tk.Toplevel):
     - Status-Leiste
     """
     
-    def __init__(self, parent, projector_window=None, webcam_tracker=None):
+    def __init__(self, parent, projector_window=None, webcam_tracker=None, map_data=None):
         super().__init__(parent)
         
         self.title("🎮 Gamemaster Kontrollpanel")
@@ -65,6 +65,10 @@ class GamemasterControlPanel(tk.Toplevel):
         
         self.projector_window = projector_window
         self.webcam_tracker = webcam_tracker
+        
+        # Map-Daten direkt speichern (falls kein Projektor)
+        self.standalone_map_data = map_data
+        self.selected_camera_index = 0
         
         # Webcam-Preview
         self.preview_running = False
@@ -183,6 +187,30 @@ class GamemasterControlPanel(tk.Toplevel):
                         bg="#1e1e1e", fg="white")
         title.pack(pady=10)
         
+        # ====== WEBCAM-GERÄTEAUSWAHL ======
+        device_frame = tk.LabelFrame(parent, text="📷 Kamera-Auswahl", bg="#2d2d2d", fg="white")
+        device_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        device_row = tk.Frame(device_frame, bg="#2d2d2d")
+        device_row.pack(fill=tk.X, padx=5, pady=5)
+        
+        tk.Label(device_row, text="Gerät:", bg="#2d2d2d", fg="white").pack(side=tk.LEFT, padx=5)
+        
+        # Verfügbare Kameras ermitteln
+        self.available_cameras = self._detect_webcams()
+        camera_names = [f"{cam['name']} ({cam['resolution']})" for cam in self.available_cameras]
+        if not camera_names:
+            camera_names = ["Keine Kamera gefunden"]
+        
+        self.camera_var = tk.StringVar(value=camera_names[0] if camera_names else "")
+        self.camera_combo = ttk.Combobox(device_row, textvariable=self.camera_var,
+                                         values=camera_names, state="readonly", width=35)
+        self.camera_combo.pack(side=tk.LEFT, padx=5)
+        self.camera_combo.bind('<<ComboboxSelected>>', self._on_camera_selected)
+        
+        tk.Button(device_row, text="🔄 Aktualisieren", command=self._refresh_webcam_list,
+                  bg="#17a2b8", fg="white", relief=tk.FLAT).pack(side=tk.LEFT, padx=5)
+        
         # Webcam-Vorschau
         preview_frame = tk.LabelFrame(parent, text="Live-Vorschau", bg="#2d2d2d", fg="white")
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -222,6 +250,63 @@ class GamemasterControlPanel(tk.Toplevel):
         info_label = tk.Label(parent, text=info_text, bg="#1e1e1e", fg="#aaaaaa",
                             font=("Arial", 9), justify=tk.LEFT)
         info_label.pack(padx=10, pady=5)
+    
+    def _detect_webcams(self):
+        """Erkennt verfügbare Webcams (unterdrückt OpenCV-Fehlermeldungen)"""
+        import os
+        import sys
+        
+        cameras = []
+        try:
+            # Unterdrücke OpenCV stderr-Ausgaben
+            stderr_backup = sys.stderr
+            devnull = open(os.devnull, 'w')
+            sys.stderr = devnull
+            
+            try:
+                for i in range(10):
+                    cap = cv2.VideoCapture(i)
+                    if cap.isOpened():
+                        ret, _ = cap.read()
+                        if ret:
+                            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                            cameras.append({
+                                "index": i,
+                                "name": f"Kamera {i}",
+                                "resolution": f"{width}x{height}"
+                            })
+                        cap.release()
+            finally:
+                # Stderr wiederherstellen
+                sys.stderr = stderr_backup
+                devnull.close()
+                
+        except Exception as e:
+            print(f"⚠️ Webcam-Erkennung Fehler: {e}")
+        
+        if not cameras:
+            cameras.append({"index": 0, "name": "Standard-Kamera", "resolution": "?"})
+        
+        return cameras
+    
+    def _refresh_webcam_list(self):
+        """Aktualisiert die Webcam-Liste"""
+        self.available_cameras = self._detect_webcams()
+        camera_names = [f"{cam['name']} ({cam['resolution']})" for cam in self.available_cameras]
+        self.camera_combo['values'] = camera_names
+        if camera_names:
+            self.camera_combo.set(camera_names[0])
+        self._set_status(f"🔄 {len(self.available_cameras)} Kamera(s) gefunden")
+    
+    def _on_camera_selected(self, event):
+        """Wenn eine Kamera ausgewählt wird"""
+        idx = self.camera_combo.current()
+        if idx >= 0 and idx < len(self.available_cameras):
+            cam = self.available_cameras[idx]
+            self._set_status(f"📷 Kamera {cam['index']} ausgewählt: {cam['resolution']}")
+            # Speichere ausgewählten Index für Webcam-Tracker
+            self.selected_camera_index = cam['index']
     
     def setup_fog_tab(self, parent):
         """Fog-of-War Tab - Kompaktes Layout für maximale Kartengröße"""
@@ -1133,7 +1218,13 @@ class GamemasterControlPanel(tk.Toplevel):
     
     def start_webcam(self):
         """Startet Webcam-Tracking"""
+        # Verwende ausgewählten Kamera-Index
+        camera_index = getattr(self, 'selected_camera_index', 0)
+        
         if self.webcam_tracker:
+            # Setze Kamera-Index im Tracker
+            if hasattr(self.webcam_tracker, 'camera_index'):
+                self.webcam_tracker.camera_index = camera_index
             success = self.webcam_tracker.start()
             if success:
                 self.webcam_status.config(text="Status: Läuft", fg="green")
@@ -1143,15 +1234,69 @@ class GamemasterControlPanel(tk.Toplevel):
                 self.update_preview()
             else:
                 messagebox.showerror("Fehler", "Konnte Webcam nicht starten!")
+        else:
+            # Erstelle einfachen Webcam-Tracker mit OpenCV
+            try:
+                self.simple_webcam = cv2.VideoCapture(camera_index)
+                if self.simple_webcam.isOpened():
+                    self.webcam_status.config(text="Status: Läuft", fg="green")
+                    self.start_webcam_btn.config(state=tk.DISABLED)
+                    self.stop_webcam_btn.config(state=tk.NORMAL)
+                    self.preview_running = True
+                    self._update_webcam_preview()
+                else:
+                    messagebox.showerror("Fehler", f"Konnte Kamera {camera_index} nicht öffnen!")
+            except Exception as e:
+                messagebox.showerror("Fehler", f"Webcam-Fehler: {e}")
+    
+    def _update_webcam_preview(self):
+        """Aktualisiert die Webcam-Vorschau"""
+        if not self.preview_running or not hasattr(self, 'simple_webcam') or not self.simple_webcam:
+            return
+        
+        try:
+            ret, frame = self.simple_webcam.read()
+            if ret:
+                # BGR zu RGB
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Skalieren auf Preview-Größe
+                preview_width = self.preview_label.winfo_width()
+                preview_height = self.preview_label.winfo_height()
+                
+                if preview_width > 10 and preview_height > 10:
+                    h, w = frame_rgb.shape[:2]
+                    scale = min(preview_width / w, preview_height / h)
+                    new_w, new_h = int(w * scale), int(h * scale)
+                    frame_resized = cv2.resize(frame_rgb, (new_w, new_h))
+                else:
+                    frame_resized = cv2.resize(frame_rgb, (640, 480))
+                
+                # Zu PhotoImage
+                from PIL import Image, ImageTk
+                img = Image.fromarray(frame_resized)
+                self.webcam_photo = ImageTk.PhotoImage(img)
+                self.preview_label.config(image=self.webcam_photo)
+        except Exception as e:
+            print(f"Preview-Fehler: {e}")
+        
+        # Nächster Frame
+        self.after(33, self._update_webcam_preview)
     
     def stop_webcam(self):
         """Stoppt Webcam-Tracking"""
+        self.preview_running = False
+        
         if self.webcam_tracker:
             self.webcam_tracker.stop()
-            self.webcam_status.config(text="Status: Gestoppt", fg="orange")
-            self.start_webcam_btn.config(state=tk.NORMAL)
-            self.stop_webcam_btn.config(state=tk.DISABLED)
-            self.preview_running = False
+        
+        if hasattr(self, 'simple_webcam') and self.simple_webcam:
+            self.simple_webcam.release()
+            self.simple_webcam = None
+        
+        self.webcam_status.config(text="Status: Gestoppt", fg="orange")
+        self.start_webcam_btn.config(state=tk.NORMAL)
+        self.stop_webcam_btn.config(state=tk.DISABLED)
     
     def calibrate_webcam(self):
         """Öffnet Kalibrierungs-Dialog"""
@@ -1164,27 +1309,43 @@ class GamemasterControlPanel(tk.Toplevel):
         """Fog-of-War ein/ausschalten"""
         if self.projector_window:
             self.projector_window.fog_enabled = self.fog_enabled_var.get()
-            self.projector_window.render_map()
+            # Unterstütze beide Projektor-Typen
+            if hasattr(self.projector_window, 'render_all'):
+                self.projector_window.render_all()
+            elif hasattr(self.projector_window, 'render_map'):
+                self.projector_window.render_map()
     
     def update_sight_range(self, value):
         """Aktualisiert Sichtweite"""
         val = int(float(value))
         self.sight_value_label.config(text=f"{val} Tiles")
-        if self.projector_window and self.projector_window.fog:
-            self.projector_window.fog.sight_range = val
+        if self.projector_window:
+            # Alte Fog-Klasse
+            if hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+                self.projector_window.fog.sight_range = val
     
     def reveal_all_fog(self):
         """Deckt gesamte Karte auf"""
-        if self.projector_window and self.projector_window.fog:
-            self.projector_window.fog.reveal_all()
-            self.projector_window.render_map()
+        if self.projector_window:
+            # SplitViewProjector hat eigene reveal_all_fog Methode
+            if hasattr(self.projector_window, 'reveal_all_fog'):
+                self.projector_window.reveal_all_fog()
+            # Alte Fog-Klasse
+            elif hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+                self.projector_window.fog.reveal_all()
+                self.projector_window.render_map()
             self.update_fog_map()
     
     def hide_all_fog(self):
         """Verbirgt gesamte Karte"""
-        if self.projector_window and self.projector_window.fog:
-            self.projector_window.fog.hide_all()
-            self.projector_window.render_map()
+        if self.projector_window:
+            # SplitViewProjector hat eigene reset_fog Methode
+            if hasattr(self.projector_window, 'reset_fog'):
+                self.projector_window.reset_fog()
+            # Alte Fog-Klasse
+            elif hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+                self.projector_window.fog.hide_all()
+                self.projector_window.render_map()
             self.update_fog_map()
     
     def _adjust_gm_zoom(self, delta):
@@ -1202,7 +1363,7 @@ class GamemasterControlPanel(tk.Toplevel):
     
     def update_fog_map(self):
         """Zeichnet die interaktive Fog-Karte"""
-        if not self.projector_window or not hasattr(self, 'fog_map_canvas'):
+        if not hasattr(self, 'fog_map_canvas'):
             return
         
         # Canvas leeren
@@ -1211,19 +1372,38 @@ class GamemasterControlPanel(tk.Toplevel):
         # Reset Hexagon-Mode Flag
         self.fog_map_canvas.is_hexagon_mode = False
         
+        # Map-Daten holen - aus Projektor oder standalone
+        map_data = None
+        is_svg_mode = False
+        
+        if self.projector_window and hasattr(self.projector_window, 'map_data'):
+            map_data = self.projector_window.map_data
+            is_svg_mode = getattr(self.projector_window, 'is_svg_mode', False)
+        elif self.standalone_map_data:
+            map_data = self.standalone_map_data
+        
+        if not map_data:
+            # Zeige Hinweis wenn keine Map-Daten
+            self.fog_map_canvas.create_text(
+                200, 100,
+                text="Keine Karte geladen.\n\nÖffne zuerst eine Karte im Editor\noder Projektor.",
+                fill="#888888",
+                font=("Arial", 12),
+                anchor=tk.NW
+            )
+            return
+        
         # SVG-Modus: Parse SVG und rendere Tiles
-        if self.projector_window.is_svg_mode:
+        if is_svg_mode and self.projector_window:
             self.update_fog_map_svg()
             return
         
-        # JSON-Modus: Map-Daten holen
-        map_data = self.projector_window.map_data
-        
         # Hexagon-Map-Erkennung: Prüfe auf hex_size
         if map_data.get("hex_size"):
-            self.update_fog_map_hexagon()
+            self.update_fog_map_hexagon_standalone(map_data)
             return
         
+        # JSON-Modus
         width = map_data.get("width", 50)
         height = map_data.get("height", 50)
         tiles = map_data.get("tiles", [])
@@ -1620,12 +1800,72 @@ class GamemasterControlPanel(tk.Toplevel):
     
     def update_fog_map_hexagon(self):
         """Zeichnet die interaktive Fog-Karte für Hexagon-Maps"""
-        import math
+        if self.projector_window and hasattr(self.projector_window, 'map_data'):
+            map_data = self.projector_window.map_data
+        elif self.standalone_map_data:
+            map_data = self.standalone_map_data
+        else:
+            return
         
-        map_data = self.projector_window.map_data
+        self.update_fog_map_hexagon_standalone(map_data)
+    
+    def update_fog_map_hexagon_standalone(self, map_data):
+        """Zeichnet die interaktive Fog-Karte für Hexagon-Maps (standalone-fähig)"""
+        import math
+        import os
+        
         hex_size = map_data.get("hex_size", 40)
         tiles = map_data.get("tiles", {})
         orientation = map_data.get("orientation", "pointy")
+        
+        # Normalisiere Orientation
+        if "pointy" in str(orientation).lower():
+            orientation = "pointy"
+        elif "flat" in str(orientation).lower():
+            orientation = "flat"
+        else:
+            orientation = "pointy"
+        
+        # === HINTERGRUNDBILD LADEN ===
+        background_image = None
+        svg_source = map_data.get("svg_source")
+        bg_path = map_data.get("background_image_path")
+        
+        if svg_source and os.path.exists(svg_source):
+            try:
+                import io
+                import cairosvg
+                from PIL import Image
+                
+                target_width = map_data.get("image_width", 2000)
+                target_height = map_data.get("image_height", 2000)
+                
+                png_data = cairosvg.svg2png(
+                    url=svg_source,
+                    output_width=target_width,
+                    output_height=target_height
+                )
+                background_image = Image.open(io.BytesIO(png_data))
+                print(f"✅ GM-Panel: SVG-Hintergrund geladen ({target_width}x{target_height})")
+            except Exception as e:
+                print(f"⚠️ GM-Panel: SVG laden fehlgeschlagen: {e}")
+        elif bg_path and os.path.exists(bg_path):
+            try:
+                from PIL import Image
+                background_image = Image.open(bg_path)
+                print(f"✅ GM-Panel: Hintergrundbild geladen")
+            except Exception as e:
+                print(f"⚠️ GM-Panel: Bild laden fehlgeschlagen: {e}")
+        
+        # Tiles normalisieren (kann Liste oder Dict sein)
+        if isinstance(tiles, list):
+            tiles_dict = {}
+            for tile in tiles:
+                if isinstance(tile, dict):
+                    q = tile.get("q", tile.get("hex_q", 0))
+                    r = tile.get("r", tile.get("hex_r", 0))
+                    tiles_dict[f"{q},{r}"] = tile
+            tiles = tiles_dict
         
         # Debug: Zeige Tile-Struktur
         if tiles:
@@ -1719,6 +1959,56 @@ class GamemasterControlPanel(tk.Toplevel):
         self.fog_map_canvas.hex_offset_y = offset_y
         self.fog_map_canvas.is_hexagon_mode = True
         
+        # === HINTERGRUNDBILD AUF CANVAS ZEICHNEN ===
+        if background_image:
+            try:
+                from PIL import Image, ImageTk
+                
+                # Bild skalieren auf Canvas-Größe
+                img_width = background_image.width
+                img_height = background_image.height
+                
+                # Berechne Skalierung: Bild sollte die Hexagon-Fläche abdecken
+                # Die Hexagon-Koordinaten wurden mit scale und offset berechnet
+                # Das Bild wird entsprechend skaliert und positioniert
+                
+                # Ziel: Bild so skalieren, dass es proportional zur Hexagon-Fläche passt
+                bg_scale_x = canvas_width / img_width if img_width > 0 else 1
+                bg_scale_y = canvas_height / img_height if img_height > 0 else 1
+                bg_scale = min(bg_scale_x, bg_scale_y) * 0.9  # 90% um Ränder einzuplanen
+                
+                new_width = int(img_width * bg_scale)
+                new_height = int(img_height * bg_scale)
+                
+                if new_width > 10 and new_height > 10:
+                    resized_bg = background_image.resize((new_width, new_height), Image.LANCZOS)
+                    
+                    # Zentrieren auf Canvas
+                    bg_offset_x = (canvas_width - new_width) // 2
+                    bg_offset_y = (canvas_height - new_height) // 2
+                    
+                    # PhotoImage erstellen und auf Canvas zeichnen
+                    self.fog_map_bg_photo = ImageTk.PhotoImage(resized_bg)
+                    self.fog_map_canvas.create_image(
+                        bg_offset_x, bg_offset_y,
+                        image=self.fog_map_bg_photo,
+                        anchor="nw",
+                        tags="background"
+                    )
+                    print(f"✅ GM-Panel: Hintergrund gerendert ({new_width}x{new_height})")
+                    
+                    # Speichere für Hexagon-Anpassung
+                    self.fog_map_canvas.bg_offset_x = bg_offset_x
+                    self.fog_map_canvas.bg_offset_y = bg_offset_y
+                    self.fog_map_canvas.bg_scale = bg_scale
+                    self.fog_map_canvas.has_background = True
+            except Exception as e:
+                print(f"⚠️ GM-Panel: Hintergrund rendern fehlgeschlagen: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            self.fog_map_canvas.has_background = False
+        
         # Zeichne jedes Hexagon
         for key, tile_data in tiles.items():
             if isinstance(tile_data, dict):
@@ -1758,9 +2048,18 @@ class GamemasterControlPanel(tk.Toplevel):
                 points.append((px, py))
             
             # Zeichne Hexagon
-            hex_id = self.fog_map_canvas.create_polygon(
-                points, fill=color, outline="#303030", width=1, tags=f"hex_{key}"
-            )
+            # Wenn Hintergrundbild vorhanden: Nur Outline, sonst mit Terrain-Farbe füllen
+            has_bg = getattr(self.fog_map_canvas, 'has_background', False)
+            if has_bg:
+                # Transparente Hexagone mit leichter Outline
+                hex_id = self.fog_map_canvas.create_polygon(
+                    points, fill="", outline="#404040", width=1, tags=f"hex_{key}"
+                )
+            else:
+                # Gefüllte Hexagone mit Terrain-Farbe
+                hex_id = self.fog_map_canvas.create_polygon(
+                    points, fill=color, outline="#303030", width=1, tags=f"hex_{key}"
+                )
             
             # Speichere für Klick-Erkennung
             self.fog_map_canvas.hex_tiles[key] = {
@@ -1770,8 +2069,27 @@ class GamemasterControlPanel(tk.Toplevel):
             }
         
         # Fog-Overlay für verdeckte Bereiche
-        # (Hexagon-Maps nutzen das Fog-System des Projektors)
-        if hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+        # Unterstützt sowohl SplitViewProjector (fog_revealed Set) als auch altes Fog-System
+        
+        # SplitViewProjector: fog_revealed ist ein Set von "q,r" Strings
+        if hasattr(self.projector_window, 'fog_revealed') and hasattr(self.projector_window, 'fog_enabled'):
+            fog_enabled = getattr(self.projector_window, 'fog_enabled', True)
+            fog_revealed = self.projector_window.fog_revealed
+            
+            for key, tile_info in self.fog_map_canvas.hex_tiles.items():
+                # key ist bereits "q,r" Format
+                is_revealed = key in fog_revealed or not fog_enabled
+                
+                if not is_revealed:
+                    # Zeichne dunkles Overlay
+                    self.fog_map_canvas.itemconfig(
+                        tile_info["id"], 
+                        fill="#1a1a1a",
+                        stipple="gray50"
+                    )
+        
+        # Altes Fog-System (Hexagon-Maps nutzen das Fog-System des Projektors)
+        elif hasattr(self.projector_window, 'fog') and self.projector_window.fog:
             fog_revealed = self.projector_window.fog.revealed  # numpy array, True=sichtbar
             fog_width = self.projector_window.fog.width
             fog_height = self.projector_window.fog.height
@@ -2317,50 +2635,68 @@ class GamemasterControlPanel(tk.Toplevel):
         if not closest_hex:
             return
         
-        # Berechne Fog-Grid-Position für dieses Hexagon
-        tile_info = hex_tiles[closest_hex]
-        cx, cy = tile_info["center"]
+        # Hole q,r Koordinaten aus dem Key (Format: "q,r")
+        try:
+            parts = closest_hex.split(',')
+            hex_q, hex_r = int(parts[0]), int(parts[1])
+        except:
+            print(f"⚠️ Ungültiger Hex-Key: {closest_hex}")
+            return
         
-        # Hole Canvas-Scrollregion (die tatsächliche Bildgröße)
-        scrollregion = self.fog_map_canvas.cget('scrollregion')
-        if scrollregion:
-            coords = [float(x) for x in scrollregion.split()]
-            canvas_width = coords[2] - coords[0]
-            canvas_height = coords[3] - coords[1]
-        else:
-            canvas_width = self.fog_map_canvas.winfo_width()
-            canvas_height = self.fog_map_canvas.winfo_height()
-        
-        # Map-Dimensionen (Fog-Grid)
-        map_width = self.projector_window.fog.width
-        map_height = self.projector_window.fog.height
-        
-        # Berechne Fog-Grid-Position
-        tile_x = int((cx / canvas_width) * map_width) if canvas_width > 0 else 0
-        tile_y = int((cy / canvas_height) * map_height) if canvas_height > 0 else 0
-        tile_x = max(0, min(tile_x, map_width - 1))
-        tile_y = max(0, min(tile_y, map_height - 1))
-        
-        # Brush-Größe (für Hexagone etwas größeren Bereich)
+        # Brush-Größe
         brush_size = self.fog_brush_size.get()
         
-        # Bereich berechnen (Hexagon-angepasst)
-        x1 = max(0, tile_x - brush_size)
-        y1 = max(0, tile_y - brush_size)
-        x2 = min(map_width - 1, tile_x + brush_size)
-        y2 = min(map_height - 1, tile_y + brush_size)
+        # SplitViewProjector: Hat reveal_fog_at_hex / hide_fog_at_hex
+        if hasattr(self.projector_window, 'reveal_fog_at_hex'):
+            if reveal:
+                self.projector_window.reveal_fog_at_hex(hex_q, hex_r, radius=brush_size)
+            else:
+                self.projector_window.hide_fog_at_hex(hex_q, hex_r)
+            self.update_fog_map()
+            return
         
-        # Fog updaten
-        if reveal:
-            self.projector_window.fog.reveal_area(x1, y1, x2, y2)
-        else:
-            self.projector_window.fog.hide_area(x1, y1, x2, y2)
-        
-        # Projektor-Karte neu rendern
-        self.projector_window.render_map()
-        
-        # GM-Karte aktualisieren (verwendet SVG wenn verfügbar)
-        self.update_fog_map()
+        # Fallback: Alte Fog-Klasse
+        if hasattr(self.projector_window, 'fog') and self.projector_window.fog:
+            tile_info = hex_tiles[closest_hex]
+            cx, cy = tile_info["center"]
+            
+            # Hole Canvas-Scrollregion (die tatsächliche Bildgröße)
+            scrollregion = self.fog_map_canvas.cget('scrollregion')
+            if scrollregion:
+                coords = [float(x) for x in scrollregion.split()]
+                canvas_width = coords[2] - coords[0]
+                canvas_height = coords[3] - coords[1]
+            else:
+                canvas_width = self.fog_map_canvas.winfo_width()
+                canvas_height = self.fog_map_canvas.winfo_height()
+            
+            # Map-Dimensionen (Fog-Grid)
+            map_width = self.projector_window.fog.width
+            map_height = self.projector_window.fog.height
+            
+            # Berechne Fog-Grid-Position
+            tile_x = int((cx / canvas_width) * map_width) if canvas_width > 0 else 0
+            tile_y = int((cy / canvas_height) * map_height) if canvas_height > 0 else 0
+            tile_x = max(0, min(tile_x, map_width - 1))
+            tile_y = max(0, min(tile_y, map_height - 1))
+            
+            # Bereich berechnen (Hexagon-angepasst)
+            x1 = max(0, tile_x - brush_size)
+            y1 = max(0, tile_y - brush_size)
+            x2 = min(map_width - 1, tile_x + brush_size)
+            y2 = min(map_height - 1, tile_y + brush_size)
+            
+            # Fog updaten
+            if reveal:
+                self.projector_window.fog.reveal_area(x1, y1, x2, y2)
+            else:
+                self.projector_window.fog.hide_area(x1, y1, x2, y2)
+            
+            # Projektor-Karte neu rendern
+            self.projector_window.render_map()
+            
+            # GM-Karte aktualisieren (verwendet SVG wenn verfügbar)
+            self.update_fog_map()
 
     def _update_fog_tiles_local(self, x1, y1, x2, y2, reveal):
         """Updatet nur die geänderten Tiles lokal (Performance)"""

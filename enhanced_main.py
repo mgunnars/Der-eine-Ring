@@ -167,6 +167,70 @@ class DerEineRingProApp(tk.Tk):
         """Zentrale Ja/Nein-Abfrage"""
         return messagebox.askyesno(title, message)
     
+    def _create_example_hex_map(self):
+        """Erstellt eine Beispiel-Hexagon-Karte mit Tiles"""
+        import math
+        
+        hex_size = 40
+        width, height = 15, 15
+        tiles = {}
+        
+        for q in range(width):
+            for r in range(height):
+                # Hex-Zentrum berechnen (pointy-top)
+                cx = hex_size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
+                cy = hex_size * (3 / 2 * r)
+                
+                coord_key = f"{q},{r}"
+                
+                # Terrain variieren
+                if (q + r) % 7 == 0:
+                    terrain = "FOREST"
+                elif (q + r) % 11 == 0:
+                    terrain = "WATER"
+                elif (q + r) % 5 == 0:
+                    terrain = "MOUNTAINS"
+                else:
+                    terrain = "PLAINS"
+                
+                # Spawn-Hexagone an bestimmten Positionen
+                is_spawn = (q == 2 and r == 2) or (q == 12 and r == 12)
+                
+                tiles[coord_key] = {
+                    "q": q,
+                    "r": r,
+                    "center_x": cx,
+                    "center_y": cy,
+                    "terrain": terrain,
+                    "fill_color": self._terrain_to_color(terrain),
+                    "is_spawn_hex": is_spawn,
+                    "is_boss_hex": (q == 7 and r == 7)
+                }
+        
+        return {
+            "width": width,
+            "height": height,
+            "hex_size": hex_size,
+            "orientation": "pointy",
+            "tiles": tiles,
+            "name": "Beispielkarte"
+        }
+    
+    def _terrain_to_color(self, terrain):
+        """Konvertiert Terrain-Typ zu Farbe"""
+        colors = {
+            "PLAINS": "#6ba868",
+            "FOREST": "#3d6b3d",
+            "DARK_FOREST": "#2d4a2d",
+            "MOUNTAINS": "#8a8a8a",
+            "WATER": "#4db8c4",
+            "SWAMP": "#5a7a5a",
+            "HILLS": "#9a9a6a",
+            "ROAD": "#8a7f6f",
+            "VILLAGE": "#b8956f"
+        }
+        return colors.get(terrain, "#4a4a4a")
+    
     def setup_ui(self):
         """Hauptmenü erstellen - FoundryVTT-inspiriertes Layout"""
         # Farben aus UI-Framework
@@ -731,15 +795,34 @@ class DerEineRingProApp(tk.Tk):
             from player_system import PlayerManager
             from boss_system import BossManager
             
-            # Hole Map-Daten
-            map_data = self.current_map_data
-            if self.current_editor:
-                map_data = self.current_editor.get_map_data()
+            # Hole Map-Daten aus verschiedenen Quellen
+            map_data = None
             
+            # 1. Aus aktuellem Editor
+            if self.current_editor and hasattr(self.current_editor, 'get_map_data'):
+                map_data = self.current_editor.get_map_data()
+                print(f"📋 Map-Daten aus Editor: {type(map_data)}")
+            
+            # 2. Aus gespeichertem current_map_data
+            if not map_data and self.current_map_data:
+                map_data = self.current_map_data
+                print(f"📋 Map-Daten aus current_map_data: {type(map_data)}")
+            
+            # 3. Aus Hexagon-Editor falls offen
             if not map_data:
-                from map_system import MapSystem
-                ms = MapSystem()
-                map_data = ms.create_default_map()
+                try:
+                    from ui_framework import WindowManager
+                    hex_editor = WindowManager.get("hexagon_editor")
+                    if hex_editor and hasattr(hex_editor, 'get_map_data'):
+                        map_data = hex_editor.get_map_data()
+                        print(f"📋 Map-Daten aus Hexagon-Editor: {type(map_data)}")
+                except:
+                    pass
+            
+            # 4. Fallback: Default-Map mit sichtbaren Hexagonen erstellen
+            if not map_data or not map_data.get("tiles"):
+                print("⚠️ Keine Map-Daten - erstelle Beispiel-Hexagon-Karte")
+                map_data = self._create_example_hex_map()
                 self._show_message("info", "Info", "Keine Karte geladen - Zeige Beispielkarte")
             
             # Player-Manager aus Story-Editor holen falls vorhanden
@@ -784,6 +867,15 @@ class DerEineRingProApp(tk.Tk):
                 svg_path=svg_path
             )
             
+            # WICHTIG: Als Projektor registrieren damit GM-Panel funktioniert
+            self.projector_window = self.split_view_projector
+            
+            # GM-Panel updaten falls bereits offen
+            if self.gm_panel and self.gm_panel.winfo_exists():
+                self.gm_panel.projector_window = self.split_view_projector
+                self.gm_panel.standalone_map_data = map_data
+                self.gm_panel.update_fog_map()
+            
             # Spieler verteilen wenn Spawn-Hexagone vorhanden
             self.split_view_projector.distribute_players()
             
@@ -813,8 +905,17 @@ class DerEineRingProApp(tk.Tk):
                 self.gm_panel.lift()
                 return
             
-            # Neues Panel erstellen
-            self.gm_panel = GamemasterControlPanel(self, self.projector_window, self.webcam_tracker)
+            # Neues Panel erstellen - auch mit Map-Daten falls vorhanden
+            map_data = self.current_map_data
+            if self.current_editor and hasattr(self.current_editor, 'get_map_data'):
+                map_data = self.current_editor.get_map_data()
+            
+            self.gm_panel = GamemasterControlPanel(
+                self, 
+                self.projector_window, 
+                self.webcam_tracker,
+                map_data=map_data
+            )
             
             # Bei WindowManager registrieren
             if UI_FRAMEWORK_AVAILABLE:

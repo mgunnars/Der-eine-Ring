@@ -500,19 +500,44 @@ class StoryEditor(tk.Toplevel):
             svg_path = None
             
             if self.current_scene:
-                # Szene hat map_path oder map_data
-                if hasattr(self.current_scene, 'map_path') and self.current_scene.map_path:
-                    svg_path = self.current_scene.map_path
-                if hasattr(self.current_scene, 'map_data') and self.current_scene.map_data:
+                print(f"🎬 Aktuelle Szene: {self.current_scene.name}")
+                
+                # Szene hat content_path (Pfad zur Map/SVG)
+                content_path = getattr(self.current_scene, 'content_path', None) or \
+                               getattr(self.current_scene, 'map_path', None) or \
+                               getattr(self.current_scene, 'background_source', None)
+                
+                if content_path:
+                    print(f"📁 Content-Pfad: {content_path}")
+                    
+                    # SVG-Pfad merken
+                    if content_path.endswith('.svg'):
+                        svg_path = content_path
+                    
+                    # JSON-Map laden
+                    if content_path.endswith('.json'):
+                        try:
+                            import json
+                            with open(content_path, 'r', encoding='utf-8') as f:
+                                map_data = json.load(f)
+                            print(f"✅ Map-Daten aus JSON geladen: {content_path}")
+                        except Exception as e:
+                            print(f"⚠️ Konnte JSON-Map nicht laden: {e}")
+                
+                # Embedded map_data aus Szene
+                if not map_data and hasattr(self.current_scene, 'map_data') and self.current_scene.map_data:
                     map_data = self.current_scene.map_data
+                    print(f"✅ Embedded Map-Daten aus Szene")
             
-            # Fallback: Leere Map-Daten
-            if not map_data:
-                map_data = {
-                    "width": 30, "height": 30,
-                    "hex_size": 40, "orientation": "pointy",
-                    "tiles": {}
-                }
+            # Versuche Map-Daten aus Parent zu holen
+            if not map_data and hasattr(self.master, 'current_map_data') and self.master.current_map_data:
+                map_data = self.master.current_map_data
+                print("✅ Map-Daten aus Hauptfenster geladen")
+            
+            # Fallback: Beispiel-Hexagon-Karte erstellen
+            if not map_data or not map_data.get("tiles"):
+                print("⚠️ Keine Map-Daten - erstelle Beispiel-Hexagon-Karte")
+                map_data = self._create_example_hex_map()
             
             # Split-View Projektor öffnen
             projector = SplitViewProjector(
@@ -524,6 +549,24 @@ class StoryEditor(tk.Toplevel):
                 svg_path=svg_path
             )
             
+            # WICHTIG: Projektor registrieren für GM-Panel
+            self.split_view_projector = projector
+            
+            # Parent-Fenster informieren (enhanced_main.py)
+            if hasattr(self.master, 'projector_window'):
+                self.master.projector_window = projector
+            
+            # GM-Panel updaten falls bereits offen
+            if hasattr(self.master, 'gm_panel') and self.master.gm_panel:
+                try:
+                    if self.master.gm_panel.winfo_exists():
+                        self.master.gm_panel.projector_window = projector
+                        self.master.gm_panel.standalone_map_data = map_data
+                        self.master.gm_panel.update_fog_map()
+                        print("✅ GM-Panel mit Split-View Projektor verbunden")
+                except:
+                    pass
+            
             # Spieler verteilen
             projector.distribute_players()
             
@@ -533,6 +576,60 @@ class StoryEditor(tk.Toplevel):
             import traceback
             traceback.print_exc()
             messagebox.showerror("Fehler", f"Split-View konnte nicht gestartet werden:\n{e}")
+    
+    def _create_example_hex_map(self):
+        """Erstellt eine Beispiel-Hexagon-Karte für Tests"""
+        import math
+        
+        hex_size = 40
+        grid_size = 15  # 15x15 Hexagone
+        
+        tiles = {}
+        terrain_types = ["PLAINS", "FOREST", "WATER", "MOUNTAINS", "HILLS"]
+        terrain_colors = {
+            "PLAINS": "#6ba868",
+            "FOREST": "#3d6b3d", 
+            "WATER": "#4db8c4",
+            "MOUNTAINS": "#8a8a8a",
+            "HILLS": "#9a9a6a"
+        }
+        
+        for q in range(grid_size):
+            for r in range(grid_size):
+                # Terrain basierend auf Position
+                if (q + r) % 7 == 0:
+                    terrain = "WATER"
+                elif (q * r) % 5 == 0:
+                    terrain = "FOREST"
+                elif q > grid_size - 3 and r > grid_size - 3:
+                    terrain = "MOUNTAINS"
+                else:
+                    terrain = "PLAINS"
+                
+                # Pointy-Top Hexagon-Koordinaten
+                center_x = hex_size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
+                center_y = hex_size * (3 / 2 * r)
+                
+                tile_data = {
+                    "q": q, "r": r,
+                    "terrain": terrain,
+                    "fill_color": terrain_colors.get(terrain, "#6ba868"),
+                    "center_x": center_x,
+                    "center_y": center_y,
+                    "is_spawn_hex": (q == 2 and r == 2) or (q == 12 and r == 12),
+                    "is_boss_hex": (q == 7 and r == 7)
+                }
+                
+                tiles[f"{q},{r}"] = tile_data
+        
+        return {
+            "name": "Beispiel-Hexagon-Karte",
+            "width": grid_size,
+            "height": grid_size,
+            "hex_size": hex_size,
+            "orientation": "pointy",
+            "tiles": tiles
+        }
     
     # ============================================================
     # ANSICHT

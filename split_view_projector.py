@@ -52,6 +52,12 @@ class ViewportConfig:
     # Team-Zuordnung
     team_id: Optional[str] = None
     team_color: str = "#4488FF"
+    
+    # Spawn-Area Extent (Bounding Box der Team-Spieler für Follow-Logik)
+    extent_min_q: int = 0
+    extent_min_r: int = 0
+    extent_max_q: int = 0
+    extent_max_r: int = 0
 
 
 class SplitViewProjector(tk.Toplevel):
@@ -94,6 +100,15 @@ class SplitViewProjector(tk.Toplevel):
         self.player_manager = player_manager or PlayerManager()
         self.boss_manager = boss_manager or BossManager()
         
+        # === FOG OF WAR ===
+        # Set von enthüllten Hexagonen: {"q,r", "q,r", ...}
+        self.fog_revealed: Set[str] = set()
+        self.fog_enabled = True  # Fog standardmäßig aktiv
+        
+        # Projektor-Kompatibilität (für GM-Panel)
+        self.is_split_view = True  # Marker für Split-View-Modus
+        self.is_svg_mode = bool(svg_path)
+        
         # Split-View Konfiguration
         self.num_screens = num_screens
         self.split_enabled = num_screens > 1
@@ -116,10 +131,22 @@ class SplitViewProjector(tk.Toplevel):
         
         # Hexagon-Parameter
         self.hex_size = self.map_data.get("hex_size", 40)
-        self.orientation = self.map_data.get("orientation", "pointy")
+        # Orientation normalisieren: "pointy-top" -> "pointy", "flat-top" -> "flat"
+        raw_orientation = self.map_data.get("orientation", "pointy")
+        if "pointy" in raw_orientation.lower():
+            self.orientation = "pointy"
+        elif "flat" in raw_orientation.lower():
+            self.orientation = "flat"
+        else:
+            self.orientation = "pointy"
+        print(f"🔷 Hex-Parameter: size={self.hex_size}, orientation={self.orientation}")
         
         # Tiles normalisieren (kann Liste oder Dict sein)
         self._normalize_tiles()
+        
+        # Hintergrundbild laden (SVG oder PNG)
+        self.background_image = None
+        self._load_background_image()
         
         # Animation
         self.animation_running = False
@@ -134,6 +161,76 @@ class SplitViewProjector(tk.Toplevel):
         
         # UI Setup
         self._setup_ui()
+    
+    # === PROJEKTOR-KOMPATIBILITÄT (für GM-Panel) ===
+    
+    def render_map(self):
+        """Alias für render_all - Kompatibilität mit GM-Panel"""
+        self.render_all()
+    
+    def reveal_fog_at_hex(self, q: int, r: int, radius: int = 0):
+        """
+        Enthüllt Fog-of-War an einer Hexagon-Position.
+        
+        Args:
+            q, r: Hexagon-Koordinaten
+            radius: Anzahl Hexagone drumherum die auch enthüllt werden
+        """
+        # Zentrum enthüllen
+        self.fog_revealed.add(f"{q},{r}")
+        
+        # Radius enthüllen (Hexagon-Nachbarn)
+        if radius > 0:
+            neighbors = self._get_hex_neighbors_in_radius(q, r, radius)
+            for nq, nr in neighbors:
+                self.fog_revealed.add(f"{nq},{nr}")
+        
+        print(f"🌫️ Fog enthüllt bei ({q},{r}) + Radius {radius} = {len(self.fog_revealed)} Hexe sichtbar")
+        self.render_all()
+    
+    def reveal_fog_area(self, hex_list: List[Tuple[int, int]]):
+        """Enthüllt mehrere Hexagone auf einmal"""
+        for q, r in hex_list:
+            self.fog_revealed.add(f"{q},{r}")
+        self.render_all()
+    
+    def hide_fog_at_hex(self, q: int, r: int):
+        """Verbirgt ein Hexagon wieder im Fog"""
+        key = f"{q},{r}"
+        if key in self.fog_revealed:
+            self.fog_revealed.remove(key)
+        self.render_all()
+    
+    def reveal_all_fog(self):
+        """Enthüllt die gesamte Karte (GM-Modus)"""
+        tiles = self._get_tiles_dict()
+        for coord_key in tiles.keys():
+            self.fog_revealed.add(coord_key)
+        self.fog_enabled = False
+        print(f"🌫️ Gesamte Karte enthüllt: {len(self.fog_revealed)} Hexe")
+        self.render_all()
+    
+    def reset_fog(self):
+        """Setzt Fog-of-War zurück - alles verborgen"""
+        self.fog_revealed.clear()
+        self.fog_enabled = True
+        print("🌫️ Fog-of-War zurückgesetzt")
+        self.render_all()
+    
+    def is_hex_revealed(self, q: int, r: int) -> bool:
+        """Prüft ob ein Hexagon enthüllt ist"""
+        if not self.fog_enabled:
+            return True
+        return f"{q},{r}" in self.fog_revealed
+    
+    def _get_hex_neighbors_in_radius(self, q: int, r: int, radius: int) -> List[Tuple[int, int]]:
+        """Gibt alle Hexagone im Radius zurück (Axial-Koordinaten)"""
+        neighbors = []
+        for dq in range(-radius, radius + 1):
+            for dr in range(max(-radius, -dq - radius), min(radius, -dq + radius) + 1):
+                if dq != 0 or dr != 0:  # Nicht das Zentrum
+                    neighbors.append((q + dq, r + dr))
+        return neighbors
     
     def _normalize_tiles(self):
         """
@@ -174,10 +271,131 @@ class SplitViewProjector(tk.Toplevel):
             self._normalize_tiles()
             return self.map_data.get("tiles", {})
         return {}
-        self._setup_viewports()
+    
+    def _load_background_image(self):
+        """Lädt das Hintergrundbild (SVG oder PNG) für die Karte"""
+        import os
         
-        # Initial Render
-        self.after(100, self.render_all)
+        # Mögliche Bildquellen prüfen
+        image_path = None
+        
+        # 1. svg_source aus map_data
+        if self.map_data.get("svg_source"):
+            image_path = self.map_data["svg_source"]
+        # 2. svg_path Parameter
+        elif self.svg_path:
+            image_path = self.svg_path
+        # 3. background_image_path aus map_data
+        elif self.map_data.get("background_image_path"):
+            image_path = self.map_data["background_image_path"]
+        
+        if not image_path:
+            print("📷 Kein Hintergrundbild gefunden - nur Hexagone werden gerendert")
+            return
+        
+        # Prüfe ob Datei existiert
+        if not os.path.exists(image_path):
+            print(f"⚠️ Hintergrundbild nicht gefunden: {image_path}")
+            return
+        
+        try:
+            if image_path.lower().endswith('.svg'):
+                # SVG laden - versuche cairosvg oder konvertiere zu PNG
+                self._load_svg_background(image_path)
+            else:
+                # PNG/JPG direkt laden
+                self.background_image = Image.open(image_path).convert('RGBA')
+                print(f"✅ Hintergrundbild geladen: {image_path} ({self.background_image.width}x{self.background_image.height})")
+        except Exception as e:
+            print(f"⚠️ Fehler beim Laden des Hintergrundbilds: {e}")
+            self.background_image = None
+    
+    def _load_svg_background(self, svg_path: str):
+        """Lädt eine SVG-Datei als Hintergrundbild"""
+        import io
+        
+        try:
+            # Versuche cairosvg
+            import cairosvg
+            
+            # Zielgröße aus map_data oder Standard
+            target_width = self.map_data.get("image_width", 2000)
+            target_height = self.map_data.get("image_height", 2000)
+            
+            # SVG zu PNG konvertieren
+            png_data = cairosvg.svg2png(
+                url=svg_path,
+                output_width=target_width,
+                output_height=target_height
+            )
+            
+            self.background_image = Image.open(io.BytesIO(png_data)).convert('RGBA')
+            print(f"✅ SVG-Hintergrund geladen: {svg_path} ({self.background_image.width}x{self.background_image.height})")
+            
+        except ImportError:
+            print("⚠️ cairosvg nicht installiert - SVG-Hintergrund kann nicht geladen werden")
+            print("   Installation: pip install cairosvg")
+            # Fallback: Versuche mit Pillow (unterstützt keine SVG direkt)
+            self.background_image = None
+        except Exception as e:
+            print(f"⚠️ SVG-Lade-Fehler: {e}")
+            self.background_image = None
+    
+    def _render_background_in_viewport(self, img: Image.Image, viewport: ViewportConfig):
+        """
+        Rendert den sichtbaren Ausschnitt des Hintergrundbilds in den Viewport.
+        Berücksichtigt Zoom und Zentrierung.
+        """
+        if not self.background_image:
+            return
+        
+        # Viewport-Zentrum in Pixel-Koordinaten der Karte
+        center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
+        
+        # Sichtbarer Bereich in Karten-Koordinaten (vor Zoom)
+        half_w = viewport.width / (2 * viewport.zoom)
+        half_h = viewport.height / (2 * viewport.zoom)
+        
+        # Crop-Box im Hintergrundbild
+        src_left = int(center_px - half_w)
+        src_top = int(center_py - half_h)
+        src_right = int(center_px + half_w)
+        src_bottom = int(center_py + half_h)
+        
+        # Begrenze auf Bildgrenzen
+        bg_w, bg_h = self.background_image.size
+        
+        # Berechne welcher Teil des Hintergrunds sichtbar ist
+        crop_left = max(0, src_left)
+        crop_top = max(0, src_top)
+        crop_right = min(bg_w, src_right)
+        crop_bottom = min(bg_h, src_bottom)
+        
+        # Ist überhaupt etwas sichtbar?
+        if crop_left >= crop_right or crop_top >= crop_bottom:
+            return
+        
+        # Ausschnitt aus Hintergrundbild
+        try:
+            cropped = self.background_image.crop((crop_left, crop_top, crop_right, crop_bottom))
+            
+            # Zielgröße im Viewport berechnen (mit Zoom)
+            target_w = int((crop_right - crop_left) * viewport.zoom)
+            target_h = int((crop_bottom - crop_top) * viewport.zoom)
+            
+            if target_w > 0 and target_h > 0:
+                # Skalieren
+                scaled = cropped.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                
+                # Position im Viewport berechnen
+                # Offset für den Fall dass der Crop-Bereich nicht am Rand des sichtbaren Bereichs beginnt
+                paste_x = int((crop_left - src_left) * viewport.zoom)
+                paste_y = int((crop_top - src_top) * viewport.zoom)
+                
+                # Ins Viewport-Bild einfügen
+                img.paste(scaled, (paste_x, paste_y))
+        except Exception as e:
+            print(f"⚠️ Hintergrund-Render-Fehler: {e}")
     
     def _setup_ui(self):
         """Erstellt die UI-Elemente"""
@@ -195,6 +413,9 @@ class SplitViewProjector(tk.Toplevel):
         tk.Button(self.control_bar, text="📺 Fullscreen (F11)", command=self.toggle_fullscreen,
                   **btn_style).pack(side=tk.LEFT, padx=5, pady=5)
         
+        tk.Button(self.control_bar, text="🎮 GM-Übersicht", command=self._open_gm_overview,
+                  bg="#e94560", fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=5, pady=5)
+        
         # Split-View Toggle
         self.split_var = tk.BooleanVar(value=self.split_enabled)
         tk.Checkbutton(self.control_bar, text="🔲 Split-View", variable=self.split_var,
@@ -208,6 +429,10 @@ class SplitViewProjector(tk.Toplevel):
         self.screen_spinbox.delete(0, tk.END)
         self.screen_spinbox.insert(0, str(self.num_screens))
         self.screen_spinbox.pack(side=tk.LEFT, padx=5)
+        
+        # Team-Zuordnung Button
+        tk.Button(self.control_bar, text="👥 Teams zuordnen", command=self._open_team_assignment,
+                  bg="#16213e", fg="white", relief=tk.FLAT, padx=8).pack(side=tk.LEFT, padx=5)
         
         # Minimap Toggle
         self.minimap_var = tk.BooleanVar(value=self.minimap_enabled)
@@ -261,15 +486,28 @@ class SplitViewProjector(tk.Toplevel):
         canvas_width = self.main_canvas.winfo_width() or 1280
         canvas_height = self.main_canvas.winfo_height() or 720
         
+        # Spawn-Hexagone finden für Zentrierung
+        spawn_hexes = self._get_spawn_hexagons()
+        
         if not self.split_enabled or self.num_screens <= 1:
-            # Einzelner Viewport
-            self.viewports.append(ViewportConfig(
+            # Einzelner Viewport - zentriert auf erstes Spawn-Hex oder Kartenmitte
+            center_q, center_r = (0, 0)
+            if spawn_hexes:
+                center_q, center_r = spawn_hexes[0]
+            else:
+                # Kartenmitte berechnen
+                center_q, center_r = self._get_map_center()
+            
+            viewport = ViewportConfig(
                 screen_index=0,
                 x_offset=0,
                 width=canvas_width,
                 height=canvas_height,
-                zoom=1.0  # Normaler Zoom für Single-View
-            ))
+                zoom=1.0,
+                center_q=center_q,
+                center_r=center_r
+            )
+            self.viewports.append(viewport)
             return
         
         # Multi-Screen Setup
@@ -279,6 +517,7 @@ class SplitViewProjector(tk.Toplevel):
         for i in range(self.num_screens):
             team = teams[i] if i < len(teams) else None
             
+            # Viewport erstellen
             viewport = ViewportConfig(
                 screen_index=i,
                 x_offset=i * screen_width,
@@ -286,13 +525,76 @@ class SplitViewProjector(tk.Toplevel):
                 height=canvas_height,
                 zoom=self.split_zoom,
                 team_id=team.id if team else None,
-                team_color=team.color if team else "#888888",
-                center_q=team.hex_q if team else 0,
-                center_r=team.hex_r if team else 0
+                team_color=team.color if team else "#888888"
             )
+            
+            # Team-Spawn-Extent berechnen
+            if team:
+                self._calculate_team_spawn_extent(viewport, team.id)
+            elif i < len(spawn_hexes):
+                # Einzelnes Spawn-Hex: Extent = dieses Hex + Umgebung
+                sq, sr = spawn_hexes[i]
+                viewport.center_q = sq
+                viewport.center_r = sr
+                # Kleiner Extent um das Spawn-Hex
+                viewport.extent_min_q = sq - 3
+                viewport.extent_max_q = sq + 3
+                viewport.extent_min_r = sr - 3
+                viewport.extent_max_r = sr + 3
+            else:
+                # Fallback: Kartenmitte
+                viewport.center_q, viewport.center_r = self._get_map_center()
+            
             self.viewports.append(viewport)
         
         print(f"📺 {len(self.viewports)} Viewports erstellt")
+    
+    def _get_spawn_hexagons(self) -> List[Tuple[int, int]]:
+        """Findet alle Spawn-Hexagone auf der Karte"""
+        tiles = self._get_tiles_dict()
+        spawn_hexes = []
+        
+        for coord_key, tile_data in tiles.items():
+            if isinstance(tile_data, dict) and tile_data.get("is_spawn_hex", False):
+                try:
+                    parts = coord_key.split(',')
+                    q, r = int(parts[0]), int(parts[1])
+                    spawn_hexes.append((q, r))
+                except:
+                    pass
+        
+        return spawn_hexes
+    
+    def _get_map_center(self) -> Tuple[int, int]:
+        """Berechnet das Zentrum der Karte"""
+        tiles = self._get_tiles_dict()
+        if not tiles:
+            return (0, 0)
+        
+        sum_q, sum_r, count = 0, 0, 0
+        for coord_key in tiles.keys():
+            try:
+                parts = coord_key.split(',')
+                q, r = int(parts[0]), int(parts[1])
+                sum_q += q
+                sum_r += r
+                count += 1
+            except:
+                pass
+        
+        if count > 0:
+            return (sum_q // count, sum_r // count)
+        return (0, 0)
+    
+    def _open_gm_overview(self):
+        """Öffnet das GM-Übersichtsfenster mit der kompletten Karte"""
+        gm_window = GMOverviewWindow(
+            self,
+            map_data=self.map_data,
+            player_manager=self.player_manager,
+            boss_manager=self.boss_manager,
+            split_view_projector=self
+        )
     
     def toggle_fullscreen(self):
         """Wechselt zwischen Vollbild und Fenster"""
@@ -382,18 +684,49 @@ class SplitViewProjector(tk.Toplevel):
     
     def _update_viewport_follow(self, viewport: ViewportConfig, target_q: int, target_r: int):
         """
-        Aktualisiert das Viewport-Zentrum sanft zum Ziel.
-        Implementiert sanftes Following mit Interpolation.
+        Aktualisiert das Viewport-Zentrum so dass ALLE Spieler des Teams sichtbar bleiben.
+        Berechnet Bounding Box aller Team-Spieler und zentriert darauf.
         """
-        # Direkte Aktualisierung für schnelle Reaktion
-        # (könnte später durch Interpolation ersetzt werden für sanfteres Following)
-        old_q, old_r = viewport.center_q, viewport.center_r
-        
-        # Nur aktualisieren wenn sich Position geändert hat
-        if (old_q, old_r) != (target_q, target_r):
+        if not viewport.team_id:
+            # Kein Team - einfach auf Ziel zentrieren
             viewport.center_q = target_q
             viewport.center_r = target_r
-            print(f"🎯 Viewport {viewport.screen_index} folgt: ({old_q},{old_r}) -> ({target_q},{target_r})")
+            return
+        
+        # Alle aktiven Spieler des Teams sammeln
+        team_players = [
+            p for p in self.player_manager.players.values()
+            if p.team_id == viewport.team_id and p.is_active
+        ]
+        
+        if not team_players:
+            viewport.center_q = target_q
+            viewport.center_r = target_r
+            return
+        
+        # Bounding Box aller Team-Spieler berechnen
+        min_q = min(p.hex_q for p in team_players)
+        max_q = max(p.hex_q for p in team_players)
+        min_r = min(p.hex_r for p in team_players)
+        max_r = max(p.hex_r for p in team_players)
+        
+        # Zentrum der Bounding Box
+        new_center_q = (min_q + max_q) // 2
+        new_center_r = (min_r + max_r) // 2
+        
+        old_q, old_r = viewport.center_q, viewport.center_r
+        
+        if (old_q, old_r) != (new_center_q, new_center_r):
+            viewport.center_q = new_center_q
+            viewport.center_r = new_center_r
+            
+            # Extent aktualisieren
+            viewport.extent_min_q = min_q
+            viewport.extent_max_q = max_q
+            viewport.extent_min_r = min_r
+            viewport.extent_max_r = max_r
+            
+            print(f"🎯 Viewport {viewport.screen_index} folgt Team: Zentrum ({new_center_q},{new_center_r}), {len(team_players)} Spieler")
     
     def update_player_position(self, player_id: str, new_q: int, new_r: int):
         """
@@ -434,6 +767,83 @@ class SplitViewProjector(tk.Toplevel):
             self.render_all()
         except ValueError:
             pass
+    
+    def _open_team_assignment(self):
+        """Öffnet Dialog zur Team-Zuordnung pro Screen"""
+        dialog = TeamAssignmentDialog(self, self.player_manager, self.viewports)
+        self.wait_window(dialog)
+        
+        if dialog.result:
+            # Aktualisiere Viewports mit neuen Team-Zuordnungen
+            for i, team_id in enumerate(dialog.result):
+                if i < len(self.viewports):
+                    self.viewports[i].team_id = team_id
+                    if team_id:
+                        team = self.player_manager.get_team(team_id)
+                        if team:
+                            self.viewports[i].team_color = team.color
+                            # Spawn-Area für dieses Team berechnen
+                            self._calculate_team_spawn_extent(self.viewports[i], team_id)
+            self.render_all()
+    
+    def _calculate_team_spawn_extent(self, viewport: ViewportConfig, team_id: str):
+        """Berechnet die Spawn-Area basierend auf Spieler-Positionen des Teams"""
+        
+        # WICHTIG: Nutze NUR player.team_id als Quelle (nicht member_ids!)
+        team_players = [
+            p for p in self.player_manager.players.values()
+            if p.team_id == team_id and p.is_active
+        ]
+        
+        if team_players:
+            # Bounding Box der Spieler-Positionen
+            min_q = min(p.hex_q for p in team_players)
+            max_q = max(p.hex_q for p in team_players)
+            min_r = min(p.hex_r for p in team_players)
+            max_r = max(p.hex_r for p in team_players)
+            
+            viewport.extent_min_q = min_q
+            viewport.extent_max_q = max_q
+            viewport.extent_min_r = min_r
+            viewport.extent_max_r = max_r
+            
+            viewport.center_q = (min_q + max_q) // 2
+            viewport.center_r = (min_r + max_r) // 2
+            
+            print(f"📐 Team {team_id}: {len(team_players)} Spieler, Zentrum: ({viewport.center_q},{viewport.center_r})")
+            return
+        
+        # Fallback: Spawn-Hexagone verwenden
+        spawn_hexes = self._get_spawn_hexagons()
+        if spawn_hexes and viewport.screen_index < len(spawn_hexes):
+            # Jeder Viewport bekommt ein anderes Spawn-Hex
+            sq, sr = spawn_hexes[viewport.screen_index]
+            viewport.center_q = sq
+            viewport.center_r = sr
+            viewport.extent_min_q = sq
+            viewport.extent_max_q = sq
+            viewport.extent_min_r = sr
+            viewport.extent_max_r = sr
+            print(f"📐 Team {team_id}: Spawn-Hex ({sq},{sr})")
+    
+    def _get_spawn_hexagons_for_team(self, team_id: str) -> List[Tuple[int, int]]:
+        """Findet Spawn-Hexagone die einem bestimmten Team zugeordnet sind"""
+        tiles = self._get_tiles_dict()
+        spawn_hexes = []
+        
+        for coord_key, tile_data in tiles.items():
+            if isinstance(tile_data, dict) and tile_data.get("is_spawn_hex", False):
+                # Prüfe ob Team-ID gesetzt ist
+                tile_team = tile_data.get("spawn_team_id", tile_data.get("team_id", None))
+                if tile_team == team_id or tile_team is None:  # None = allgemeine Spawn-Hexe
+                    try:
+                        parts = coord_key.split(',')
+                        q, r = int(parts[0]), int(parts[1])
+                        spawn_hexes.append((q, r))
+                    except:
+                        pass
+        
+        return spawn_hexes
     
     def _on_zoom_changed(self, value):
         """Callback wenn Zoom geändert wird"""
@@ -477,7 +887,21 @@ class SplitViewProjector(tk.Toplevel):
     # =========================================================
     
     def _hex_to_pixel(self, q: int, r: int) -> Tuple[float, float]:
-        """Konvertiert Hex-Koordinaten zu Pixel-Koordinaten"""
+        """
+        Konvertiert Hex-Koordinaten zu Pixel-Koordinaten.
+        Verwendet gespeicherte center_x/center_y aus Tile-Daten wenn vorhanden,
+        sonst berechnet aus hex_size und orientation.
+        """
+        # Versuche gespeicherte Koordinaten aus Tiles zu verwenden
+        tiles = self._get_tiles_dict()
+        coord_key = f"{q},{r}"
+        
+        if coord_key in tiles:
+            tile = tiles[coord_key]
+            if isinstance(tile, dict) and "center_x" in tile and "center_y" in tile:
+                return (tile["center_x"], tile["center_y"])
+        
+        # Fallback: Berechne aus Hex-Koordinaten
         if self.orientation == "pointy":
             x = self.hex_size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
             y = self.hex_size * (3 / 2 * r)
@@ -561,10 +985,11 @@ class SplitViewProjector(tk.Toplevel):
                 viewport_image = self._render_viewport(self.viewports[0])
                 main_image = viewport_image
         
-        # Minimap auf alle Viewports rendern
+        # Minimap auf alle Viewports rendern - jede Minimap zeigt NUR das eigene Team
         if self.minimap_enabled:
-            minimap = self._render_minimap()
             for viewport in self.viewports:
+                # Jeder Viewport bekommt seine eigene Minimap mit nur seinem Team
+                minimap = self._render_minimap(for_viewport=viewport)
                 self._overlay_minimap(main_image, minimap, viewport)
         
         # Zu PhotoImage konvertieren und anzeigen
@@ -576,6 +1001,11 @@ class SplitViewProjector(tk.Toplevel):
         """Rendert einen einzelnen Viewport"""
         # Viewport-Image erstellen
         img = Image.new('RGBA', (viewport.width, viewport.height), (20, 20, 30, 255))
+        
+        # === HINTERGRUNDBILD RENDERN ===
+        if self.background_image:
+            self._render_background_in_viewport(img, viewport)
+        
         draw = ImageDraw.Draw(img)
         
         tiles = self._get_tiles_dict()
@@ -587,7 +1017,9 @@ class SplitViewProjector(tk.Toplevel):
         half_w = viewport.width / (2 * viewport.zoom)
         half_h = viewport.height / (2 * viewport.zoom)
         
-        # Zeichne alle sichtbaren Hexagone
+        # Zeichne Hexagon-Overlays (Spawn, Boss, etc.) - nicht die Grundfarbe wenn Hintergrund vorhanden
+        has_background = self.background_image is not None
+        
         for coord_key, tile_data in tiles.items():
             if not isinstance(tile_data, dict):
                 continue
@@ -598,9 +1030,13 @@ class SplitViewProjector(tk.Toplevel):
             except:
                 continue
             
-            # Hole Tile-Zentrum
-            tile_cx = tile_data.get("center_x", 0)
-            tile_cy = tile_data.get("center_y", 0)
+            # Hole Tile-Zentrum - berechne falls nicht vorhanden
+            if "center_x" in tile_data and "center_y" in tile_data:
+                tile_cx = tile_data.get("center_x", 0)
+                tile_cy = tile_data.get("center_y", 0)
+            else:
+                # Berechne aus Hex-Koordinaten
+                tile_cx, tile_cy = self._hex_to_pixel(q, r)
             
             # Prüfe ob im Viewport sichtbar
             if (tile_cx < center_px - half_w - self.hex_size or
@@ -613,8 +1049,11 @@ class SplitViewProjector(tk.Toplevel):
             vx = viewport.width / 2 + (tile_cx - center_px) * viewport.zoom
             vy = viewport.height / 2 + (tile_cy - center_py) * viewport.zoom
             
-            # Zeichne Hexagon
-            self._draw_hexagon(draw, vx, vy, viewport.zoom, tile_data, viewport)
+            # FOG OF WAR: Prüfe ob Hexagon enthüllt ist
+            is_revealed = self.is_hex_revealed(q, r)
+            
+            # Zeichne Hexagon (mit Fog-Status)
+            self._draw_hexagon(draw, vx, vy, viewport.zoom, tile_data, viewport, is_revealed, q, r)
         
         # Spieler-Tokens zeichnen
         self._draw_players_in_viewport(img, viewport)
@@ -622,17 +1061,21 @@ class SplitViewProjector(tk.Toplevel):
         # Boss-Overlays zeichnen
         self._draw_bosses_in_viewport(img, viewport)
         
-        # Team-Info-Header
+        # Team-Info-Header - IMMER zeichnen (auch ohne Team)
         if viewport.team_id:
             team = self.player_manager.get_team(viewport.team_id)
             if team:
                 self._draw_team_header(img, team, viewport)
+        else:
+            # Fallback: Zeige Viewport-Nummer
+            self._draw_viewport_header(img, viewport)
         
         return img
     
     def _draw_hexagon(self, draw: ImageDraw.Draw, cx: float, cy: float, 
-                      zoom: float, tile_data: Dict, viewport: ViewportConfig):
-        """Zeichnet ein einzelnes Hexagon"""
+                      zoom: float, tile_data: Dict, viewport: ViewportConfig,
+                      is_revealed: bool = True, q: int = 0, r: int = 0):
+        """Zeichnet ein einzelnes Hexagon mit Fog-of-War Unterstützung"""
         scaled_size = self.hex_size * zoom * 0.95
         
         # Hexagon-Punkte berechnen
@@ -646,21 +1089,34 @@ class SplitViewProjector(tk.Toplevel):
             py = cy + scaled_size * math.sin(angle)
             points.append((px, py))
         
-        # Füllfarbe
-        fill_color = tile_data.get("fill_color", "#444444")
-        try:
-            if fill_color.startswith('#'):
-                r = int(fill_color[1:3], 16)
-                g = int(fill_color[3:5], 16)
-                b = int(fill_color[5:7], 16)
-                fill = (r, g, b, 200)
-            else:
-                fill = (68, 68, 68, 200)
-        except:
-            fill = (68, 68, 68, 200)
+        # FOG OF WAR: Wenn nicht enthüllt, dunkel zeichnen
+        if not is_revealed and self.fog_enabled:
+            # Fog-Hexagon: Dunkles Grau/Schwarz
+            draw.polygon(points, fill=(15, 15, 20, 255), outline=(30, 30, 40, 255))
+            return
         
-        # Hexagon zeichnen
-        draw.polygon(points, fill=fill, outline=(100, 100, 100, 255))
+        # Wenn Hintergrundbild vorhanden ist, nur Umrisse und Overlays zeichnen
+        has_background = self.background_image is not None
+        
+        if not has_background:
+            # Kein Hintergrund - zeichne fill_color
+            fill_color = tile_data.get("fill_color", "#444444")
+            try:
+                if fill_color.startswith('#'):
+                    r_c = int(fill_color[1:3], 16)
+                    g_c = int(fill_color[3:5], 16)
+                    b_c = int(fill_color[5:7], 16)
+                    fill = (r_c, g_c, b_c, 200)
+                else:
+                    fill = (68, 68, 68, 200)
+            except:
+                fill = (68, 68, 68, 200)
+            
+            # Hexagon mit Füllfarbe zeichnen
+            draw.polygon(points, fill=fill, outline=(100, 100, 100, 255))
+        else:
+            # Hintergrund vorhanden - nur leichter Umriss
+            draw.polygon(points, fill=None, outline=(50, 50, 50, 100))
         
         # Spezielle Markierungen
         if tile_data.get("is_boss_hex", False):
@@ -678,18 +1134,23 @@ class SplitViewProjector(tk.Toplevel):
         
         center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
         
+        # Hole Team-Objekt für member_ids Check
+        viewport_team = self.player_manager.get_team(viewport.team_id) if viewport.team_id else None
+        viewport_member_ids = viewport_team.member_ids if viewport_team else []
+        
         for player in self.player_manager.players.values():
             if not player.is_active:
                 continue
             
+            # Prüfe ob Spieler zu diesem Viewport gehört
+            is_own_team = (player.team_id == viewport.team_id) or (player.id in viewport_member_ids)
+            
             # Prüfe Sichtbarkeit für dieses Team
-            if viewport.team_id:
-                # Eigenes Team immer sichtbar
-                if player.team_id != viewport.team_id:
-                    # Andere Teams nur sichtbar wenn nah genug
-                    if not self.player_manager.can_team_see_position(
-                        viewport.team_id, player.hex_q, player.hex_r):
-                        continue
+            if viewport.team_id and not is_own_team:
+                # Andere Teams nur sichtbar wenn nah genug
+                if not self.player_manager.can_team_see_position(
+                    viewport.team_id, player.hex_q, player.hex_r):
+                    continue
             
             # Player-Position in Pixeln
             player_px, player_py = self._hex_to_pixel(player.hex_q, player.hex_r)
@@ -756,6 +1217,24 @@ class SplitViewProjector(tk.Toplevel):
             except:
                 pass
     
+    def _draw_viewport_header(self, img: Image.Image, viewport: ViewportConfig):
+        """Zeichnet Header für Viewport ohne Team-Zuordnung"""
+        draw = ImageDraw.Draw(img)
+        
+        # Hintergrund
+        draw.rectangle([(0, 0), (viewport.width, 40)], fill=(0, 0, 0, 180))
+        draw.rectangle([(0, 35), (viewport.width, 40)], fill=(100, 100, 100, 255))
+        
+        # Viewport-Info
+        try:
+            font = ImageFont.truetype("arial.ttf", 16)
+        except:
+            font = ImageFont.load_default()
+        
+        draw.text((10, 10), f"📺 Viewport {viewport.screen_index + 1}", fill=(255, 255, 255), font=font)
+        draw.text((viewport.width - 150, 10), f"Zentrum: ({viewport.center_q}, {viewport.center_r})", 
+                  fill=(200, 200, 200), font=font)
+    
     def _draw_team_header(self, img: Image.Image, team: TeamDefinition, viewport: ViewportConfig):
         """Zeichnet Team-Info am oberen Rand des Viewports"""
         draw = ImageDraw.Draw(img)
@@ -794,10 +1273,29 @@ class SplitViewProjector(tk.Toplevel):
     # MINIMAP
     # =========================================================
     
-    def _render_minimap(self) -> Image.Image:
-        """Rendert die Minimap mit Boss-Positionen und Spieler-Markierungen"""
+    def _render_minimap(self, for_viewport: ViewportConfig = None) -> Image.Image:
+        """
+        Rendert die Minimap mit Hintergrundbild, Bossen und Team-Spielern.
+        Zeigt NUR das eigene Team (nicht andere Teams!)
+        """
         size = self.minimap_size
         minimap = Image.new('RGBA', (size, size), (30, 30, 40, 220))
+        
+        # Wenn Hintergrundbild vorhanden, als Basis verwenden
+        if self.background_image:
+            # Hintergrundbild skalieren auf Minimap-Größe
+            bg_w, bg_h = self.background_image.size
+            scale_factor = min(size / bg_w, size / bg_h) * 0.95
+            new_w = int(bg_w * scale_factor)
+            new_h = int(bg_h * scale_factor)
+            
+            if new_w > 0 and new_h > 0:
+                scaled_bg = self.background_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                # Zentrieren
+                paste_x = (size - new_w) // 2
+                paste_y = (size - new_h) // 2
+                minimap.paste(scaled_bg, (paste_x, paste_y))
+        
         draw = ImageDraw.Draw(minimap)
         
         # Rahmen
@@ -815,13 +1313,20 @@ class SplitViewProjector(tk.Toplevel):
             if isinstance(tile_data, dict):
                 cx = tile_data.get("center_x", 0)
                 cy = tile_data.get("center_y", 0)
-                min_x = min(min_x, cx)
-                min_y = min(min_y, cy)
-                max_x = max(max_x, cx)
-                max_y = max(max_y, cy)
+                if cx != 0 or cy != 0:
+                    min_x = min(min_x, cx)
+                    min_y = min(min_y, cy)
+                    max_x = max(max_x, cx)
+                    max_y = max(max_y, cy)
         
         if min_x == float('inf'):
-            return minimap
+            # Fallback: Nutze Bildgröße
+            if self.background_image:
+                min_x, min_y = 0, 0
+                max_x = self.background_image.width
+                max_y = self.background_image.height
+            else:
+                return minimap
         
         # Skalierung berechnen
         map_width = max_x - min_x + self.hex_size * 2
@@ -831,16 +1336,9 @@ class SplitViewProjector(tk.Toplevel):
         offset_x = (size - map_width * scale) / 2 - min_x * scale
         offset_y = (size - map_height * scale) / 2 - min_y * scale
         
-        # Boss-Hexagone zeichnen
+        # Boss-Hexagone zeichnen (Bosse sind für alle sichtbar)
         for placement in self.boss_manager.placements:
-            coord_key = f"{placement.hex_q},{placement.hex_r}"
-            tile_data = tiles.get(coord_key, {})
-            
-            if isinstance(tile_data, dict):
-                cx = tile_data.get("center_x", 0)
-                cy = tile_data.get("center_y", 0)
-            else:
-                cx, cy = self._hex_to_pixel(placement.hex_q, placement.hex_r)
+            cx, cy = self._hex_to_pixel(placement.hex_q, placement.hex_r)
             
             mx = cx * scale + offset_x
             my = cy * scale + offset_y
@@ -848,51 +1346,46 @@ class SplitViewProjector(tk.Toplevel):
             # Boss-Marker
             marker_size = 6
             if placement.revealed:
-                # Enthüllt: Roter Punkt mit "!"
                 draw.ellipse([(mx - marker_size, my - marker_size),
                               (mx + marker_size, my + marker_size)],
                              fill=(255, 0, 0), outline=(255, 255, 255))
             else:
-                # Nicht enthüllt: Oranger Punkt mit "?"
                 draw.ellipse([(mx - marker_size, my - marker_size),
                               (mx + marker_size, my + marker_size)],
                              fill=(255, 140, 0), outline=(255, 200, 0))
         
-        # Spieler-/Team-Positionen zeichnen
-        for team in self.player_manager.teams.values():
-            coord_key = f"{team.hex_q},{team.hex_r}"
-            tile_data = tiles.get(coord_key, {})
+        # NUR Spieler des EIGENEN Teams zeichnen (nicht andere Teams!)
+        if for_viewport and for_viewport.team_id:
+            own_team_id = for_viewport.team_id
             
-            if isinstance(tile_data, dict):
-                cx = tile_data.get("center_x", 0)
-                cy = tile_data.get("center_y", 0)
-            else:
-                cx, cy = self._hex_to_pixel(team.hex_q, team.hex_r)
-            
-            mx = cx * scale + offset_x
-            my = cy * scale + offset_y
-            
-            # Parse Team-Farbe
-            try:
-                color = team.color
-                if color.startswith('#'):
-                    r = int(color[1:3], 16)
-                    g = int(color[3:5], 16)
-                    b = int(color[5:7], 16)
-                else:
-                    r, g, b = 100, 100, 255
-            except:
-                r, g, b = 100, 100, 255
-            
-            # Team-Marker (Raute)
-            marker_size = 5
-            points = [
-                (mx, my - marker_size),  # Oben
-                (mx + marker_size, my),  # Rechts
-                (mx, my + marker_size),  # Unten
-                (mx - marker_size, my)   # Links
-            ]
-            draw.polygon(points, fill=(r, g, b), outline=(255, 255, 255))
+            for player in self.player_manager.players.values():
+                if not player.is_active:
+                    continue
+                # NUR eigenes Team zeigen!
+                if player.team_id != own_team_id:
+                    continue
+                
+                cx, cy = self._hex_to_pixel(player.hex_q, player.hex_r)
+                mx = cx * scale + offset_x
+                my = cy * scale + offset_y
+                
+                # Spieler-Marker (kleiner Kreis)
+                marker_size = 4
+                # Spieler-Farbe
+                try:
+                    color = player.color
+                    if color.startswith('#'):
+                        r = int(color[1:3], 16)
+                        g = int(color[3:5], 16)
+                        b = int(color[5:7], 16)
+                    else:
+                        r, g, b = 100, 200, 255
+                except:
+                    r, g, b = 100, 200, 255
+                
+                draw.ellipse([(mx - marker_size, my - marker_size),
+                              (mx + marker_size, my + marker_size)],
+                             fill=(r, g, b), outline=(255, 255, 255))
         
         # Legende
         try:
@@ -901,7 +1394,7 @@ class SplitViewProjector(tk.Toplevel):
             legend_font = ImageFont.load_default()
         
         draw.text((5, size - 25), "🐉 Boss", fill=(255, 140, 0), font=legend_font)
-        draw.text((5, size - 12), "◆ Team", fill=(100, 200, 255), font=legend_font)
+        draw.text((5, size - 12), "● Spieler", fill=(100, 200, 255), font=legend_font)
         
         return minimap
     
@@ -924,7 +1417,7 @@ class SplitViewProjector(tk.Toplevel):
     # =========================================================
     
     def distribute_players(self):
-        """Verteilt Spieler auf Spawn-Hexagone"""
+        """Verteilt Spieler auf Spawn-Hexagone und aktualisiert Viewports"""
         tiles = self._get_tiles_dict()
         spawn_hexes = []
         
@@ -938,11 +1431,67 @@ class SplitViewProjector(tk.Toplevel):
                     pass
         
         if spawn_hexes:
-            self.player_manager.distribute_players_randomly(spawn_hexes)
+            # Prüfe ob Spieler bereits Positionen haben (aus gespeicherter JSON)
+            players_have_positions = any(
+                (p.hex_q != 0 or p.hex_r != 0) 
+                for p in self.player_manager.players.values() 
+                if p.is_active
+            )
             
-            # Viewports aktualisieren
+            # Prüfe ob Spieler bereits Teams haben
+            players_have_teams = any(
+                p.team_id for p in self.player_manager.players.values() if p.is_active
+            )
+            
+            if not players_have_teams:
+                # Nur wenn KEINE Teams vorhanden sind, automatisch zuweisen
+                self._auto_assign_players_to_teams()
+            else:
+                print(f"✅ Spieler haben bereits Teams - keine Auto-Zuweisung")
+            
+            if not players_have_positions:
+                # Nur wenn KEINE Positionen vorhanden sind, neu verteilen
+                self.player_manager.distribute_players_randomly(spawn_hexes)
+            else:
+                print(f"✅ Spieler haben bereits Positionen - keine Neuverteilung")
+            
+            # WICHTIG: Viewports NACH der Spieler-Verteilung aktualisieren
             self._update_viewport_centers()
+            
+            # Nochmal Viewports komplett neu einrichten mit korrekten Team-Positionen
+            self._setup_viewports()
+            
             self.render_all()
+    
+    def _auto_assign_players_to_teams(self):
+        """
+        Weist Spieler automatisch Teams zu, wenn sie noch kein Team haben.
+        Verteilt Spieler gleichmäßig auf verfügbare Teams.
+        """
+        teams = list(self.player_manager.teams.values())
+        if not teams:
+            # Keine Teams vorhanden - erstelle Standard-Teams
+            from player_system import TeamDefinition
+            team1 = TeamDefinition(name="Team A", color="#4488FF")
+            team2 = TeamDefinition(name="Team B", color="#FF4444")
+            self.player_manager.add_team(team1)
+            self.player_manager.add_team(team2)
+            teams = [team1, team2]
+            print(f"🎮 Standard-Teams erstellt: {team1.name}, {team2.name}")
+        
+        # Spieler ohne Team sammeln
+        unassigned = [p for p in self.player_manager.players.values() 
+                     if not p.team_id and p.is_active]
+        
+        if not unassigned:
+            print("✅ Alle Spieler haben bereits Teams")
+            return
+        
+        # Gleichmäßig auf Teams verteilen
+        for i, player in enumerate(unassigned):
+            team = teams[i % len(teams)]
+            self.player_manager.add_player_to_team(player.id, team.id)
+            print(f"👥 Spieler '{player.name}' → Team '{team.name}'")
     
     def _update_viewport_centers(self):
         """Aktualisiert die Viewport-Zentren basierend auf Team-Positionen"""
@@ -953,8 +1502,400 @@ class SplitViewProjector(tk.Toplevel):
                 team = teams[i]
                 viewport.team_id = team.id
                 viewport.team_color = team.color
-                viewport.center_q = team.hex_q
-                viewport.center_r = team.hex_r
+                
+                # NUR team_id verwenden (nicht member_ids, da diese inkonsistent sein können)
+                team_players = [
+                    p for p in self.player_manager.players.values()
+                    if p.is_active and p.team_id == team.id
+                ]
+                
+                if team_players:
+                    # Zentrum aller Team-Spieler
+                    viewport.center_q = sum(p.hex_q for p in team_players) // len(team_players)
+                    viewport.center_r = sum(p.hex_r for p in team_players) // len(team_players)
+                    print(f"📍 Viewport {i}: Team '{team.name}' mit {len(team_players)} Spielern:")
+                    for tp in team_players:
+                        print(f"   - {tp.name}: ({tp.hex_q}, {tp.hex_r})")
+                    print(f"   → Zentrum: ({viewport.center_q},{viewport.center_r})")
+                elif team.hex_q != 0 or team.hex_r != 0:
+                    # Fallback: Team-Position aus Team-Objekt
+                    viewport.center_q = team.hex_q
+                    viewport.center_r = team.hex_r
+                    print(f"📍 Viewport {i}: Team '{team.name}' Team-Position: ({viewport.center_q},{viewport.center_r})")
+
+
+# =========================================================
+# GM-ÜBERSICHT FENSTER
+# =========================================================
+
+class GMOverviewWindow(tk.Toplevel):
+    """
+    Separates Fenster für den Spielleiter mit der kompletten Kartenübersicht.
+    Ermöglicht das Enthüllen von Bossen und das Verfolgen aller Spieler.
+    """
+    
+    def __init__(self, parent, map_data, player_manager, boss_manager, split_view_projector):
+        super().__init__(parent)
+        
+        self.title("🎮 GM-Übersicht - Komplette Karte")
+        self.configure(bg="#0a0a0a")
+        
+        # Größe: 50% des Bildschirms
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        window_width = int(screen_width * 0.5)
+        window_height = int(screen_height * 0.6)
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        
+        # Referenzen
+        self.map_data = map_data
+        self.player_manager = player_manager
+        self.boss_manager = boss_manager
+        self.split_view_projector = split_view_projector
+        
+        # Hex-Parameter
+        self.hex_size = map_data.get("hex_size", 40)
+        self.orientation = map_data.get("orientation", "pointy")
+        
+        # Zoom und Pan
+        self.zoom = 1.0
+        self.pan_x = 0
+        self.pan_y = 0
+        self.drag_start = None
+        
+        # Photo-Referenz
+        self.map_photo = None
+        
+        self._setup_ui()
+        
+        # Initial rendern
+        self.after(100, self.render_map)
+    
+    def _setup_ui(self):
+        """Erstellt die UI"""
+        # Control Bar
+        control_bar = tk.Frame(self, bg="#1a1a2e", height=40)
+        control_bar.pack(side=tk.TOP, fill=tk.X)
+        control_bar.pack_propagate(False)
+        
+        btn_style = {"bg": "#16213e", "fg": "white", "relief": tk.FLAT, "padx": 10}
+        
+        tk.Button(control_bar, text="🔄 Aktualisieren", command=self.render_map,
+                  **btn_style).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        tk.Button(control_bar, text="🎯 Zentrieren", command=self._center_view,
+                  **btn_style).pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Zoom
+        tk.Label(control_bar, text="Zoom:", bg="#1a1a2e", fg="white").pack(side=tk.LEFT, padx=(20, 5))
+        
+        tk.Button(control_bar, text="➖", command=lambda: self._change_zoom(-0.2),
+                  bg="#16213e", fg="white", relief=tk.FLAT, width=3).pack(side=tk.LEFT)
+        
+        self.zoom_label = tk.Label(control_bar, text="100%", bg="#1a1a2e", fg="#e94560",
+                                   font=("Arial", 10, "bold"), width=5)
+        self.zoom_label.pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(control_bar, text="➕", command=lambda: self._change_zoom(0.2),
+                  bg="#16213e", fg="white", relief=tk.FLAT, width=3).pack(side=tk.LEFT)
+        
+        # Info
+        tk.Label(control_bar, text="| Klick auf Boss-Hex = Enthüllen | Rechtsklick = Pan",
+                 bg="#1a1a2e", fg="#888", font=("Arial", 9)).pack(side=tk.RIGHT, padx=10)
+        
+        # Canvas
+        self.canvas = tk.Canvas(self, bg="#0a0a0a", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Bindings
+        self.canvas.bind('<Button-1>', self._on_click)
+        self.canvas.bind('<Button-3>', self._on_right_click_start)
+        self.canvas.bind('<B3-Motion>', self._on_drag)
+        self.canvas.bind('<ButtonRelease-3>', self._on_right_click_end)
+        self.canvas.bind('<MouseWheel>', self._on_mousewheel)
+        self.canvas.bind('<Configure>', lambda e: self.render_map())
+    
+    def _change_zoom(self, delta):
+        """Ändert den Zoom"""
+        self.zoom = max(0.2, min(3.0, self.zoom + delta))
+        self.zoom_label.config(text=f"{int(self.zoom * 100)}%")
+        self.render_map()
+    
+    def _center_view(self):
+        """Zentriert die Ansicht"""
+        self.pan_x = 0
+        self.pan_y = 0
+        self.render_map()
+    
+    def _on_click(self, event):
+        """Linksklick - Boss enthüllen"""
+        # Pixel zu Hex konvertieren
+        hex_q, hex_r = self._screen_to_hex(event.x, event.y)
+        
+        # Prüfe ob Boss an Position
+        placement = self.boss_manager.get_placement_at_hex(hex_q, hex_r)
+        if placement and not placement.revealed:
+            boss = self.boss_manager.reveal_boss_at_hex(hex_q, hex_r)
+            if boss:
+                print(f"🐉 BOSS ENTHÜLLT: {boss.name} bei ({hex_q}, {hex_r})!")
+                self.render_map()
+                # Auch Split-View aktualisieren
+                if self.split_view_projector:
+                    self.split_view_projector.render_all()
+    
+    def _on_right_click_start(self, event):
+        """Rechtsklick Start - Pan beginnen"""
+        self.drag_start = (event.x, event.y)
+    
+    def _on_drag(self, event):
+        """Ziehen für Pan"""
+        if self.drag_start:
+            dx = event.x - self.drag_start[0]
+            dy = event.y - self.drag_start[1]
+            self.pan_x += dx
+            self.pan_y += dy
+            self.drag_start = (event.x, event.y)
+            self.render_map()
+    
+    def _on_right_click_end(self, event):
+        """Rechtsklick Ende"""
+        self.drag_start = None
+    
+    def _on_mousewheel(self, event):
+        """Mausrad für Zoom"""
+        delta = 0.1 if event.delta > 0 else -0.1
+        self._change_zoom(delta)
+    
+    def _hex_to_pixel(self, q: int, r: int) -> Tuple[float, float]:
+        """Konvertiert Hex zu Pixel - verwendet gespeicherte center_x/center_y wenn vorhanden"""
+        # Versuche gespeicherte Koordinaten aus Tiles
+        tiles = self.map_data.get("tiles", {})
+        coord_key = f"{q},{r}"
+        
+        if coord_key in tiles:
+            tile = tiles[coord_key]
+            if isinstance(tile, dict) and "center_x" in tile and "center_y" in tile:
+                return (tile["center_x"], tile["center_y"])
+        
+        # Fallback: Berechne aus Hex-Koordinaten
+        if self.orientation == "pointy":
+            x = self.hex_size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
+            y = self.hex_size * (3 / 2 * r)
+        else:
+            x = self.hex_size * (3 / 2 * q)
+            y = self.hex_size * (math.sqrt(3) / 2 * q + math.sqrt(3) * r)
+        return (x, y)
+    
+    def _screen_to_hex(self, screen_x: int, screen_y: int) -> Tuple[int, int]:
+        """Konvertiert Screen-Koordinaten zu Hex"""
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Zu Map-Koordinaten
+        map_x = (screen_x - canvas_width / 2 - self.pan_x) / self.zoom
+        map_y = (screen_y - canvas_height / 2 - self.pan_y) / self.zoom
+        
+        # Zu Hex
+        if self.orientation == "pointy":
+            q = (math.sqrt(3) / 3 * map_x - 1 / 3 * map_y) / self.hex_size
+            r = (2 / 3 * map_y) / self.hex_size
+        else:
+            q = (2 / 3 * map_x) / self.hex_size
+            r = (-1 / 3 * map_x + math.sqrt(3) / 3 * map_y) / self.hex_size
+        
+        return (round(q), round(r))
+    
+    def render_map(self):
+        """Rendert die komplette Karte"""
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            return
+        
+        # Bild erstellen
+        img = Image.new('RGBA', (canvas_width, canvas_height), (10, 10, 15, 255))
+        draw = ImageDraw.Draw(img)
+        
+        tiles = self.map_data.get("tiles", {})
+        if isinstance(tiles, list):
+            # Normalisieren
+            tiles_dict = {}
+            for tile in tiles:
+                if isinstance(tile, dict):
+                    q = tile.get("q", tile.get("hex_q", 0))
+                    r = tile.get("r", tile.get("hex_r", 0))
+                    tiles_dict[f"{q},{r}"] = tile
+            tiles = tiles_dict
+        
+        # Alle Hexagone zeichnen
+        for coord_key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+            
+            try:
+                parts = coord_key.split(',')
+                q, r = int(parts[0]), int(parts[1])
+            except:
+                continue
+            
+            # Hex-Zentrum berechnen
+            hx, hy = self._hex_to_pixel(q, r)
+            
+            # Zu Screen-Koordinaten
+            sx = canvas_width / 2 + hx * self.zoom + self.pan_x
+            sy = canvas_height / 2 + hy * self.zoom + self.pan_y
+            
+            # Außerhalb des Sichtbereichs?
+            if sx < -50 or sx > canvas_width + 50 or sy < -50 or sy > canvas_height + 50:
+                continue
+            
+            # Hexagon zeichnen
+            self._draw_hex(draw, sx, sy, tile_data, q, r)
+        
+        # Spieler zeichnen
+        self._draw_players(img)
+        
+        # Bosse zeichnen
+        self._draw_bosses(img)
+        
+        # Legende
+        self._draw_legend(draw, canvas_width, canvas_height)
+        
+        # Anzeigen
+        self.map_photo = ImageTk.PhotoImage(img)
+        self.canvas.delete("all")
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.map_photo)
+    
+    def _draw_hex(self, draw, cx, cy, tile_data, q, r):
+        """Zeichnet ein Hexagon"""
+        scaled_size = self.hex_size * self.zoom * 0.95
+        
+        # Punkte berechnen
+        points = []
+        for i in range(6):
+            if self.orientation == "pointy":
+                angle = math.pi / 3 * i - math.pi / 6
+            else:
+                angle = math.pi / 3 * i
+            px = cx + scaled_size * math.cos(angle)
+            py = cy + scaled_size * math.sin(angle)
+            points.append((px, py))
+        
+        # Füllfarbe
+        fill_color = tile_data.get("fill_color", "#444444")
+        try:
+            if fill_color.startswith('#'):
+                r_c = int(fill_color[1:3], 16)
+                g_c = int(fill_color[3:5], 16)
+                b_c = int(fill_color[5:7], 16)
+                fill = (r_c, g_c, b_c, 180)
+            else:
+                fill = (68, 68, 68, 180)
+        except:
+            fill = (68, 68, 68, 180)
+        
+        outline_color = (80, 80, 80, 255)
+        
+        # Spezielle Hexagone
+        if tile_data.get("is_boss_hex", False):
+            # Boss-Hexagon: Orange Rand
+            outline_color = (255, 140, 0, 255)
+            fill = (fill[0], fill[1], fill[2], 220)
+        
+        if tile_data.get("is_spawn_hex", False):
+            # Spawn-Hexagon: Grüner Rand
+            outline_color = (0, 200, 0, 255)
+        
+        draw.polygon(points, fill=fill, outline=outline_color)
+    
+    def _draw_players(self, img):
+        """Zeichnet Spieler-Positionen"""
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        draw = ImageDraw.Draw(img)
+        
+        for team in self.player_manager.teams.values():
+            hx, hy = self._hex_to_pixel(team.hex_q, team.hex_r)
+            sx = int(canvas_width / 2 + hx * self.zoom + self.pan_x)
+            sy = int(canvas_height / 2 + hy * self.zoom + self.pan_y)
+            
+            # Team-Farbe
+            try:
+                color = team.color
+                if color.startswith('#'):
+                    r = int(color[1:3], 16)
+                    g = int(color[3:5], 16)
+                    b = int(color[5:7], 16)
+                else:
+                    r, g, b = 100, 100, 255
+            except:
+                r, g, b = 100, 100, 255
+            
+            # Team-Marker (Diamant)
+            size = int(12 * self.zoom)
+            points = [(sx, sy - size), (sx + size, sy), (sx, sy + size), (sx - size, sy)]
+            draw.polygon(points, fill=(r, g, b), outline=(255, 255, 255))
+            
+            # Team-Name
+            try:
+                font = ImageFont.truetype("arial.ttf", max(8, int(10 * self.zoom)))
+            except:
+                font = ImageFont.load_default()
+            draw.text((sx + size + 3, sy - 5), team.name, fill=(255, 255, 255), font=font)
+    
+    def _draw_bosses(self, img):
+        """Zeichnet Boss-Positionen"""
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        draw = ImageDraw.Draw(img)
+        
+        for placement in self.boss_manager.placements:
+            boss = self.boss_manager.get_boss(placement.boss_id)
+            if not boss:
+                continue
+            
+            hx, hy = self._hex_to_pixel(placement.hex_q, placement.hex_r)
+            sx = int(canvas_width / 2 + hx * self.zoom + self.pan_x)
+            sy = int(canvas_height / 2 + hy * self.zoom + self.pan_y)
+            
+            size = int(10 * self.zoom)
+            
+            if placement.revealed:
+                # Enthüllt: Roter Kreis mit Name
+                draw.ellipse([(sx - size, sy - size), (sx + size, sy + size)],
+                             fill=(255, 50, 50), outline=(255, 255, 255))
+                try:
+                    font = ImageFont.truetype("arial.ttf", max(8, int(10 * self.zoom)))
+                except:
+                    font = ImageFont.load_default()
+                draw.text((sx + size + 3, sy - 5), f"🐉 {boss.name}", fill=(255, 100, 100), font=font)
+            else:
+                # Nicht enthüllt: Oranger Kreis mit "?"
+                draw.ellipse([(sx - size, sy - size), (sx + size, sy + size)],
+                             fill=(255, 140, 0), outline=(255, 200, 0))
+                draw.text((sx - 3, sy - 6), "?", fill=(0, 0, 0), font=ImageFont.load_default())
+    
+    def _draw_legend(self, draw, width, height):
+        """Zeichnet die Legende"""
+        try:
+            font = ImageFont.truetype("arial.ttf", 11)
+        except:
+            font = ImageFont.load_default()
+        
+        y = height - 60
+        x = 10
+        
+        # Hintergrund
+        draw.rectangle([(x, y), (x + 180, height - 10)], fill=(0, 0, 0, 180))
+        
+        draw.ellipse([(x + 5, y + 8), (x + 15, y + 18)], fill=(255, 140, 0))
+        draw.text((x + 20, y + 5), "? = Versteckter Boss", fill=(255, 200, 100), font=font)
+        
+        draw.ellipse([(x + 5, y + 28), (x + 15, y + 38)], fill=(255, 50, 50))
+        draw.text((x + 20, y + 25), "🐉 = Enthüllter Boss", fill=(255, 100, 100), font=font)
 
 
 # =========================================================
@@ -1678,6 +2619,193 @@ class PlayerEditorDialog(tk.Toplevel):
     def _save(self):
         """Speichert und schließt"""
         self.result = self.player_manager
+        self.destroy()
+
+
+class TeamAssignmentDialog(tk.Toplevel):
+    """
+    Dialog zur Zuordnung von Teams zu Split-View Screens.
+    
+    Ermöglicht:
+    - Jeder Screen bekommt ein Team zugewiesen
+    - Einzelne Spieler können auch direkt einem Screen zugewiesen werden
+    - Vorschau der Spawn-Areas pro Team
+    """
+    
+    def __init__(self, parent, player_manager: PlayerManager, viewports: List[ViewportConfig]):
+        super().__init__(parent)
+        
+        self.title("🎮 Team-Zuordnung zu Screens")
+        self.geometry("500x400")
+        self.configure(bg="#1a1a2e")
+        
+        self.player_manager = player_manager
+        self.viewports = viewports
+        self.result = None
+        
+        # Team-Auswahl pro Screen
+        self.screen_team_vars = []
+        
+        self._setup_ui()
+        
+        # Modal
+        self.transient(parent)
+        self.grab_set()
+    
+    def _setup_ui(self):
+        """Erstellt die UI"""
+        # Header
+        header = tk.Frame(self, bg="#16213e", height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        
+        tk.Label(header, text="🎮 Team-Zuordnung zu Screens",
+                 bg="#16213e", fg="white", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # Beschreibung
+        desc_frame = tk.Frame(self, bg="#1a1a2e")
+        desc_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        tk.Label(desc_frame, text="Ordne jedem Screen ein Team zu.\n"
+                                  "Der Screen wird dann auf die Spawn-Area des Teams gezoomt.",
+                 bg="#1a1a2e", fg="#aaaaaa", justify=tk.LEFT).pack(anchor=tk.W)
+        
+        # Screen-Zuordnungen
+        assignment_frame = tk.Frame(self, bg="#0f3460")
+        assignment_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Scrollbar falls viele Screens
+        canvas = tk.Canvas(assignment_frame, bg="#0f3460", highlightthickness=0)
+        scrollbar = tk.Scrollbar(assignment_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg="#0f3460")
+        
+        scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Teams als Optionen - zähle Spieler aus member_ids ODER aus player.team_id
+        teams = list(self.player_manager.teams.values())
+        
+        def count_team_members(team):
+            """Zählt Team-Mitglieder aus beiden Quellen"""
+            # Methode 1: member_ids des Teams
+            count1 = len(team.member_ids)
+            # Methode 2: Spieler mit team_id
+            count2 = len([p for p in self.player_manager.players.values() if p.team_id == team.id])
+            return max(count1, count2)
+        
+        team_options = ["-- Kein Team --"] + [f"{t.name} ({count_team_members(t)} Spieler)" for t in teams]
+        team_ids = [None] + [t.id for t in teams]
+        
+        for i, viewport in enumerate(self.viewports):
+            row_frame = tk.Frame(scrollable_frame, bg="#16213e", padx=10, pady=8)
+            row_frame.pack(fill=tk.X, pady=3)
+            
+            # Screen-Nummer mit Farbindikator
+            screen_label = tk.Label(row_frame, text=f"📺 Screen {i + 1}:", 
+                                    bg="#16213e", fg="white", font=("Arial", 11, "bold"), width=12)
+            screen_label.pack(side=tk.LEFT, padx=5)
+            
+            # Aktuelle Farbe anzeigen
+            color_box = tk.Label(row_frame, text="  ", bg=viewport.team_color, width=3)
+            color_box.pack(side=tk.LEFT, padx=5)
+            
+            # Team Dropdown
+            team_var = tk.StringVar()
+            
+            # Aktuelles Team vorselektieren
+            if viewport.team_id:
+                for j, tid in enumerate(team_ids):
+                    if tid == viewport.team_id:
+                        team_var.set(team_options[j])
+                        break
+            else:
+                team_var.set(team_options[0])
+            
+            self.screen_team_vars.append((team_var, team_ids, color_box))
+            
+            team_combo = tk.ttk.Combobox(row_frame, textvariable=team_var, values=team_options, 
+                                         state="readonly", width=35)
+            team_combo.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+            
+            # Wenn Team geändert wird, Farbe aktualisieren
+            team_combo.bind("<<ComboboxSelected>>", lambda e, idx=i: self._on_team_changed(idx))
+        
+        # Buttons
+        btn_frame = tk.Frame(self, bg="#1a1a2e")
+        btn_frame.pack(fill=tk.X, padx=10, pady=15)
+        
+        tk.Button(btn_frame, text="❌ Abbrechen", command=self.destroy,
+                  bg="#6c757d", fg="white", relief=tk.FLAT, padx=20).pack(side=tk.RIGHT, padx=5)
+        
+        tk.Button(btn_frame, text="✅ Übernehmen", command=self._apply,
+                  bg="#28a745", fg="white", relief=tk.FLAT, padx=20).pack(side=tk.RIGHT, padx=5)
+        
+        tk.Button(btn_frame, text="🔄 Auto-Zuordnen", command=self._auto_assign,
+                  bg="#17a2b8", fg="white", relief=tk.FLAT, padx=10).pack(side=tk.LEFT, padx=5)
+    
+    def _on_team_changed(self, screen_idx: int):
+        """Callback wenn Team für Screen geändert wird"""
+        team_var, team_ids, color_box = self.screen_team_vars[screen_idx]
+        
+        # Finde ausgewähltes Team
+        selected_text = team_var.get()
+        selected_idx = 0
+        
+        teams = list(self.player_manager.teams.values())
+        team_options = ["-- Kein Team --"] + [f"{t.name} ({len([p for p in self.player_manager.players.values() if p.team_id == t.id])} Spieler)" for t in teams]
+        
+        for i, opt in enumerate(team_options):
+            if opt == selected_text:
+                selected_idx = i
+                break
+        
+        # Farbe aktualisieren
+        if selected_idx > 0 and selected_idx - 1 < len(teams):
+            team = teams[selected_idx - 1]
+            color_box.configure(bg=team.color)
+        else:
+            color_box.configure(bg="#888888")
+    
+    def _auto_assign(self):
+        """Ordnet Teams automatisch den Screens zu (in Reihenfolge)"""
+        teams = list(self.player_manager.teams.values())
+        team_options = ["-- Kein Team --"] + [f"{t.name} ({len([p for p in self.player_manager.players.values() if p.team_id == t.id])} Spieler)" for t in teams]
+        
+        for i, (team_var, _, color_box) in enumerate(self.screen_team_vars):
+            if i < len(teams):
+                team_var.set(team_options[i + 1])  # +1 weil Index 0 = "Kein Team"
+                color_box.configure(bg=teams[i].color)
+            else:
+                team_var.set(team_options[0])
+                color_box.configure(bg="#888888")
+    
+    def _apply(self):
+        """Übernimmt die Zuordnungen"""
+        teams = list(self.player_manager.teams.values())
+        team_ids = [None] + [t.id for t in teams]
+        team_options = ["-- Kein Team --"] + [f"{t.name} ({len([p for p in self.player_manager.players.values() if p.team_id == t.id])} Spieler)" for t in teams]
+        
+        result = []
+        
+        for team_var, _, _ in self.screen_team_vars:
+            selected_text = team_var.get()
+            
+            # Finde Team-ID
+            selected_team_id = None
+            for i, opt in enumerate(team_options):
+                if opt == selected_text:
+                    selected_team_id = team_ids[i]
+                    break
+            
+            result.append(selected_team_id)
+        
+        self.result = result
+        print(f"✅ Team-Zuordnung: {result}")
         self.destroy()
 
 
