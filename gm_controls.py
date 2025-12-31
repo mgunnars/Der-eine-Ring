@@ -2183,7 +2183,19 @@ class GamemasterControlPanel(tk.Toplevel):
         """Zeichnet orangene Markierungen für Boss-Hexagone"""
         import math
         
+        # ═══════════════════════════════════════════════════════════════
+        # WICHTIG: Alte Boss-Marker ZUERST löschen vor dem Neuzeichnen!
+        # ═══════════════════════════════════════════════════════════════
+        for item in self.fog_map_canvas.find_all():
+            tags = self.fog_map_canvas.gettags(item)
+            for tag in tags:
+                if tag.startswith("boss_marker_") or tag.startswith("boss_icon_"):
+                    self.fog_map_canvas.delete(item)
+                    break
+        
         boss_hex_count = 0
+        revealed_count = 0
+        
         for key, tile_data in tiles.items():
             if not isinstance(tile_data, dict):
                 continue
@@ -2194,36 +2206,71 @@ class GamemasterControlPanel(tk.Toplevel):
             
             boss_hex_count += 1
             
-            # Berechne Koordinaten
+            # Extrahiere Koordinaten
+            parts = key.split(",")
+            q, r = 0, 0
+            if len(parts) == 2:
+                q, r = int(parts[0]), int(parts[1])
+            
+            # Berechne Pixel-Koordinaten
             cx = tile_data.get("center_x", 0)
             cy = tile_data.get("center_y", 0)
             scaled_cx = cx * scale + offset_x
             scaled_cy = cy * scale + offset_y
             
-            # Prüfe ob Boss bereits enthüllt
+            # ═══════════════════════════════════════════════════════════
+            # PRÜFE ENTHÜLLUNGS-STATUS (revealed_boss_hexes hat Priorität!)
+            # ═══════════════════════════════════════════════════════════
             is_revealed = False
             boss_placed = False
+            has_boss_definition = False
+            
             if hasattr(self, 'projector_window') and self.projector_window:
+                # PRIORITÄT 1: revealed_boss_hexes (Mittelklick-Enthüllung)
+                if hasattr(self.projector_window, 'revealed_boss_hexes'):
+                    revealed_hexes = self.projector_window.revealed_boss_hexes
+                    if (q, r) in revealed_hexes:
+                        is_revealed = True
+                        boss_placed = revealed_hexes.get((q, r), False)
+                        revealed_count += 1
+                
+                # PRIORITÄT 2: boss_manager.placements (nur wenn nicht schon revealed)
                 if hasattr(self.projector_window, 'boss_manager'):
-                    parts = key.split(",")
-                    if len(parts) == 2:
-                        q, r = int(parts[0]), int(parts[1])
+                    for placement in self.projector_window.boss_manager.placements:
+                        if placement.hex_q == q and placement.hex_r == r:
+                            has_boss_definition = True
+                            if not is_revealed:
+                                boss_placed = True
+                            # Boss-Enthüllung aus Placement übernehmen
+                            is_revealed = is_revealed or placement.revealed
+                            break
+            
+            # Farbe und Icon basierend auf Status
+            if is_revealed:
+                if boss_placed:
+                    outline_color = "#ff0000"  # Rot = Enthüllt MIT Boss
+                    fill_color = "#ff4444"
+                    icon = "🐉"
+                    # Prüfe ob Boss besiegt
+                    if has_boss_definition and hasattr(self.projector_window, 'boss_manager'):
                         for placement in self.projector_window.boss_manager.placements:
                             if placement.hex_q == q and placement.hex_r == r:
-                                boss_placed = True
-                                is_revealed = placement.revealed
+                                boss = self.projector_window.boss_manager.get_boss(placement.boss_id)
+                                if boss and boss.is_defeated:
+                                    icon = "💀"
                                 break
-            
-            # Farbe basierend auf Status
-            if is_revealed:
-                outline_color = "#ff0000"  # Rot = Enthüllt (Boss sichtbar)
-                fill_stipple = ""
-            elif boss_placed:
+                else:
+                    outline_color = "#00ff00"  # Grün = Enthüllt, KEIN Boss
+                    fill_color = "#44ff44"
+                    icon = "✓"
+            elif boss_placed or has_boss_definition:
                 outline_color = "#ff8800"  # Orange = Boss vorhanden, nicht enthüllt
-                fill_stipple = ""
+                fill_color = ""
+                icon = "❓"
             else:
-                outline_color = "#ffaa00"  # Gelb-Orange = Boss-Hex ohne Boss
-                fill_stipple = "gray25"
+                outline_color = "#ffaa00"  # Gelb-Orange = Boss-Hex, unbekannt
+                fill_color = ""
+                icon = "❓"
             
             # Hexagon-Punkte für Rahmen
             points = []
@@ -2236,25 +2283,19 @@ class GamemasterControlPanel(tk.Toplevel):
                 py = scaled_cy + mini_hex_size * 0.85 * math.sin(angle)
                 points.append((px, py))
             
-            # Zeichne Boss-Markierung (nur Umriss)
-            self.fog_map_canvas.create_polygon(
-                points, fill="", outline=outline_color, width=3, 
-                tags=f"boss_marker_{key}"
-            )
+            # Zeichne Boss-Markierung
+            if fill_color:
+                self.fog_map_canvas.create_polygon(
+                    points, fill=fill_color, outline=outline_color, width=3, 
+                    stipple="gray50", tags=f"boss_marker_{key}"
+                )
+            else:
+                self.fog_map_canvas.create_polygon(
+                    points, fill="", outline=outline_color, width=3, 
+                    tags=f"boss_marker_{key}"
+                )
             
-            # Zeichne kleines Boss-Icon in der Mitte
-            icon = "🐉" if boss_placed else "❓"
-            if is_revealed:
-                # Zeige Boss-Name wenn enthüllt
-                for placement in self.projector_window.boss_manager.placements:
-                    parts = key.split(",")
-                    if len(parts) == 2:
-                        q, r = int(parts[0]), int(parts[1])
-                        if placement.hex_q == q and placement.hex_r == r:
-                            boss = self.projector_window.boss_manager.get_boss(placement.boss_id)
-                            if boss:
-                                icon = "💀" if boss.is_defeated else "🐉"
-            
+            # Zeichne Icon
             self.fog_map_canvas.create_text(
                 scaled_cx, scaled_cy, text=icon, 
                 font=("Arial", max(8, int(mini_hex_size * 0.5))),
@@ -2263,9 +2304,8 @@ class GamemasterControlPanel(tk.Toplevel):
         
         # Debug-Ausgabe
         if boss_hex_count > 0:
-            print(f"🗺️ GM-Panel: {boss_hex_count} Boss-Hexagone markiert")
+            print(f"🗺️ GM-Panel: {boss_hex_count} Boss-Hexagone markiert ({revealed_count} enthüllt)")
         else:
-            # Prüfe warum keine Boss-Hexagone gefunden wurden
             dict_count = sum(1 for t in tiles.values() if isinstance(t, dict))
             print(f"⚠️ GM-Panel: Keine Boss-Hexagone! ({dict_count} dict-tiles von {len(tiles)})")
     
@@ -2273,9 +2313,33 @@ class GamemasterControlPanel(tk.Toplevel):
         """Zeichnet Boss-Hexagon-Markierungen für SVG-Maps mit Hexagon-Overlay"""
         import math
         
+        # ═══════════════════════════════════════════════════════════
+        # WICHTIG: Alte Boss-Marker ZUERST löschen vor dem Neuzeichnen!
+        # ═══════════════════════════════════════════════════════════
+        self.fog_map_canvas.delete("boss_marker")
+        self.fog_map_canvas.delete("boss_icon")
+        # Lösche auch alle individuellen Boss-Marker-Tags
+        for item in self.fog_map_canvas.find_all():
+            tags = self.fog_map_canvas.gettags(item)
+            for tag in tags:
+                if tag.startswith("boss_marker_") or tag.startswith("boss_icon_"):
+                    self.fog_map_canvas.delete(item)
+                    break
+        
         hex_size = map_data.get("hex_size", 40)
         tiles = map_data.get("tiles", {})
         orientation = map_data.get("orientation", "pointy")
+        
+        # DEBUG: Zeige revealed_boss_hexes Inhalt
+        if hasattr(self, 'projector_window') and self.projector_window:
+            proj_type = type(self.projector_window).__name__
+            if hasattr(self.projector_window, 'revealed_boss_hexes'):
+                revealed = self.projector_window.revealed_boss_hexes
+                print(f"🔍 GM-Panel ({proj_type}): revealed_boss_hexes = {revealed}")
+            else:
+                print(f"⚠️ GM-Panel ({proj_type}): KEIN revealed_boss_hexes Attribut!")
+        else:
+            print(f"⚠️ GM-Panel: projector_window ist None oder nicht gesetzt!")
         
         if not tiles:
             print("⚠️ GM-Panel SVG: Keine Tiles vorhanden")
@@ -2365,10 +2429,12 @@ class GamemasterControlPanel(tk.Toplevel):
             if hasattr(self, 'projector_window') and self.projector_window:
                 # Prüfe revealed_boss_hexes (Mittelklick-Enthüllung)
                 if hasattr(self.projector_window, 'revealed_boss_hexes'):
-                    is_revealed = (q, r) in self.projector_window.revealed_boss_hexes
+                    revealed_hexes = self.projector_window.revealed_boss_hexes
+                    is_revealed = (q, r) in revealed_hexes
                     if is_revealed:
                         # Hole den has_boss Wert
-                        boss_placed = self.projector_window.revealed_boss_hexes.get((q, r), False)
+                        boss_placed = revealed_hexes.get((q, r), False)
+                        print(f"   🔍 Boss-Hex ({q},{r}): ENTHÜLLT, boss={boss_placed}")
                 
                 # Prüfe ob ein Boss hier platziert ist (überschreibt nur wenn nicht schon revealed)
                 if hasattr(self.projector_window, 'boss_manager'):

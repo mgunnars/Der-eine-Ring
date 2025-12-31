@@ -1455,7 +1455,7 @@ class SplitViewProjector(tk.Toplevel):
             # Zeichne Hexagon (mit Fog-Status)
             self._draw_hexagon(draw, vx, vy, viewport.zoom, tile_data, viewport, is_revealed, q, r)
         
-        # === DRAG-ZIEL-HERVORHEBUNG ===
+        # === DRAG-ZIEL-HERVORHEBUNG (NUR Ziel-Hexagon, kein Ghost-Token) ===
         if (self.dragging_player and self.drag_viewport == viewport and 
             self.drag_target_hex and self.drag_current_pos):
             self._draw_drag_highlight(img, draw, viewport)
@@ -1463,10 +1463,7 @@ class SplitViewProjector(tk.Toplevel):
         # Spieler-Tokens zeichnen
         self._draw_players_in_viewport(img, viewport)
         
-        # === GHOST-TOKEN FÜR GEDRAGGTEN SPIELER ===
-        if (self.dragging_player and self.drag_viewport == viewport and 
-            self.drag_current_pos):
-            self._draw_ghost_token(img, viewport)
+        # Ghost-Token entfernt - nur Ziel-Hexagon wird hervorgehoben
         
         # Boss-Overlays zeichnen
         self._draw_bosses_in_viewport(img, viewport)
@@ -1703,23 +1700,29 @@ class SplitViewProjector(tk.Toplevel):
         vx = viewport.width / 2 + (target_px - center_px) * viewport.zoom
         vy = viewport.height / 2 + (target_py - center_py) * viewport.zoom
         
-        # Hexagon-Punkte berechnen (für Highlight)
-        hex_size = 40 * viewport.zoom
+        # Hexagon-Punkte berechnen - Größe aus Map-Daten (NICHT hardcodiert!)
+        import math
+        hex_size = self.hex_size * viewport.zoom * 0.9  # 90% für leichten Rand-Effekt
+        orientation = self.map_data.get("orientation", "pointy")
+        
         points = []
         for i in range(6):
-            import math
-            angle = math.radians(60 * i - 30)
+            # Winkel basierend auf Orientierung (pointy vs flat)
+            if orientation == "pointy":
+                angle = math.pi / 3 * i - math.pi / 6  # Pointy-top
+            else:
+                angle = math.pi / 3 * i  # Flat-top
             px = vx + hex_size * math.cos(angle)
             py = vy + hex_size * math.sin(angle)
             points.append((px, py))
         
-        # Cyan-Highlight zeichnen (leuchtendes Ziel)
-        draw.polygon(points, fill=(0, 255, 255, 100), outline=(0, 255, 255, 255))
+        # Grünes Highlight für Ziel (weniger aufdringlich als Cyan)
+        draw.polygon(points, fill=(0, 200, 100, 80), outline=(0, 255, 100, 200))
         
-        # Zusätzlicher Leuchteffekt
+        # Dezenter Rand-Effekt (dünnere Linie)
         for i in range(6):
             next_i = (i + 1) % 6
-            draw.line([points[i], points[next_i]], fill=(0, 255, 255, 255), width=3)
+            draw.line([points[i], points[next_i]], fill=(0, 255, 100, 200), width=2)
     
     def _draw_ghost_token(self, img: Image.Image, viewport: ViewportConfig):
         """Zeichnet semi-transparentes Ghost-Token an aktueller Drag-Position"""
@@ -2006,27 +2009,35 @@ class SplitViewProjector(tk.Toplevel):
     # =========================================================
     
     def distribute_players(self):
-        """Verteilt Spieler auf Spawn-Hexagone und aktualisiert Viewports"""
+        """Verteilt Spieler auf Spawn-Hexagone und Bosse auf Boss-Hexagone"""
         tiles = self._get_tiles_dict()
         spawn_hexes = []
+        boss_hexes = []
         
         for coord_key, tile_data in tiles.items():
-            if isinstance(tile_data, dict) and tile_data.get("is_spawn_hex", False):
+            if isinstance(tile_data, dict):
                 try:
                     parts = coord_key.split(',')
                     q, r = int(parts[0]), int(parts[1])
-                    spawn_hexes.append((q, r))
+                    
+                    if tile_data.get("is_spawn_hex", False):
+                        spawn_hexes.append((q, r))
+                    if tile_data.get("is_boss_hex", False):
+                        boss_hexes.append((q, r))
                 except:
                     pass
         
+        # ═══════════════════════════════════════════════════════════
+        # BOSS-VERTEILUNG: Verteile definierte Bosse auf Boss-Hexagone
+        # ═══════════════════════════════════════════════════════════
+        if boss_hexes and self.boss_manager:
+            # Prüfe ob bereits Placements existieren
+            if not self.boss_manager.placements:
+                self.boss_manager.distribute_bosses_randomly(boss_hexes)
+            else:
+                print(f"✅ {len(self.boss_manager.placements)} Bosse bereits platziert")
+        
         if spawn_hexes:
-            # Prüfe ob Spieler bereits Positionen haben (aus gespeicherter JSON)
-            players_have_positions = any(
-                (p.hex_q != 0 or p.hex_r != 0) 
-                for p in self.player_manager.players.values() 
-                if p.is_active
-            )
-            
             # Prüfe ob Spieler bereits Teams haben
             players_have_teams = any(
                 p.team_id for p in self.player_manager.players.values() if p.is_active
@@ -2038,11 +2049,42 @@ class SplitViewProjector(tk.Toplevel):
             else:
                 print(f"✅ Spieler haben bereits Teams - keine Auto-Zuweisung")
             
-            if not players_have_positions:
-                # Nur wenn KEINE Positionen vorhanden sind, neu verteilen
-                self.player_manager.distribute_players_randomly(spawn_hexes)
-            else:
-                print(f"✅ Spieler haben bereits Positionen - keine Neuverteilung")
+            # ═══════════════════════════════════════════════════════════════
+            # IMMER NEU VERTEILEN: Teams werden zufällig auf Spawn-Hexe verteilt
+            # Jedes Team bekommt ein eigenes Spawn-Hexagon (kein Sharing!)
+            # ═══════════════════════════════════════════════════════════════
+            import random
+            random.shuffle(spawn_hexes)  # Zufällige Reihenfolge
+            
+            teams = list(self.player_manager.teams.values())
+            used_hexes = set()
+            
+            print(f"🎲 Verteile {len(teams)} Teams auf {len(spawn_hexes)} Spawn-Hexe...")
+            
+            for i, team in enumerate(teams):
+                if i < len(spawn_hexes):
+                    spawn_q, spawn_r = spawn_hexes[i]
+                    used_hexes.add((spawn_q, spawn_r))
+                    
+                    # Alle Spieler dieses Teams an diesen Spawn-Punkt setzen
+                    team_players = [p for p in self.player_manager.players.values() 
+                                   if p.team_id == team.id and p.is_active]
+                    
+                    for player in team_players:
+                        player.hex_q = spawn_q
+                        player.hex_r = spawn_r
+                        # Aktualisiere auch Placement falls vorhanden
+                        for placement in self.player_manager.placements:
+                            if placement.player_id == player.id:
+                                placement.hex_q = spawn_q
+                                placement.hex_r = spawn_r
+                                break
+                    
+                    print(f"   👥 Team '{team.name}' → Spawn ({spawn_q},{spawn_r}) mit {len(team_players)} Spielern")
+                else:
+                    print(f"   ⚠️ Nicht genug Spawn-Hexe für Team '{team.name}'")
+            
+            print(f"✅ Teams zufällig verteilt auf {len(used_hexes)} verschiedene Spawn-Punkte")
             
             # WICHTIG: Viewports NACH der Spieler-Verteilung aktualisieren
             self._update_viewport_centers()
