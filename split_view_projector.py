@@ -159,6 +159,11 @@ class SplitViewProjector(tk.Toplevel):
         # Auto-Follow (Viewport folgt Spielerbewegung)
         self.auto_follow_enabled = True
         
+        # === DRAG & DROP FÜR SPIELER-TOKENS ===
+        self.dragging_player = None  # Aktuell gezogener Spieler
+        self.drag_start_pos = None   # Start-Position für Drag
+        self.drag_viewport = None    # Viewport in dem gedraggt wird
+        
         # UI Setup
         self._setup_ui()
     
@@ -475,8 +480,10 @@ class SplitViewProjector(tk.Toplevel):
         # Bind resize
         self.main_canvas.bind('<Configure>', self._on_resize)
         
-        # Mouse Events für Debug/Interaktion
+        # Mouse Events für Drag & Drop und Interaktion
         self.main_canvas.bind('<Button-1>', self._on_click)
+        self.main_canvas.bind('<B1-Motion>', self._on_drag)
+        self.main_canvas.bind('<ButtonRelease-1>', self._on_drag_end)
         self.main_canvas.bind('<Motion>', self._on_mouse_move)
     
     def _setup_viewports(self):
@@ -685,7 +692,7 @@ class SplitViewProjector(tk.Toplevel):
     def _update_viewport_follow(self, viewport: ViewportConfig, target_q: int, target_r: int):
         """
         Aktualisiert das Viewport-Zentrum so dass ALLE Spieler des Teams sichtbar bleiben.
-        Berechnet Bounding Box aller Team-Spieler und zentriert darauf.
+        Berechnet Bounding Box aller Team-Spieler und passt Zoom an wenn nötig.
         """
         if not viewport.team_id:
             # Kein Team - einfach auf Ziel zentrieren
@@ -714,19 +721,44 @@ class SplitViewProjector(tk.Toplevel):
         new_center_q = (min_q + max_q) // 2
         new_center_r = (min_r + max_r) // 2
         
-        old_q, old_r = viewport.center_q, viewport.center_r
+        viewport.center_q = new_center_q
+        viewport.center_r = new_center_r
         
-        if (old_q, old_r) != (new_center_q, new_center_r):
-            viewport.center_q = new_center_q
-            viewport.center_r = new_center_r
+        # Extent aktualisieren
+        viewport.extent_min_q = min_q
+        viewport.extent_max_q = max_q
+        viewport.extent_min_r = min_r
+        viewport.extent_max_r = max_r
+        
+        # === ZOOM ANPASSEN UM ALLE SPIELER SICHTBAR ZU HALTEN ===
+        # Berechne die benötigte Größe in Pixeln
+        extent_width_hex = max_q - min_q + 1
+        extent_height_hex = max_r - min_r + 1
+        
+        if extent_width_hex > 1 or extent_height_hex > 1:
+            # Spieler sind verteilt - Zoom anpassen
+            # Berechne Pixel-Distanz zwischen den äußeren Spielern
+            min_px, min_py = self._hex_to_pixel(min_q, min_r)
+            max_px, max_py = self._hex_to_pixel(max_q, max_r)
             
-            # Extent aktualisieren
-            viewport.extent_min_q = min_q
-            viewport.extent_max_q = max_q
-            viewport.extent_min_r = min_r
-            viewport.extent_max_r = max_r
+            extent_width_px = abs(max_px - min_px) + self.hex_size * 4  # Margin
+            extent_height_px = abs(max_py - min_py) + self.hex_size * 4  # Margin
             
-            print(f"🎯 Viewport {viewport.screen_index} folgt Team: Zentrum ({new_center_q},{new_center_r}), {len(team_players)} Spieler")
+            # Berechne benötigten Zoom um alles anzuzeigen
+            zoom_for_width = viewport.width / extent_width_px if extent_width_px > 0 else 2.0
+            zoom_for_height = viewport.height / extent_height_px if extent_height_px > 0 else 2.0
+            
+            needed_zoom = min(zoom_for_width, zoom_for_height)
+            
+            # Begrenze Zoom auf sinnvollen Bereich (0.5 bis 3.0)
+            needed_zoom = max(0.5, min(3.0, needed_zoom))
+            
+            # Nur anpassen wenn Unterschied signifikant
+            if abs(needed_zoom - viewport.zoom) > 0.1:
+                viewport.zoom = needed_zoom
+                print(f"🔍 Viewport {viewport.screen_index} Zoom angepasst: {needed_zoom:.1f}x")
+        
+        print(f"🎯 Viewport {viewport.screen_index}: Zentrum ({new_center_q},{new_center_r}), Extent: {extent_width_hex}x{extent_height_hex} Hex, {len(team_players)} Spieler")
     
     def update_player_position(self, player_id: str, new_q: int, new_r: int):
         """
@@ -862,16 +894,189 @@ class SplitViewProjector(tk.Toplevel):
         self.render_all()
     
     def _on_click(self, event):
-        """Mouse-Click Handler"""
+        """Mouse-Click Handler - startet Drag wenn auf Spieler-Token geklickt"""
         # Finde welcher Viewport geklickt wurde
         for viewport in self.viewports:
             if viewport.x_offset <= event.x < viewport.x_offset + viewport.width:
                 hex_q, hex_r = self._screen_to_hex(event.x, event.y, viewport)
+                
+                # Prüfe ob ein Spieler-Token an dieser Position ist
+                clicked_player = self._get_player_at_screen_pos(event.x, event.y, viewport)
+                
+                if clicked_player:
+                    # Prüfe ob Spieler zu diesem Viewport/Team gehört (nur eigene Spieler bewegen)
+                    if clicked_player.team_id == viewport.team_id:
+                        self.dragging_player = clicked_player
+                        self.drag_start_pos = (event.x, event.y)
+                        self.drag_viewport = viewport
+                        print(f"🎯 Spieler '{clicked_player.name}' ausgewählt zum Bewegen")
+                        return
+                
                 print(f"🖱️ Viewport {viewport.screen_index}: Hex ({hex_q}, {hex_r})")
                 
                 # Prüfe ob Boss an Position
                 self._check_boss_discovery(hex_q, hex_r)
                 break
+    
+    def _on_drag(self, event):
+        """Mouse-Drag Handler - bewegt Spieler-Token"""
+        if not self.dragging_player or not self.drag_viewport:
+            return
+        
+        # Zeige temporären Drag-Indikator (optional: Re-Render mit Ghost-Token)
+        # Für Performance einfach nur die Position tracken
+        pass
+    
+    def _on_drag_end(self, event):
+        """Mouse-Drag Ende - setzt Spieler auf neue Position"""
+        if not self.dragging_player or not self.drag_viewport:
+            self.dragging_player = None
+            self.drag_start_pos = None
+            self.drag_viewport = None
+            return
+        
+        viewport = self.drag_viewport
+        player = self.dragging_player
+        
+        # Prüfe ob noch im gleichen Viewport
+        if not (viewport.x_offset <= event.x < viewport.x_offset + viewport.width):
+            print("⚠️ Spieler außerhalb des Viewports losgelassen - Bewegung abgebrochen")
+            self.dragging_player = None
+            self.drag_start_pos = None
+            self.drag_viewport = None
+            return
+        
+        # Berechne neue Hex-Position
+        new_q, new_r = self._screen_to_hex(event.x, event.y, viewport)
+        
+        # Prüfe ob Hex gültig ist (existiert auf der Karte)
+        tiles = self._get_tiles_dict()
+        coord_key = f"{new_q},{new_r}"
+        if coord_key not in tiles:
+            print(f"⚠️ Hex ({new_q},{new_r}) existiert nicht auf der Karte")
+            self.dragging_player = None
+            self.drag_start_pos = None
+            self.drag_viewport = None
+            return
+        
+        # Prüfe ob Hex bereits von anderem Spieler belegt ist
+        for other_player in self.player_manager.players.values():
+            if other_player.id != player.id and other_player.is_active:
+                if other_player.hex_q == new_q and other_player.hex_r == new_r:
+                    print(f"⚠️ Hex ({new_q},{new_r}) ist bereits von '{other_player.name}' belegt!")
+                    self.dragging_player = None
+                    self.drag_start_pos = None
+                    self.drag_viewport = None
+                    return
+        
+        # Bewegung durchführen
+        old_q, old_r = player.hex_q, player.hex_r
+        player.hex_q = new_q
+        player.hex_r = new_r
+        
+        print(f"✅ '{player.name}' bewegt: ({old_q},{old_r}) → ({new_q},{new_r})")
+        
+        # Fog-of-War für neue Position enthüllen
+        if self.fog_enabled:
+            self.reveal_fog_at_hex(new_q, new_r, radius=2)
+        
+        # Auto-Follow: Viewport-Zentrum aktualisieren wenn aktiviert
+        if self.auto_follow_enabled:
+            self._update_viewport_follow(viewport, new_q, new_r)
+        
+        # Cleanup
+        self.dragging_player = None
+        self.drag_start_pos = None
+        self.drag_viewport = None
+        
+        # Neu rendern
+        self.render_all()
+    
+    def _get_player_at_screen_pos(self, screen_x: int, screen_y: int, viewport: ViewportConfig):
+        """
+        Findet einen Spieler an der angegebenen Screen-Position.
+        Berücksichtigt Token-Größe und Offset für überlappende Spieler.
+        Gibt nur Spieler des eigenen Teams zurück!
+        """
+        if not self.player_manager.players:
+            return None
+        
+        center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
+        
+        # Nur Spieler des Viewport-Teams sammeln
+        team_players = [
+            p for p in self.player_manager.players.values()
+            if p.is_active and p.team_id == viewport.team_id
+        ]
+        
+        if not team_players:
+            return None
+        
+        # Sortiere Spieler nach ID für konsistente Reihenfolge
+        team_players.sort(key=lambda p: p.id)
+        
+        # Sammel alle Spieler mit gleichem Hex für Offset-Berechnung
+        hex_player_count = {}
+        for p in team_players:
+            key = (p.hex_q, p.hex_r)
+            hex_player_count[key] = hex_player_count.get(key, 0) + 1
+        
+        # Zähle Spieler am gleichen Hex für Offset
+        hex_player_index = {}
+        
+        best_distance = float('inf')
+        best_player = None
+        
+        for player in team_players:
+            # Berechne Offset für überlappende Spieler
+            hex_key = (player.hex_q, player.hex_r)
+            if hex_key not in hex_player_index:
+                hex_player_index[hex_key] = 0
+            idx = hex_player_index[hex_key]
+            hex_player_index[hex_key] += 1
+            
+            count = hex_player_count.get(hex_key, 1)
+            offset_x, offset_y = self._calculate_token_offset(idx, count, viewport.zoom)
+            
+            # Player-Position in Pixeln
+            player_px, player_py = self._hex_to_pixel(player.hex_q, player.hex_r)
+            
+            # Transformiere zu Viewport-Koordinaten
+            vx = viewport.x_offset + viewport.width / 2 + (player_px - center_px) * viewport.zoom + offset_x
+            vy = viewport.height / 2 + (player_py - center_py) * viewport.zoom + offset_y - 10
+            
+            # Token-Größe für Hitbox
+            token_size = int(player.token_size * viewport.zoom * 0.8)
+            half_size = token_size // 2
+            
+            # Prüfe ob Klick innerhalb des Tokens
+            if (vx - half_size <= screen_x <= vx + half_size and
+                vy - half_size <= screen_y <= vy + half_size):
+                # Finde nächsten Spieler zum Klickpunkt
+                dist = ((screen_x - vx) ** 2 + (screen_y - vy) ** 2) ** 0.5
+                if dist < best_distance:
+                    best_distance = dist
+                    best_player = player
+        
+        return best_player
+    
+    def _calculate_token_offset(self, index: int, total: int, zoom: float) -> Tuple[float, float]:
+        """
+        Berechnet einen Offset für überlappende Spieler-Tokens am gleichen Hex.
+        Verteilt Tokens in einem Kreis um das Hex-Zentrum.
+        """
+        if total <= 1:
+            return (0, 0)
+        
+        # Kreisförmige Anordnung
+        import math
+        angle = (2 * math.pi * index) / total
+        radius = 15 * zoom  # Abstand vom Zentrum
+        
+        offset_x = radius * math.cos(angle)
+        offset_y = radius * math.sin(angle)
+        
+        return (offset_x, offset_y)
     
     def _on_mouse_move(self, event):
         """Mouse-Move Handler"""
@@ -929,11 +1134,61 @@ class SplitViewProjector(tk.Toplevel):
         # Viewport-Zentrum in Pixeln
         center_px, center_py = self._hex_to_pixel(viewport.center_q, viewport.center_r)
         
-        # Map-Position berechnen
+        # Map-Position in Pixel-Koordinaten berechnen
         map_x = center_px + (rel_x - viewport.width / 2) / viewport.zoom
         map_y = center_py + (rel_y - viewport.height / 2) / viewport.zoom
         
-        return self._pixel_to_hex(map_x, map_y)
+        # Finde das nächste Hex anhand der Pixel-Koordinaten
+        return self._find_nearest_hex(map_x, map_y)
+    
+    def _find_nearest_hex(self, pixel_x: float, pixel_y: float) -> Tuple[int, int]:
+        """
+        Findet das nächste Hexagon zu einer Pixel-Position.
+        Verwendet die gespeicherten center_x/center_y aus den Tile-Daten.
+        """
+        tiles = self._get_tiles_dict()
+        
+        if not tiles:
+            # Fallback zur mathematischen Berechnung
+            return self._pixel_to_hex(pixel_x, pixel_y)
+        
+        best_hex = (0, 0)
+        best_distance = float('inf')
+        
+        for coord_key, tile_data in tiles.items():
+            if not isinstance(tile_data, dict):
+                continue
+            
+            # Hole Tile-Zentrum
+            if "center_x" in tile_data and "center_y" in tile_data:
+                cx = tile_data["center_x"]
+                cy = tile_data["center_y"]
+            else:
+                # Berechne aus Koordinaten
+                try:
+                    parts = coord_key.split(',')
+                    q, r = int(parts[0]), int(parts[1])
+                    if self.orientation == "pointy":
+                        cx = self.hex_size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
+                        cy = self.hex_size * (3 / 2 * r)
+                    else:
+                        cx = self.hex_size * (3 / 2 * q)
+                        cy = self.hex_size * (math.sqrt(3) / 2 * q + math.sqrt(3) * r)
+                except:
+                    continue
+            
+            # Distanz berechnen
+            dist = ((pixel_x - cx) ** 2 + (pixel_y - cy) ** 2) ** 0.5
+            
+            if dist < best_distance:
+                best_distance = dist
+                try:
+                    parts = coord_key.split(',')
+                    best_hex = (int(parts[0]), int(parts[1]))
+                except:
+                    pass
+        
+        return best_hex
     
     # =========================================================
     # BOSS-ENTHÜLLUNG
@@ -1128,7 +1383,7 @@ class SplitViewProjector(tk.Toplevel):
             draw.polygon(points, fill=(0, 255, 0, 80), outline=(0, 200, 0, 255))
     
     def _draw_players_in_viewport(self, img: Image.Image, viewport: ViewportConfig):
-        """Zeichnet Spieler-Tokens im Viewport"""
+        """Zeichnet Spieler-Tokens im Viewport - mit Offset für überlappende Spieler"""
         if not self.player_manager.players:
             return
         
@@ -1138,6 +1393,8 @@ class SplitViewProjector(tk.Toplevel):
         viewport_team = self.player_manager.get_team(viewport.team_id) if viewport.team_id else None
         viewport_member_ids = viewport_team.member_ids if viewport_team else []
         
+        # Sammel alle sichtbaren Spieler mit gleichem Hex für Offset-Berechnung
+        visible_players = []
         for player in self.player_manager.players.values():
             if not player.is_active:
                 continue
@@ -1152,12 +1409,37 @@ class SplitViewProjector(tk.Toplevel):
                     viewport.team_id, player.hex_q, player.hex_r):
                     continue
             
+            visible_players.append(player)
+        
+        # WICHTIG: Sortiere nach ID für konsistente Reihenfolge (muss mit _get_player_at_screen_pos übereinstimmen!)
+        visible_players.sort(key=lambda p: p.id)
+        
+        # Zähle Spieler pro Hex für Offset
+        hex_player_count = {}
+        for p in visible_players:
+            key = (p.hex_q, p.hex_r)
+            hex_player_count[key] = hex_player_count.get(key, 0) + 1
+        
+        # Index pro Hex für Offset
+        hex_player_index = {}
+        
+        for player in visible_players:
+            # Berechne Offset für überlappende Spieler
+            hex_key = (player.hex_q, player.hex_r)
+            if hex_key not in hex_player_index:
+                hex_player_index[hex_key] = 0
+            idx = hex_player_index[hex_key]
+            hex_player_index[hex_key] += 1
+            
+            count = hex_player_count.get(hex_key, 1)
+            offset_x, offset_y = self._calculate_token_offset(idx, count, viewport.zoom)
+            
             # Player-Position in Pixeln
             player_px, player_py = self._hex_to_pixel(player.hex_q, player.hex_r)
             
-            # Transformiere zu Viewport-Koordinaten
-            vx = viewport.width / 2 + (player_px - center_px) * viewport.zoom
-            vy = viewport.height / 2 + (player_py - center_py) * viewport.zoom
+            # Transformiere zu Viewport-Koordinaten (mit Offset)
+            vx = viewport.width / 2 + (player_px - center_px) * viewport.zoom + offset_x
+            vy = viewport.height / 2 + (player_py - center_py) * viewport.zoom + offset_y
             
             # Prüfe ob im Viewport
             if not (0 <= vx <= viewport.width and 0 <= vy <= viewport.height):
@@ -1259,8 +1541,10 @@ class SplitViewProjector(tk.Toplevel):
         # Team-Name
         try:
             font = ImageFont.truetype("arial.ttf", 16)
+            font_small = ImageFont.truetype("arial.ttf", 11)
         except:
             font = ImageFont.load_default()
+            font_small = font
         
         draw.text((10, 10), f"👥 {team.name}", fill=(255, 255, 255), font=font)
         
@@ -1268,6 +1552,10 @@ class SplitViewProjector(tk.Toplevel):
         members = self.player_manager.get_team_members(team.id)
         member_text = f"{len(members)} Spieler"
         draw.text((viewport.width - 100, 10), member_text, fill=(200, 200, 200), font=font)
+        
+        # Drag & Drop Hinweis
+        hint_text = "🎯 Klicke & ziehe deine Figur zum Bewegen"
+        draw.text((viewport.width // 2 - 100, 12), hint_text, fill=(150, 150, 150), font=font_small)
     
     # =========================================================
     # MINIMAP
