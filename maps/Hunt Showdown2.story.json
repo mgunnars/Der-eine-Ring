@@ -67,7 +67,14 @@
         "loot": []
       }
     ],
-    "placements": [],
+    "placements": [
+      {
+        "boss_id": "4f048794",
+        "hex_q": 21,
+        "hex_r": 45,
+        "revealed": false
+      }
+    ],
     "bounties": {},
     "defeated_bosses": []
   },
@@ -81,8 +88,8 @@
         "color": "#4488FF",
         "image_path": null,
         "token_size": 40,
-        "hex_q": 0,
-        "hex_r": 44,
+        "hex_q": 48,
+        "hex_r": 1,
         "is_active": true,
         "notes": "",
         "has_bounty": false
@@ -95,8 +102,8 @@
         "color": "#FFFF44",
         "image_path": null,
         "token_size": 40,
-        "hex_q": 38,
-        "hex_r": 72,
+        "hex_q": 49,
+        "hex_r": 5,
         "is_active": true,
         "notes": "",
         "has_bounty": false
@@ -109,8 +116,8 @@
         "color": "#4488FF",
         "image_path": null,
         "token_size": 40,
-        "hex_q": 0,
-        "hex_r": 44,
+        "hex_q": 48,
+        "hex_r": 1,
         "is_active": true,
         "notes": "",
         "has_bounty": false
@@ -123,8 +130,8 @@
         "color": "#FFFF44",
         "image_path": null,
         "token_size": 40,
-        "hex_q": 38,
-        "hex_r": 72,
+        "hex_q": 51,
+        "hex_r": 5,
         "is_active": true,
         "notes": "",
         "has_bounty": false
@@ -159,32 +166,32 @@
     "placements": [
       {
         "player_id": "6d2e165c",
-        "hex_q": 0,
-        "hex_r": 44,
+        "hex_q": 60,
+        "hex_r": 27,
         "visible_to_teams": [
           "10ff41b1"
         ]
       },
       {
         "player_id": "a517d040",
-        "hex_q": 0,
-        "hex_r": 44,
+        "hex_q": 48,
+        "hex_r": 1,
         "visible_to_teams": [
           "10ff41b1"
         ]
       },
       {
         "player_id": "215485d8",
-        "hex_q": 0,
-        "hex_r": 44,
+        "hex_q": 48,
+        "hex_r": 1,
         "visible_to_teams": [
           "10ff41b1"
         ]
       },
       {
         "player_id": "42770dc0",
-        "hex_q": 38,
-        "hex_r": 72,
+        "hex_q": 60,
+        "hex_r": 27,
         "visible_to_teams": [
           "3ded7472"
         ]
@@ -210,5 +217,5 @@
     "teams_can_see_each_other": false
   },
   "created_at": "2025-12-31T12:00:42.974253",
-  "modified_at": "2025-12-31T18:57:36.255461"
+  "modified_at": "2025-12-31T19:01:05.183086"
 }
